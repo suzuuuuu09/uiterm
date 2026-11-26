@@ -75,9 +75,14 @@ export function App() {
     for (let i = 0; i < count; i++) {
       const id = `term-${nextTabCounter++}`;
       const tab: TabMeta = { id, title: id, cols: 80, rows: 24 };
-      created.push(tab);
       const isFirst = existing.length === 0 && i === 0;
-      await sessionManager.createSession(id, pocStore.getState().backendId, host, !isFirst);
+      try {
+        await sessionManager.createSession(id, pocStore.getState().backendId, host, !isFirst);
+        created.push(tab);
+      } catch {
+        // Error is already recorded in diagnostic log by sessionManager.
+        break;
+      }
     }
 
     const allTabs = [...existing, ...created];
@@ -93,6 +98,7 @@ export function App() {
       hostRef.current = el;
       if (el && !initializedRef.current) {
         initializedRef.current = true;
+        void sessionManager.startEventStream();
         void spawnTabs(1, true);
       }
     },
@@ -225,6 +231,15 @@ export function App() {
         <div className="flex items-center gap-1.5 font-semibold text-zinc-100">
           <TerminalIcon className="h-4 w-4 text-emerald-400" />
           <span>{t(locale, "appTitle")}</span>
+          <span
+            className={
+              sessionManager.runtimeMode === "tauri"
+                ? "rounded bg-emerald-900/80 px-1.5 py-0.5 font-mono text-[10px] text-emerald-200"
+                : "rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400"
+            }
+          >
+            {sessionManager.runtimeMode === "tauri" ? "tauri+herdr-core" : "mock"}
+          </span>
         </div>
 
         <label className="flex items-center gap-1.5">

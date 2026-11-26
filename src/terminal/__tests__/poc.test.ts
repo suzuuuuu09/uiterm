@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 import { t } from "../../i18n/dict.ts";
+import { MockIpcClient } from "../../ipc/mock.ts";
+import type {
+  AttachId,
+  InputKind,
+  OutputFrame,
+  TerminalAttachParams,
+  TerminalAttachResult,
+} from "../../ipc/types.ts";
 import { pocStore } from "../../store/pocStore.ts";
 import { MockHerdrTransport } from "../../transport/mockHerdrTransport.ts";
 import { validateResizePayload } from "../../transport/schemas.ts";
+import { TerminalSessionManager } from "../sessionManager.ts";
+import type { TerminalAdapter, TerminalAdapterCallbacks } from "../types.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -61,5 +71,159 @@ describe("Phase 0 Frontend PoC core contracts", () => {
     expect(result.totalBytes).toBeGreaterThan(800_000);
     expect(receivedBytes).toBe(result.totalBytes);
     transport.dispose();
+  });
+});
+
+function createFakeElement(): HTMLDivElement {
+  const children: unknown[] = [];
+  const el = {
+    dataset: {} as Record<string, string>,
+    className: "",
+    style: { display: "" },
+    appendChild(child: unknown) {
+      children.push(child);
+      return child;
+    },
+    remove() {},
+  };
+  return el as unknown as HTMLDivElement;
+}
+
+describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)", () => {
+  it("never sends ACK or auto-response with attachId=0 before terminalAttach resolves", async () => {
+    const prevDoc = globalThis.document;
+    (globalThis as unknown as { document: { createElement: () => HTMLDivElement } }).document = {
+      createElement: createFakeElement,
+    };
+
+    const ackCalls: Array<{ attachId: AttachId; bytes: number }> = [];
+    const writeCalls: Array<{ attachId: AttachId; kind: InputKind; len: number }> = [];
+    const resizeCalls: Array<{ attachId: AttachId; cols: number; rows: number }> = [];
+
+    const mock = new MockIpcClient();
+    let emitFrame!: (frame: OutputFrame) => void;
+    let resolveAttach!: (res: TerminalAttachResult) => void;
+
+    mock.terminalAck = async (attachId, bytes) => {
+      ackCalls.push({ attachId, bytes });
+    };
+    mock.terminalWrite = async (attachId, data, kind = "user") => {
+      const len = typeof data === "string" ? data.length : data.byteLength;
+      writeCalls.push({ attachId, kind, len });
+    };
+    mock.terminalResize = async (attachId, cols, rows) => {
+      resizeCalls.push({ attachId, cols, rows });
+    };
+    mock.terminalAttach = (_params: TerminalAttachParams, onFrame: (frame: OutputFrame) => void) => {
+      emitFrame = onFrame;
+      return new Promise<TerminalAttachResult>((resolve) => {
+        resolveAttach = resolve;
+      });
+    };
+
+    let capturedCallbacks!: TerminalAdapterCallbacks;
+    let fakeCols = 80;
+    let fakeRows = 24;
+    const fakeAdapterFactory = (_backendId: unknown, callbacks: TerminalAdapterCallbacks): TerminalAdapter => {
+      capturedCallbacks = callbacks;
+      return {
+        backendId: "wterm-ghostty-dom",
+        get cols() {
+          return fakeCols;
+        },
+        get rows() {
+          return fakeRows;
+        },
+        async mount() {},
+        write(bytes: Uint8Array) {
+          // Simulate wterm synchronously generating an automatic VT reply during write()
+          if (bytes.byteLength > 0) {
+            callbacks.onAutoResponse(encoder.encode("\x1b[?62;22c"));
+          }
+        },
+        resize(cols: number, rows: number) {
+          fakeCols = cols;
+          fakeRows = rows;
+          // Simulate terminal renderer echoing onResize synchronously
+          callbacks.onResize(cols, rows);
+        },
+        fit() {},
+        focus() {},
+        setHidden() {},
+        async getSelection() {
+          return "";
+        },
+        dispose() {},
+      };
+    };
+
+    try {
+      pocStore.getState().setSuppressAutoReplies(false);
+      const mgr = new TerminalSessionManager(mock, fakeAdapterFactory as never);
+      const createPromise = mgr.createSession("race-1", "wterm-ghostty-dom", createFakeElement(), false);
+
+      // Wait a microtask so terminalAttach has been invoked but NOT yet resolved
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Emit a 20 KiB initial repaint BEFORE terminalAttach resolves!
+      emitFrame({ kind: "data", bytes: new Uint8Array(20 * 1024).fill(65) });
+
+      // Must NOT have sent anything with attachId = 0!
+      expect(ackCalls).toEqual([]);
+      expect(writeCalls).toEqual([]);
+
+      // Now resolve terminalAttach with real attachId = 7
+      resolveAttach({
+        attachId: 7,
+        terminal: {
+          address: "t1",
+          name: "race-1",
+          argv: ["/bin/sh"],
+          cwd: "/tmp",
+          state: "live",
+          cols: 80,
+          rows: 24,
+          title: "race-1",
+          pid: 1,
+          createdMs: Date.now(),
+          finishedMs: null,
+          exitCode: null,
+          signal: null,
+          reason: null,
+          status: null,
+          statusMs: null,
+          turn: 0,
+          labels: {},
+          foreground: null,
+        },
+        automaticInput: true,
+        resizeNotifications: true,
+        initialCreditBytes: 256 * 1024,
+      });
+
+      await createPromise;
+
+      // Queued ACK and automatic reply must now flush with real attachId = 7!
+      expect(ackCalls).toEqual([{ attachId: 7, bytes: 20 * 1024 }]);
+      expect(writeCalls).toEqual([{ attachId: 7, kind: "automatic", len: 9 }]);
+
+      // Backend-originated RESIZE must NOT echo back to client.terminalResize!
+      emitFrame({ kind: "resize", cols: 120, rows: 40 });
+      expect(resizeCalls).toEqual([]);
+
+      // User-originated resize to a different size MUST send terminalResize!
+      capturedCallbacks.onResize(132, 43);
+      expect(resizeCalls).toEqual([{ attachId: 7, cols: 132, rows: 43 }]);
+
+      // Duplicate resize to same (132, 43) is deduplicated
+      capturedCallbacks.onResize(132, 43);
+      expect(resizeCalls).toEqual([{ attachId: 7, cols: 132, rows: 43 }]);
+
+      mgr.disposeAll();
+    } finally {
+      pocStore.getState().setSuppressAutoReplies(true);
+      (globalThis as unknown as { document: typeof prevDoc }).document = prevDoc;
+    }
   });
 });

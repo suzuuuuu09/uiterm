@@ -90,6 +90,12 @@ async fn herdr_core_lifecycle_io_resize_auto_input_and_osc7501() {
     assert!(attach.result.automatic_input);
     let attach_id = attach.result.attach_id;
 
+    // 0. Defensive check: attachId=0 must be rejected without touching JSON-RPC channel 0
+    let zero_ack_err = client.terminal_ack(0, 1024).await.unwrap_err();
+    assert_eq!(zero_ack_err.code, "invalid_args");
+    let zero_write_err = client.terminal_write(0, b"x".to_vec(), true).await.unwrap_err();
+    assert_eq!(zero_write_err.code, "invalid_args");
+
     // 1. User input (DATA frame kind 0)
     client
         .terminal_write(attach_id, b"echo UITERM_USER_OK\n".to_vec(), false)

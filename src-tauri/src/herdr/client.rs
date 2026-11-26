@@ -373,6 +373,7 @@ impl HerdrClient {
     }
 
     pub async fn terminal_detach(&self, attach_id: u32) -> Result<(), IpcError> {
+        ensure_valid_attach_id(attach_id)?;
         {
             let mut st = self.state.lock().await;
             st.attach_streams.remove(&attach_id);
@@ -391,6 +392,7 @@ impl HerdrClient {
         bytes: Vec<u8>,
         automatic: bool,
     ) -> Result<(), IpcError> {
+        ensure_valid_attach_id(attach_id)?;
         if bytes.is_empty() {
             return Ok(());
         }
@@ -415,10 +417,12 @@ impl HerdrClient {
         cols: u16,
         rows: u16,
     ) -> Result<(), IpcError> {
+        ensure_valid_attach_id(attach_id)?;
         self.send_frame(Frame::resize(attach_id, cols, rows)).await
     }
 
     pub async fn terminal_focus(&self, attach_id: u32, focused: bool) -> Result<(), IpcError> {
+        ensure_valid_attach_id(attach_id)?;
         self.send_frame(Frame::focus(attach_id, focused)).await
     }
 
@@ -427,12 +431,14 @@ impl HerdrClient {
         attach_id: u32,
         display: DisplayFacts,
     ) -> Result<(), IpcError> {
+        ensure_valid_attach_id(attach_id)?;
         let json_bytes = serde_json::to_vec(&display)
             .map_err(|e| IpcError::new("serialize_error", e.to_string()))?;
         self.send_frame(Frame::facts(attach_id, json_bytes)).await
     }
 
     pub async fn terminal_ack(&self, attach_id: u32, bytes: u32) -> Result<(), IpcError> {
+        ensure_valid_attach_id(attach_id)?;
         if bytes == 0 {
             return Ok(());
         }
@@ -499,6 +505,16 @@ impl HerdrClient {
             .await
             .map_err(|_| IpcError::new("core_disconnected", "herdr-core writer channel closed"))
     }
+}
+
+fn ensure_valid_attach_id(attach_id: u32) -> Result<(), IpcError> {
+    if attach_id == 0 {
+        return Err(IpcError::new(
+            "invalid_args",
+            "attachId must be > 0 (channel 0 is reserved for JSON-RPC control)",
+        ));
+    }
+    Ok(())
 }
 
 fn extract_rpc_result(resp: Value) -> Result<Value, IpcError> {

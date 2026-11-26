@@ -82,10 +82,73 @@ pub async fn core_reconnect(state: State<'_, Arc<AppState>>) -> Result<CoreStatu
 #[tauri::command]
 pub async fn terminal_create(
     state: State<'_, Arc<AppState>>,
-    params: TerminalCreateParams,
+    mut params: TerminalCreateParams,
 ) -> Result<TerminalInfo, IpcError> {
+    // Prefer the OS account's configured login shell (getpwuid) by default so
+    // shells work consistently even when `nix develop` overrides $SHELL with
+    // stdenv's minimal non-interactive bash (no readline).
+    if params.argv.is_none()
+        && params.line.is_none()
+        && let Some(shell) = resolve_os_default_shell()
+    {
+        params.argv = Some(vec![shell]);
+    }
+
+    // Ensure UTF-8 locale is always present for full-width Japanese character width handling.
+    let env_map = params.env.get_or_insert_with(Default::default);
+    if !env_map.contains_key("LANG")
+        && std::env::var("LANG")
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+    {
+        let fallback_lang = std::env::var("LC_CTYPE")
+            .ok()
+            .filter(|v| v.to_uppercase().contains("UTF-8") || v.to_uppercase().contains("UTF8"))
+            .unwrap_or_else(|| "en_US.UTF-8".to_string());
+        env_map.insert("LANG".to_string(), fallback_lang);
+    }
+
     let client = state.ensure_client().await?;
     client.terminal_create(params).await
+}
+
+#[cfg(unix)]
+fn resolve_os_default_shell() -> Option<String> {
+    // SAFETY: geteuid/getpwuid are standard POSIX calls; we immediately copy pw_shell
+    // into an owned String if the returned pointer and pw_shell are non-null.
+    let pw_shell = unsafe {
+        let pw = libc::getpwuid(libc::geteuid());
+        if pw.is_null() || (*pw).pw_shell.is_null() {
+            None
+        } else {
+            std::ffi::CStr::from_ptr((*pw).pw_shell)
+                .to_str()
+                .ok()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        }
+    };
+
+    if let Some(shell) = pw_shell
+        && std::path::Path::new(&shell).is_file()
+    {
+        return Some(shell);
+    }
+
+    if let Ok(env_shell) = std::env::var("SHELL")
+        && !env_shell.is_empty()
+        && std::path::Path::new(&env_shell).is_file()
+    {
+        return Some(env_shell);
+    }
+
+    None
+}
+
+#[cfg(not(unix))]
+fn resolve_os_default_shell() -> Option<String> {
+    None
 }
 
 #[tauri::command]
