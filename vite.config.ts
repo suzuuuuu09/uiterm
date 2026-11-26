@@ -23,4 +23,16 @@ export default defineConfig({
     exclude: ["@wterm/ghostty"],
   },
   assetsInclude: ["**/*.wasm"],
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "vendor-react", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            { name: "vendor-terminal", test: /node_modules[\\/]@wterm[\\/]/ },
+          ],
+        },
+      },
+    },
+  },
 });

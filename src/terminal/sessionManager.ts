@@ -1,3 +1,5 @@
+import type { StoreApi } from "zustand/vanilla";
+import { AppError, normalizeError } from "../errors/appError.ts";
 import { isTauriRuntime, TauriIpcClient } from "../ipc/client.ts";
 import { MockIpcClient } from "../ipc/mock.ts";
 import type {
@@ -7,15 +9,22 @@ import type {
   IpcError,
   OutputFrame,
   SessionId,
+  TerminalCreateParams,
   UitermBackendClient,
 } from "../ipc/types.ts";
-import { pocStore } from "../store/pocStore.ts";
+import { appLogger, type Logger } from "../logging/logger.ts";
 import {
   JAPANESE_TEST_PAYLOAD,
   VT_ANSI_TEST_PAYLOAD,
   VT_QUERY_TEST_PAYLOAD,
-} from "../transport/mockHerdrTransport.ts";
-import type { TerminalBackendId } from "../transport/schemas.ts";
+} from "../poc/probes.ts";
+import { appStore, type AppState } from "../state/appStore.ts";
+import {
+  parseStatusEventData,
+  parseTerminationEventData,
+  parseTurnEventData,
+} from "../validation/ipcSchemas.ts";
+import type { TerminalBackendId } from "../validation/settingsSchemas.ts";
 import { createTerminalAdapter } from "./createAdapter.ts";
 import type {
   TerminalAdapter,
@@ -29,6 +38,7 @@ const ACK_BATCH_THRESHOLD = 16 * 1024;
 const STATS_FLUSH_INTERVAL_MS = 100;
 const MAX_LOG_BYTES_PREVIEW = 128;
 const MAX_PENDING_WRITE_BYTES = 1024 * 1024;
+const MAX_PENDING_WRITES = 256;
 
 function formatControlBytes(bytes: Uint8Array): string {
   const truncated = bytes.byteLength > MAX_LOG_BYTES_PREVIEW;
@@ -40,16 +50,6 @@ function formatControlBytes(bytes: Uint8Array): string {
     .replaceAll("\n", "\\n")
     .replaceAll("\x07", "BEL");
   return truncated ? `${formatted}...` : formatted;
-}
-
-function formatIpcError(err: unknown): string {
-  if (err && typeof err === "object" && "code" in err && "message" in err) {
-    const ipc = err as IpcError;
-    return ipc.hint
-      ? `[${ipc.code}] ${ipc.message} (${ipc.hint})`
-      : `[${ipc.code}] ${ipc.message}`;
-  }
-  return err instanceof Error ? err.message : String(err);
 }
 
 interface PendingWrite {
@@ -83,18 +83,35 @@ export type AdapterFactory = (
   options?: TerminalAdapterOptions,
 ) => TerminalAdapter;
 
+export interface SessionDiagnosticsSink {
+  isEnabled: () => boolean;
+  addStats: (bytesDelta: number, repliesDelta: number) => void;
+  pushLog: (kind: "ime" | "input" | "auto-reply" | "system", detail: string) => void;
+}
+
+export interface TerminalSessionManagerOptions {
+  store?: StoreApi<AppState>;
+  logger?: Logger;
+  diagnostics?: SessionDiagnosticsSink;
+}
+
 /**
- * Imperative session manager wired directly to UitermBackendClient (docs/poc/interface.md).
- * - Uses TauriIpcClient when running inside Tauri, MockIpcClient in standalone browser.
- * - Pipes binary OutputFrame bytes directly to TerminalAdapter.write(bytes) without React/Zustand.
- * - Prevents attachId=0 IPC calls before terminalAttach() resolves by queuing ACK/writes/resizes.
- * - Prevents backend-originated RESIZE notification loops via guard flag + dimension deduplication.
- * - Captures all IPC errors cleanly and maintains session lifecycle invariants.
+ * Imperative terminal session manager wired to `UitermBackendClient`.
+ *
+ * Architectural invariants:
+ * - Binary `OutputFrame` bytes flow directly to `TerminalAdapter.write(bytes)` and NEVER enter Zustand.
+ * - Authoritative session lifecycle & OSC 7501 metadata from `herdr-core` sync into `AppState`.
+ * - Prevents `attachId = 0` IPC calls before `terminalAttach()` resolves by queuing ACK/writes/resizes.
+ * - Prevents backend-originated RESIZE loops via guard flag + dimension deduplication.
+ * - Normal logs never record raw terminal input bytes or IME text.
  */
 export class TerminalSessionManager {
   readonly client: UitermBackendClient;
   readonly runtimeMode: "tauri" | "mock";
   private readonly adapterFactory: AdapterFactory;
+  private readonly store: StoreApi<AppState>;
+  private readonly logger: Logger;
+  private readonly diagnostics?: SessionDiagnosticsSink;
 
   private sessions = new Map<string, ManagedSession>();
   private eventStream: { subscriptionId: number | null } | null = null;
@@ -108,6 +125,7 @@ export class TerminalSessionManager {
     client?: UitermBackendClient,
     adapterFactory: AdapterFactory = (backendId, callbacks, options) =>
       createTerminalAdapter(backendId, callbacks, options),
+    options: TerminalSessionManagerOptions = {},
   ) {
     if (client) {
       this.client = client;
@@ -120,10 +138,16 @@ export class TerminalSessionManager {
       this.runtimeMode = "mock";
     }
     this.adapterFactory = adapterFactory;
+    this.store = options.store ?? appStore;
+    this.logger = options.logger ?? appLogger;
+    this.diagnostics = options.diagnostics;
   }
 
-  private reportIpcError(context: string, err: unknown): void {
-    pocStore.getState().pushLog("system", `IPC error (${context}): ${formatIpcError(err)}`);
+  private reportError(context: string, err: unknown): AppError {
+    const appErr = normalizeError(err, { context });
+    this.logger.logError("terminal", appErr, { context });
+    this.diagnostics?.pushLog("system", `IPC error (${context}): ${appErr.formatDeveloperSummary()}`);
+    return appErr;
   }
 
   private flushStatsNow(): void {
@@ -136,12 +160,12 @@ export class TerminalSessionManager {
       const r = this.pendingRepliesDelta;
       this.pendingBytesDelta = 0;
       this.pendingRepliesDelta = 0;
-      pocStore.getState().addStats(b, r);
+      this.diagnostics?.addStats(b, r);
     }
   }
 
   private scheduleStatsFlush(): void {
-    if (this.statsFlushTimer !== null) return;
+    if (!this.diagnostics || this.statsFlushTimer !== null) return;
     this.statsFlushTimer = setTimeout(() => {
       this.statsFlushTimer = null;
       this.flushStatsNow();
@@ -150,30 +174,49 @@ export class TerminalSessionManager {
 
   async startEventStream(): Promise<void> {
     if (this.eventStream !== null) return;
-    const stream: { subscriptionId: number | null } = { subscriptionId: null };
+    const stream: {
+      subscriptionId: number | null;
+      ready: boolean;
+      pending: CoreEvent[];
+    } = { subscriptionId: null, ready: false, pending: [] };
     this.eventStream = stream;
     try {
       const sub = await this.client.eventsSubscribe((ev) => {
         if (this.eventStream !== stream) return;
+        if (!stream.ready) {
+          stream.pending.push(ev);
+          return;
+        }
         if (ev.type === "disconnected") this.eventStream = null;
         this.handleCoreEvent(ev);
       });
       if (this.eventStream !== stream) {
         void this.client
           .eventsUnsubscribe(sub.subscriptionId)
-          .catch((err) => this.reportIpcError("eventsUnsubscribe", err));
+          .catch((err) => this.reportError("eventsUnsubscribe", err));
         return;
       }
       stream.subscriptionId = sub.subscriptionId;
-      pocStore
-        .getState()
-        .pushLog(
-          "system",
-          `events subscribed (sub=${sub.subscriptionId}, seq=${sub.seq}, live=${sub.terminals.length})`,
-        );
+      this.store.getState().applyCoreSnapshot(sub.terminals, sub.seq);
+      stream.ready = true;
+      for (const ev of stream.pending.splice(0)) {
+        if (this.eventStream !== stream) break;
+        if (ev.type === "disconnected") this.eventStream = null;
+        this.handleCoreEvent(ev);
+      }
+      this.logger.info("terminal", "Subscribed to herdr-core event stream", {
+        subscriptionId: sub.subscriptionId,
+        seq: sub.seq,
+        liveCount: sub.terminals.length,
+      });
+      this.diagnostics?.pushLog(
+        "system",
+        `events subscribed (sub=${sub.subscriptionId}, seq=${sub.seq}, live=${sub.terminals.length})`,
+      );
     } catch (err) {
       if (this.eventStream === stream) this.eventStream = null;
-      this.reportIpcError("eventsSubscribe", err);
+      const appErr = this.reportError("eventsSubscribe", err);
+      this.store.getState().setCoreConnection({ status: "disconnected", lastError: appErr });
     }
   }
 
@@ -186,32 +229,46 @@ export class TerminalSessionManager {
       stream.subscriptionId = null;
       void this.client
         .eventsUnsubscribe(subId)
-        .catch((err) => this.reportIpcError("eventsUnsubscribe", err));
+        .catch((err) => this.reportError("eventsUnsubscribe", err));
     }
   }
 
   private handleCoreEvent(ev: CoreEvent): void {
+    this.store.getState().applyCoreEvent(ev);
+
     if (ev.type === "status") {
-      const state = ev.data.status?.state ?? "clear";
-      const app = ev.data.status?.app ? ` app=${ev.data.status.app}` : "";
-      pocStore.getState().pushLog("system", `[${ev.terminal}] OSC 7501 status=${state}${app}`);
+      const parsed = parseStatusEventData(ev.data);
+      const state = parsed?.status?.state ?? "clear";
+      const app = parsed?.status?.app ? ` app=${parsed.status.app}` : "";
+      this.diagnostics?.pushLog("system", `[${ev.terminal}] OSC 7501 status=${state}${app}`);
     } else if (ev.type === "turn") {
-      pocStore
-        .getState()
-        .pushLog("system", `[${ev.terminal}] turn=${ev.data.turn} (${ev.data.state})`);
+      const parsed = parseTurnEventData(ev.data);
+      if (parsed) {
+        this.diagnostics?.pushLog("system", `[${ev.terminal}] turn=${parsed.turn} (${parsed.state})`);
+      }
     } else if (ev.type === "finished") {
-      pocStore
-        .getState()
-        .pushLog(
-          "system",
-          `[${ev.terminal}] finished (reason=${ev.data.reason ?? "-"}, exit=${ev.data.exitCode ?? "-"})`,
-        );
+      const parsed = parseTerminationEventData(ev.data);
+      this.logger.info("terminal", "Terminal session finished", {
+        sessionId: ev.terminal,
+        reason: parsed.reason,
+        exitCode: parsed.exitCode,
+      });
+      this.diagnostics?.pushLog(
+        "system",
+        `[${ev.terminal}] finished (reason=${parsed.reason ?? "-"}, exit=${parsed.exitCode ?? "-"})`,
+      );
     } else if (ev.type === "disconnected") {
-      pocStore.getState().pushLog("system", `herdr-core disconnected: ${ev.reason}`);
+      this.logger.warn("terminal", "Disconnected from herdr-core", { reason: ev.reason });
+      this.diagnostics?.pushLog("system", `herdr-core disconnected: ${ev.reason}`);
     } else if (ev.type === "missed") {
-      pocStore
-        .getState()
-        .pushLog("system", `events missed (seq=${ev.seq}, snapshot=${ev.terminals.length})`);
+      this.logger.warn("terminal", "Core event stream missed events; snapshot applied", {
+        seq: ev.seq,
+        snapshotCount: ev.terminals.length,
+      });
+      this.diagnostics?.pushLog(
+        "system",
+        `events missed (seq=${ev.seq}, snapshot=${ev.terminals.length})`,
+      );
     }
   }
 
@@ -223,7 +280,7 @@ export class TerminalSessionManager {
       session.unackedBytes = 0;
       void this.client
         .terminalAck(session.attachId, ack)
-        .catch((err) => this.reportIpcError(`terminalAck:${session.id}`, err));
+        .catch((err) => this.reportError(`terminalAck:${session.id}`, err));
     }
 
     void this.flushResize(session);
@@ -246,7 +303,7 @@ export class TerminalSessionManager {
             session.lastSentRows = rows;
           }
         } catch (err) {
-          this.reportIpcError(`terminalResize:${session.id}`, err);
+          this.reportError(`terminalResize:${session.id}`, err);
         }
       }
     } finally {
@@ -265,7 +322,7 @@ export class TerminalSessionManager {
         try {
           await this.client.terminalWrite(attachId, item.bytes, item.kind);
         } catch (err) {
-          this.reportIpcError(`terminalWrite:${session.id}`, err);
+          this.reportError(`terminalWrite:${session.id}`, err);
         } finally {
           if (!stream.closed) session.pendingWriteBytes -= item.bytes.byteLength;
         }
@@ -288,15 +345,22 @@ export class TerminalSessionManager {
       } finally {
         session.applyingBackendResize = false;
       }
-      pocStore.getState().updateTabSize(session.id, frame.cols, frame.rows);
+      this.store.getState().updatePaneSize(session.id, frame.cols, frame.rows);
       return;
     }
 
     if (frame.kind === "close") {
       this.closeStream(session);
-      pocStore
-        .getState()
-        .pushLog("system", `[${session.id}] closed (${frame.reason}, exit=${frame.exitCode ?? "-"})`);
+      this.logger.info("terminal", "Terminal attachment closed", {
+        paneId: session.id,
+        sessionId: session.sessionId,
+        reason: frame.reason,
+        exitCode: frame.exitCode,
+      });
+      this.diagnostics?.pushLog(
+        "system",
+        `[${session.id}] closed (${frame.reason}, exit=${frame.exitCode ?? "-"})`,
+      );
       return;
     }
 
@@ -312,7 +376,7 @@ export class TerminalSessionManager {
       session.unackedBytes = 0;
       void this.client
         .terminalAck(session.attachId, ack)
-        .catch((err) => this.reportIpcError(`terminalAck:${session.id}`, err));
+        .catch((err) => this.reportError(`terminalAck:${session.id}`, err));
     }
   }
 
@@ -326,12 +390,27 @@ export class TerminalSessionManager {
   }
 
   private sendInput(session: ManagedSession | null, bytes: Uint8Array, kind: InputKind): void {
-    if (!session?.stream || session.disposed || session.stream.closed || bytes.byteLength === 0) return;
+    if (!session?.stream || session.disposed || session.stream.closed || bytes.byteLength === 0) {
+      return;
+    }
     if (
       bytes.byteLength > MAX_PENDING_WRITE_BYTES - session.pendingWriteBytes ||
-      session.pendingWrites.length >= 256
+      session.pendingWrites.length >= MAX_PENDING_WRITES
     ) {
-      this.reportIpcError(`terminalWrite:${session.id}`, new Error("pending input queue full"));
+      this.reportError(
+        `terminalWrite:${session.id}`,
+        new AppError({
+          code: "TERMINAL_QUEUE_FULL",
+          severity: "warn",
+          messageKey: "error.terminal.queueFull",
+          devMessage: "pending input queue full",
+          diagnostics: {
+            paneId: session.id,
+            pendingCount: session.pendingWrites.length,
+            pendingBytes: session.pendingWriteBytes,
+          },
+        }),
+      );
       return;
     }
     session.pendingWriteBytes += bytes.byteLength;
@@ -358,19 +437,20 @@ export class TerminalSessionManager {
             stream.failed = true;
             const attachId = session.attachId;
             this.closeStream(session);
-            this.reportIpcError(`render:${session.id}`, err);
+            this.reportError(`render:${session.id}`, err);
             if (attachId > 0) {
-              void this.client.terminalDetach(attachId)
-                .catch((detachError) => this.reportIpcError(`terminalDetach:${session.id}`, detachError));
+              void this.client
+                .terminalDetach(attachId)
+                .catch((detachError) => this.reportError(`terminalDetach:${session.id}`, detachError));
             }
           }
         },
       );
       if (session.disposed || stream.closed) {
-        // CLOSE can arrive before the invoke reply, and the core may already have closed it.
         if (session.disposed || stream.failed) {
-          await this.client.terminalDetach(attached.attachId)
-            .catch((err) => this.reportIpcError(`terminalDetach:${session.id}`, err));
+          await this.client
+            .terminalDetach(attached.attachId)
+            .catch((err) => this.reportError(`terminalDetach:${session.id}`, err));
         }
         return false;
       }
@@ -388,9 +468,15 @@ export class TerminalSessionManager {
     backendId: TerminalBackendId,
     mountRoot: HTMLElement,
     hidden: boolean,
+    createParams: TerminalCreateParams = {},
   ): Promise<ManagedSession> {
     if (this.creating.has(id) || this.sessions.has(id)) {
-      throw new Error(`session already exists: ${id}`);
+      throw new AppError({
+        code: "TERMINAL_CREATE_FAILED",
+        messageKey: "error.terminal.createFailed",
+        devMessage: `session already exists: ${id}`,
+        diagnostics: { paneId: id },
+      });
     }
     const creation = new AbortController();
     this.creating.set(id, creation);
@@ -405,25 +491,30 @@ export class TerminalSessionManager {
     let sessionRef: ManagedSession | null = null;
 
     try {
-      termInfo = await this.client.terminalCreate({ name: id, cols: 80, rows: 24 });
+      const settings = this.store.getState().settings;
+      termInfo = await this.client.terminalCreate({
+        ...createParams,
+        name: createParams.name ?? id,
+        cols: createParams.cols ?? 80,
+        rows: createParams.rows ?? 24,
+      });
       creation.signal.throwIfAborted();
 
-      const initialPaused = hidden && pocStore.getState().pauseHiddenRendering;
+      const initialPaused = hidden && this.store.getState().settings.pauseHiddenRendering;
       adapter = this.adapterFactory(
         backendId,
         {
           onUserInput: (bytes) => {
-            const state = pocStore.getState();
-            if (state.diagnosticsEnabled) {
-              state.pushLog("input", `[${id}] user (${bytes.byteLength}B)`);
+            // Never log raw user input text; diagnostics only record byte count when explicitly enabled.
+            if (this.diagnostics?.isEnabled()) {
+              this.diagnostics.pushLog("input", `[${id}] user (${bytes.byteLength}B)`);
             }
             this.sendInput(sessionRef, bytes, "user");
           },
           onAutoResponse: (bytes) => {
-            const state = pocStore.getState();
-            const suppress = state.suppressAutoReplies;
-            if (state.diagnosticsEnabled) {
-              state.pushLog(
+            const suppress = this.store.getState().settings.suppressAutoReplies;
+            if (this.diagnostics?.isEnabled()) {
+              this.diagnostics.pushLog(
                 "auto-reply",
                 `[${id}] ${suppress ? "BLOCKED" : "AUTO(kind=6)"} (${bytes.byteLength}B): ${formatControlBytes(bytes)}`,
               );
@@ -436,14 +527,19 @@ export class TerminalSessionManager {
             this.sendInput(sessionRef, bytes, "automatic");
           },
           onResize: (cols, rows) => {
-            pocStore.getState().updateTabSize(id, cols, rows);
+            this.store.getState().updatePaneSize(id, cols, rows);
             if (!sessionRef || sessionRef.disposed || sessionRef.stream?.closed) return;
             if (sessionRef.applyingBackendResize) return;
             sessionRef.pendingResize = { cols, rows };
             void this.flushResize(sessionRef);
           },
         },
-        { renderingPaused: initialPaused },
+        {
+          renderingPaused: initialPaused,
+          scrollbackLines: settings.scrollbackLines,
+          fontSize: settings.fontSize,
+          fontFamily: settings.fontFamily,
+        },
       );
 
       await adapter.mount(container);
@@ -477,21 +573,23 @@ export class TerminalSessionManager {
 
       await this.attach(session);
       creation.signal.throwIfAborted();
-      pocStore.getState().updateTabSize(id, adapter.cols, adapter.rows);
+      this.store.getState().bindPaneSession(id, termInfo.address);
+      this.store.getState().updatePaneSize(id, adapter.cols, adapter.rows);
       return session;
     } catch (err) {
-      this.reportIpcError(`createSession:${id}`, err);
+      this.reportError(`createSession:${id}`, err);
       if (!sessionRef?.disposed) {
         this.sessions.delete(id);
         if (sessionRef) sessionRef.disposed = true;
         try {
           adapter?.dispose();
         } catch (disposeError) {
-          this.reportIpcError(`disposeSession:${id}`, disposeError);
+          this.reportError(`disposeSession:${id}`, disposeError);
         }
         if (termInfo) {
-          await this.client.terminalKill(termInfo.address)
-            .catch((killError) => this.reportIpcError(`terminalKill:${id}`, killError));
+          await this.client
+            .terminalKill(termInfo.address)
+            .catch((killError) => this.reportError(`terminalKill:${id}`, killError));
         }
       }
       container.remove();
@@ -506,7 +604,7 @@ export class TerminalSessionManager {
   }
 
   setActive(activeId: string | null): void {
-    const pauseHidden = pocStore.getState().pauseHiddenRendering;
+    const pauseHidden = this.store.getState().settings.pauseHiddenRendering;
     const prevActiveId = this.activeId;
     this.activeId = activeId;
 
@@ -521,12 +619,38 @@ export class TerminalSessionManager {
         session.focused = isActive;
         void this.client
           .terminalFocus(session.attachId, isActive)
-          .catch((err) => this.reportIpcError(`terminalFocus:${id}`, err));
+          .catch((err) => this.reportError(`terminalFocus:${id}`, err));
       }
       if (isActive && prevActiveId !== activeId) {
         session.adapter.fit();
         session.adapter.focus();
       }
+    }
+  }
+
+  focusSession(id: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session || session.disposed) return false;
+    session.adapter.focus();
+    return true;
+  }
+
+  hideSession(id: string): void {
+    const session = this.sessions.get(id);
+    if (!session || session.disposed) return;
+    const pauseHidden = this.store.getState().settings.pauseHiddenRendering;
+    session.container.style.display = "none";
+    session.adapter.setHidden(pauseHidden);
+    if (session.focused && session.attachId > 0) {
+      session.focused = false;
+      void this.client
+        .terminalFocus(session.attachId, false)
+        .catch((err) => this.reportError(`terminalFocus:${id}`, err));
+    } else {
+      session.focused = false;
+    }
+    if (this.activeId === id) {
+      this.activeId = null;
     }
   }
 
@@ -541,6 +665,7 @@ export class TerminalSessionManager {
     const session = this.sessions.get(id);
     if (!session || session.disposed || session.resyncing || this.creating.has(id)) return;
     session.resyncing = true;
+    this.store.getState().setCoreConnection({ status: "reconnecting" });
     try {
       const oldAttachId = session.attachId;
       this.closeStream(session);
@@ -552,42 +677,43 @@ export class TerminalSessionManager {
           if (code !== "invalid_attach" && code !== "core_disconnected") throw err;
         }
       }
-      await this.client.coreReconnect();
+      const coreStatus = await this.client.coreReconnect();
+      this.store.getState().setCoreConnection({ status: "connected", coreStatus, lastError: null });
       this.stopEventStream();
       await this.startEventStream();
-      if (!session.disposed && await this.attach(session)) {
-        pocStore.getState().pushLog("system", `[${id}] resynced (attachId=${session.attachId})`);
+      if (!session.disposed && (await this.attach(session))) {
+        this.logger.info("terminal", "Terminal session resynced", {
+          paneId: id,
+          attachId: session.attachId,
+        });
+        this.diagnostics?.pushLog("system", `[${id}] resynced (attachId=${session.attachId})`);
       }
     } catch (err) {
-      this.reportIpcError(`resyncSession:${id}`, err);
+      const appErr = this.reportError(`resyncSession:${id}`, err);
+      this.store.getState().setCoreConnection({ status: "disconnected", lastError: appErr });
+      throw appErr;
     } finally {
       session.resyncing = false;
     }
   }
 
-  /** Direct renderer test probes (bypassing PTY echo to test VT/IME/rendering directly). */
+  /** PoC diagnostic probe helpers (bypass PTY echo to test VT/IME/rendering directly). */
   injectJapaneseTest(id: string): void {
-    const session = this.sessions.get(id);
-    if (!session || session.disposed) return;
-    const bytes = encoder.encode(JAPANESE_TEST_PAYLOAD);
-    this.pendingBytesDelta += bytes.byteLength;
-    this.scheduleStatsFlush();
-    session.adapter.write(bytes);
+    this.injectRawPayload(id, JAPANESE_TEST_PAYLOAD);
   }
 
   injectVtTest(id: string): void {
-    const session = this.sessions.get(id);
-    if (!session || session.disposed) return;
-    const bytes = encoder.encode(VT_ANSI_TEST_PAYLOAD);
-    this.pendingBytesDelta += bytes.byteLength;
-    this.scheduleStatsFlush();
-    session.adapter.write(bytes);
+    this.injectRawPayload(id, VT_ANSI_TEST_PAYLOAD);
   }
 
   injectQueryProbe(id: string): void {
+    this.injectRawPayload(id, VT_QUERY_TEST_PAYLOAD);
+  }
+
+  private injectRawPayload(id: string, payload: string): void {
     const session = this.sessions.get(id);
     if (!session || session.disposed) return;
-    const bytes = encoder.encode(VT_QUERY_TEST_PAYLOAD);
+    const bytes = encoder.encode(payload);
     this.pendingBytesDelta += bytes.byteLength;
     this.scheduleStatsFlush();
     session.adapter.write(bytes);
@@ -631,11 +757,11 @@ export class TerminalSessionManager {
     if (aid > 0) {
       void this.client
         .terminalDetach(aid)
-        .catch((err) => this.reportIpcError(`terminalDetach:${id}`, err));
+        .catch((err) => this.reportError(`terminalDetach:${id}`, err));
     }
     void this.client
       .terminalKill(session.sessionId)
-      .catch((err) => this.reportIpcError(`terminalKill:${id}`, err));
+      .catch((err) => this.reportError(`terminalKill:${id}`, err));
     try {
       session.adapter.dispose();
     } finally {
@@ -651,5 +777,3 @@ export class TerminalSessionManager {
     }
   }
 }
-
-export const sessionManager = new TerminalSessionManager();

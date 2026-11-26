@@ -1,0 +1,21 @@
+[[permission]]
+identifier = "terminal-ipc"
+description = "Native terminal commands for the local main WebView"
+commands.allow = [
+  "core_status",
+  "core_reconnect",
+  "terminal_create",
+  "terminal_list",
+  "terminal_attach",
+  "terminal_detach",
+  "terminal_write",
+  "terminal_resize",
+  "terminal_focus",
+  "terminal_facts",
+  "terminal_ack",
+  "terminal_kill",
+  "events_ack",
+  "events_subscribe",
+  "events_unsubscribe",
+  "config_eval_poc",
+]

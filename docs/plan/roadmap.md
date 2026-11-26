@@ -2,38 +2,40 @@
 description: "uitermの開発ロードマップをまとめる"
 ---
 
-## Phase 0 — 技術検証
+## Phase 0 — 技術検証（完了）
 
 採用予定の技術が要件を満たすか検証する。
 
-- [x] Tauri・React・Vite+の最小構成（Tauri 2.12.7・React 19.3.1 + React Compiler・Vite+ 1.8.0・pnpm 12.9.0、macOS `.app` バンドルビルド確認済み）
-- [x] Nix Flakesによる開発環境の構築（macOS arm64 実測済み・`x86_64-linux` 評価確認済み、`herdr-core` v0.1.22 固定）
+- [x] Tauri・React・Vite+の最小構成（Tauri 2.12.7・React 19.3.1 + React Compiler・Vite+ 1.8.0・pnpm 12.9.0、macOS `.app` 4.22 MiB ビルド確認済み）
+- [x] Nix Flakesによる開発環境の構築（macOS arm64 実測済み・`x86_64-linux`/`aarch64-linux` 評価確認済み、`herdr-core` v0.1.22 固定）
 - [x] herdr-coreとの通信（Unix Socket・Framed Mode・JSON-RPC・Attach・Events・OSC 7501・`AUTOMATIC_INPUT` 分離・フロー制御・`attachId=0` 防御）
-- [x] wtermによるターミナル描画（`@wterm/dom` + `@wterm/ghostty` 実装、Tauri 実ウィンドウ上で `herdr-core` と結合起動確認済み）
+- [x] wtermによるターミナル描画（`@wterm/dom` + `@wterm/ghostty` へ単一化完了、Tauri 実ウィンドウ上で `herdr-core` と結合起動確認済み）
 - [x] ターミナルの入出力・リサイズ（`stty size` 反映・バックエンド起点リサイズループ防止・再アタッチ再同期・`fish`/`nvim`/`codex` 互換性確認済み）
-- [x] VT エンジンの二重動作による負荷の予備測定（アプリ全体の単発 RSS、単体スケーリング、バックエンドの20秒負荷）。正式測定ではプロセスの帰属と長時間の変化を確認する。
-- [ ] 統合後の macOS 実ウィンドウで端末の入出力・切断後の再同期・終了を確認する。NixOS / Hyprland は静的検証までを Phase 0 の対象とする。
-- [ ] 統合後の macOS WKWebView で日本語 IME を手動確認する。Linux Fcitx5 は MVP 完成までに実機で確認する。
+- [x] VT エンジンの二重動作による負荷測定（実ウィンドウ 1 端末アイドル・5 MiB×3 バースト・60 秒連続出力 soak、およびバックエンド+`fish` / フロントエンド単体の 1・5・10 端末スケーリングを実測。30 分 soak・UI 5/10 タブ自動計測は Phase 1〜6 で継続検証）
+- [x] 統合後の macOS 実ウィンドウで端末の入出力・`fish`/`nvim` 動作・GUI 正常終了時のリソース解放を確認する。NixOS / Hyprland は静的検証までを Phase 0 の対象とし、実機検証は MVP 完成条件として維持する。
+- [x] 統合後の macOS WKWebView で日本語 IME を手動確認する（入力・変換・確定・確定時 Enter 非誤送信・Backspace 削除・変換候補位置を確認済み）。Linux Fcitx5 は MVP 完成までに実機で確認する。
 - [x] TypeScript設定の実行方式の検証（外部 Node.js 24 LTS ネイティブ型除去 + JSON-RPC over stdio で実測済み）
-- [ ] 統合後の配布ビルドでメモリ使用量・ディスク容量・起動時間を正式計測する。既存の PoC 値は参考記録とする。
+- [x] 統合後の配布ビルドでメモリ使用量・ディスク容量・起動時間を基準値として計測する（`.app` 4.22 MiB + `herdr-core` 6.30 MiB = 10.51 MiB、1 端末アイドル Summary Footprint 120.48 MiB、ウォーム起動中央値 158.5 ms。真のログイン後コールド起動および Ghostty/Herdr 同一条件比較は Phase 6 で実施）。
 
-検証結果の詳細は [docs/poc/interface.md](../poc/interface.md)・[docs/poc/backend.md](../poc/backend.md)・[docs/poc/frontend.md](../poc/frontend.md)・[docs/poc/integration.md](../poc/integration.md) を参照。移行判定は [独立検証レポート](../poc/validation.md) を参照。NixOS / Hyprland の実機確認は Phase 1 への移行条件から一時的に除外し、[MVP の完成条件](./mvp.md#完成条件)として維持する。
+検証結果と Phase 1 への申し送り事項は [docs/poc/integration.md](../poc/integration.md)（§7〜§9）・[docs/poc/optimization.md](../poc/optimization.md)・[docs/poc/validation.md](../poc/validation.md) を参照。Phase 0 を完了とし、Phase 1 へ移行する。NixOS / Hyprland の実機確認は [MVP の完成条件](./mvp.md#完成条件)（Phase 6）として維持する。
 
-## Phase 1 — 基盤構築
+## Phase 1 — 基盤構築（完了）
 
 アプリケーションの共通基盤を構築する。
 
-- [ ] ディレクトリ構成の設計
-- [ ] Tauri IPC
-- [ ] herdr-coreアダプター
-- [ ] プロセスのライフサイクル管理
-- [ ] 状態管理
-- [ ] Action Registry
-- [ ] 型定義・データ検証
-- [ ] エラーハンドリング
-- [ ] ログ管理
-- [ ] 国際化の基盤
-- [ ] テスト環境
+- [x] ディレクトリ構成の設計（`src/{app,state,actions,ipc,terminal,validation,errors,logging,i18n,ui}` へ製品コードを整理し、Phase 0 診断資材を `src/poc/` へ隔離。Rust は `src-tauri/src/{app_state,bindings,commands,config_runtime,os,herdr/*}` へ責務分離し、`poc_bench` を `examples/` へ移設）
+- [x] Tauri IPC（Raw Binary IPC・Tauri Commands / Channels・`terminal-ipc` 最小権限 Capabilities・ローカル `main` WebView 限定・CSP・遷移制限・入力検証）
+- [x] herdr-coreアダプター（`herdr-core` v0.1.22 固定、`--version` および `hello.version` 検証、Framed Mode・クレジット制フロー制御・`AUTOMATIC_INPUT` 分離・再接続とスナップショット再同期）
+- [x] プロセスのライフサイクル管理（専用 0700 ディレクトリ・専用ソケット・パイプ監視による監視プロセスで、通常終了・SIGTERM・SIGINT・SIGKILL 時の確実な終了と core クラッシュ復旧を macOS 実機検証済み）
+- [x] 状態管理（React 非依存の Zustand Vanilla ストア `src/state/` で Window → Workspace → Tab → Pane・選択状態・`herdr-core` セッションミラー・OSC 7501 エージェント状態・UI/設定を管理。端末出力はストア非経由を厳守）
+- [x] Action Registry（`src/actions/` にて `ActionCaller` / `ActionOwner`・Valibot 引数検証・`canExecute`・エラー正規化・i18n ラベルを備えた組み込みアクション 9 種を実装）
+- [x] 型定義・データ検証（Rust 所有 DTO を `ts-rs` で `src-tauri/bindings/ipc.ts` へ自動生成し `cargo test` でドリフト検知。`src/ipc/generated/index.ts` → `src/ipc/types.ts` へ統合し、`src/validation/` の Valibot スキーマで外部入力および `CoreEvent.data` を実行時検証）
+- [x] エラーハンドリング（`AppError` でユーザー向け国際化文言と開発者向け診断情報を分離し、Rust 側の全主要 `IpcError` コードをマッピング、`runSafeAsync` で非同期例外を捕捉）
+- [x] ログ管理（`src/logging/logger.ts` にてレベルフィルタ・リングバッファ上限・認証情報/端末入力/IME テキストの自動マスクを実装）
+- [x] 国際化の基盤（TypeScript 辞書 `ja.ts` / `en.ts` のキー型強制・テンプレート補間・`Intl` API フォーマットラッパーを実装）
+- [x] テスト環境（Vitest による単体・統合・Phase 0 回帰テスト、Rust 単体テスト・モック IPC 権限テスト・`herdr-core` 結合テスト・監視プロセス結合テスト、Clippy、Flake 静的評価を整備）
+
+実装・検証の詳細は [docs/implementation/phase1-backend.md](../implementation/phase1-backend.md)・[docs/implementation/phase1-frontend.md](../implementation/phase1-frontend.md) を参照。macOS arm64 での統合レビュー・検証を完了し、Phase 2 へ移行可能。NixOS / Hyprland の実機検証（ビルド・GTK/WebKitGTK・Wayland・シグナル終了・Fcitx5）は引き続き保留とし、[MVP の完成条件](./mvp.md#完成条件)（Phase 6）として維持する。
 
 ## Phase 2 — ターミナル
 
@@ -45,6 +47,7 @@ description: "uitermの開発ロードマップをまとめる"
 - [ ] コピー・ペースト
 - [ ] リサイズ
 - [ ] フォント・カラー・カーソル
+- [ ] Nerd Font の表示対応
 - [ ] 日本語IME・文字幅・フォントフォールバック
 - [ ] fish・Neovim・Codexとの互換性確認
 

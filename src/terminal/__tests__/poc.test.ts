@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { t } from "../../i18n/dict.ts";
+import { t } from "../../i18n/index.ts";
 import { MockIpcClient } from "../../ipc/mock.ts";
 import type {
   AttachId,
@@ -9,9 +9,11 @@ import type {
   TerminalAttachParams,
   TerminalAttachResult,
 } from "../../ipc/types.ts";
-import { pocStore } from "../../store/pocStore.ts";
-import { MockHerdrTransport } from "../../transport/mockHerdrTransport.ts";
-import { TerminalBackendIdSchema, validateResizePayload } from "../../transport/schemas.ts";
+import { MockHerdrTransport } from "../../poc/mockHerdrTransport.ts";
+import { pocStore } from "../../poc/pocStore.ts";
+import { appStore, createAppStore } from "../../state/appStore.ts";
+import { validateResizePayload } from "../../validation/ipcSchemas.ts";
+import { TerminalBackendIdSchema } from "../../validation/settingsSchemas.ts";
 import { TerminalSessionManager } from "../sessionManager.ts";
 import type {
   TerminalAdapter,
@@ -33,9 +35,9 @@ describe("Phase 0 Frontend PoC core contracts", () => {
   });
 
   it("resolves TypeScript dictionary i18n keys without i18next", () => {
-    expect(t("ja", "appTitle")).toBe("uiterm Phase 0 PoC");
-    expect(t("ja", "backend")).toBe("描画エンジン");
-    expect(t("en", "backend")).toBe("Renderer");
+    expect(t("ja", "app.title")).toBe("uiterm");
+    expect(t("ja", "poc.backend")).toBe("描画エンジン");
+    expect(t("en", "poc.backend")).toBe("Renderer");
   });
 
   it("pipes binary Uint8Array stream directly without mutating Zustand store with output", () => {
@@ -58,7 +60,8 @@ describe("Phase 0 Frontend PoC core contracts", () => {
     transport.requestResync();
     expect(decoder.decode(chunks[chunks.length - 1]!)).toContain("herdr-core resync");
 
-    // Verify Zustand store has no terminal output buffer field
+    // Verify Zustand stores have no terminal output buffer field
+    expect("terminalOutput" in appStore.getState()).toBe(false);
     expect("terminalOutput" in pocStore.getState()).toBe(false);
 
     unsub();
@@ -113,7 +116,6 @@ function sessionAdapter(
       },
       async mount() {},
       write(bytes: Uint8Array) {
-        // Simulate wterm synchronously generating an automatic VT reply during write()
         if (write) write(bytes);
         else if (bytes.byteLength > 0) {
           callbacks.onAutoResponse(encoder.encode("\x1b[?62;22c"));
@@ -122,7 +124,6 @@ function sessionAdapter(
       resize(cols: number, rows: number) {
         fakeCols = cols;
         fakeRows = rows;
-        // Simulate terminal renderer echoing onResize synchronously
         callbacks.onResize(cols, rows);
       },
       fit() {},
@@ -161,7 +162,10 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
     mock.terminalResize = async (attachId, cols, rows) => {
       resizeCalls.push({ attachId, cols, rows });
     };
-    mock.terminalAttach = (_params: TerminalAttachParams, onFrame: (frame: OutputFrame) => void) => {
+    mock.terminalAttach = (
+      _params: TerminalAttachParams,
+      onFrame: (frame: OutputFrame) => void,
+    ) => {
       emitFrame = onFrame;
       return new Promise<TerminalAttachResult>((resolve) => {
         resolveAttach = resolve;
@@ -173,23 +177,24 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
       capturedCallbacks = callbacks;
     });
 
+    const store = createAppStore({ suppressAutoReplies: false });
     try {
-      pocStore.getState().setSuppressAutoReplies(false);
-      const mgr = new TerminalSessionManager(mock, fakeAdapterFactory as never);
-      const createPromise = mgr.createSession("race-1", "wterm-ghostty-dom", createFakeElement(), false);
+      const mgr = new TerminalSessionManager(mock, fakeAdapterFactory as never, { store });
+      const createPromise = mgr.createSession(
+        "race-1",
+        "wterm-ghostty-dom",
+        createFakeElement(),
+        false,
+      );
 
-      // Wait a microtask so terminalAttach has been invoked but NOT yet resolved
       await Promise.resolve();
       await Promise.resolve();
 
-      // Emit a 20 KiB initial repaint BEFORE terminalAttach resolves!
       emitFrame({ kind: "data", bytes: new Uint8Array(20 * 1024).fill(65) });
 
-      // Must NOT have sent anything with attachId = 0!
       expect(ackCalls).toEqual([]);
       expect(writeCalls).toEqual([]);
 
-      // Now resolve terminalAttach with real attachId = 7
       resolveAttach({
         attachId: 7,
         terminal: {
@@ -220,28 +225,24 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
 
       await createPromise;
 
-      // Queued ACK and automatic reply must now flush with real attachId = 7!
       expect(ackCalls).toEqual([{ attachId: 7, bytes: 20 * 1024 }]);
       expect(writeCalls).toEqual([{ attachId: 7, kind: "automatic", len: 9 }]);
 
-      // Backend-originated RESIZE must NOT echo back to client.terminalResize!
       emitFrame({ kind: "resize", cols: 120, rows: 40 });
       expect(resizeCalls).toEqual([]);
 
-      // User-originated resize to a different size MUST send terminalResize!
       capturedCallbacks.onResize(132, 43);
       expect(resizeCalls).toEqual([{ attachId: 7, cols: 132, rows: 43 }]);
 
-      // Duplicate resize to same (132, 43) is deduplicated
       capturedCallbacks.onResize(132, 43);
       expect(resizeCalls).toEqual([{ attachId: 7, cols: 132, rows: 43 }]);
 
       mgr.disposeAll();
     } finally {
-      pocStore.getState().setSuppressAutoReplies(true);
       (globalThis as unknown as { document: typeof prevDoc }).document = prevDoc;
     }
   });
+
   it("does not revive a closed attachment or replay its input after resync", async () => {
     vi.stubGlobal("document", { createElement: createFakeElement });
     try {
@@ -261,10 +262,24 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
       };
       let adapterCallbacks!: TerminalAdapterCallbacks;
       const render = vi.fn();
-      const mgr = new TerminalSessionManager(mock, sessionAdapter((callbacks) => {
-        adapterCallbacks = callbacks;
-      }, undefined, render));
-      const session = await mgr.createSession("closed", "wterm-ghostty-dom", createFakeElement(), false);
+      const store = createAppStore();
+      const mgr = new TerminalSessionManager(
+        mock,
+        sessionAdapter(
+          (cbs) => {
+            adapterCallbacks = cbs;
+          },
+          undefined,
+          render,
+        ),
+        { store },
+      );
+      const session = await mgr.createSession(
+        "closed",
+        "wterm-ghostty-dom",
+        createFakeElement(),
+        false,
+      );
       adapterCallbacks.onUserInput(encoder.encode("stale"));
       expect(session.attachId).toBe(0);
       expect(writes).not.toHaveBeenCalled();
@@ -276,7 +291,11 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
       callbacks[0]!({ kind: "data", bytes: encoder.encode("stale") });
       expect(render).toHaveBeenCalledTimes(rendered);
       adapterCallbacks.onUserInput(encoder.encode("新しい入力"));
-      expect(writes).toHaveBeenCalledExactlyOnceWith(session.attachId, encoder.encode("新しい入力"), "user");
+      expect(writes).toHaveBeenCalledExactlyOnceWith(
+        session.attachId,
+        encoder.encode("新しい入力"),
+        "user",
+      );
       mgr.disposeAll();
     } finally {
       vi.unstubAllGlobals();
@@ -288,10 +307,13 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
     try {
       const mock = new MockIpcClient();
       const dispose = vi.fn();
-      const mgr = new TerminalSessionManager(mock, sessionAdapter(() => {}, dispose));
+      const store = createAppStore();
+      const mgr = new TerminalSessionManager(mock, sessionAdapter(() => {}, dispose), { store });
       mock.terminalAttach = vi.fn().mockRejectedValue(new Error("attach failed"));
       const host = createFakeElement();
-      await expect(mgr.createSession("failed", "wterm-ghostty-dom", host, false)).rejects.toThrow("attach failed");
+      await expect(mgr.createSession("failed", "wterm-ghostty-dom", host, false)).rejects.toThrow(
+        "attach failed",
+      );
       expect(dispose).toHaveBeenCalledTimes(1);
       expect(await mock.terminalList()).toEqual([]);
       expect(mgr.get("failed")).toBeUndefined();
@@ -311,16 +333,36 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
     try {
       const mock = new MockIpcClient();
       let release!: () => void;
-      const firstWrite = new Promise<void>((resolve) => { release = resolve; });
+      const firstWrite = new Promise<void>((resolve) => {
+        release = resolve;
+      });
       const writes = vi.spyOn(mock, "terminalWrite").mockReturnValueOnce(firstWrite);
       let adapterCallbacks!: TerminalAdapterCallbacks;
-      const mgr = new TerminalSessionManager(mock, sessionAdapter((callbacks) => {
-        adapterCallbacks = callbacks;
-      }, undefined, () => {}));
-      const session = await mgr.createSession("order", "wterm-ghostty-dom", createFakeElement(), false);
+      const store = createAppStore();
+      const mgr = new TerminalSessionManager(
+        mock,
+        sessionAdapter(
+          (cbs) => {
+            adapterCallbacks = cbs;
+          },
+          undefined,
+          () => {},
+        ),
+        { store },
+      );
+      const session = await mgr.createSession(
+        "order",
+        "wterm-ghostty-dom",
+        createFakeElement(),
+        false,
+      );
       adapterCallbacks.onUserInput(encoder.encode("日本語"));
       adapterCallbacks.onUserInput(encoder.encode("\r"));
-      expect(writes).toHaveBeenCalledExactlyOnceWith(session.attachId, encoder.encode("日本語"), "user");
+      expect(writes).toHaveBeenCalledExactlyOnceWith(
+        session.attachId,
+        encoder.encode("日本語"),
+        "user",
+      );
       release();
       await firstWrite;
       expect(writes).toHaveBeenNthCalledWith(2, session.attachId, encoder.encode("\r"), "user");
@@ -329,7 +371,6 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
       vi.unstubAllGlobals();
     }
   });
-
 });
 
 describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounded logs, cleanup)", () => {
@@ -341,15 +382,17 @@ describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounde
     expect(() => v.parse(TerminalBackendIdSchema, "xterm")).toThrow();
   });
 
-  it("avoids redundant store updates on unchanged tab dimensions and bounds diagnostic logs", () => {
-    pocStore.getState().setTabs([{ id: "t1", title: "t1", cols: 80, rows: 24 }], "t1");
-    const tabsBefore = pocStore.getState().tabs;
-    pocStore.getState().updateTabSize("t1", 80, 24);
-    expect(pocStore.getState().tabs).toBe(tabsBefore);
+  it("avoids redundant store updates on unchanged pane dimensions and bounds diagnostic logs", () => {
+    const store = createAppStore();
+    store.getState().addTerminalTab({ tabId: "t1", title: "t1", cols: 80, rows: 24 });
+    const panesBefore = store.getState().panes;
+    store.getState().updatePaneSize("t1", 80, 24);
+    expect(store.getState().panes).toBe(panesBefore);
 
-    pocStore.getState().updateTabSize("t1", 100, 30);
-    expect(pocStore.getState().tabs).not.toBe(tabsBefore);
-    expect(pocStore.getState().tabs[0]).toEqual({ id: "t1", title: "t1", cols: 100, rows: 30 });
+    store.getState().updatePaneSize("t1", 100, 30);
+    expect(store.getState().panes).not.toBe(panesBefore);
+    expect(store.getState().panes["t1"]?.cols).toBe(100);
+    expect(store.getState().panes["t1"]?.rows).toBe(30);
 
     pocStore.getState().clearLogs();
     pocStore.getState().setDiagnosticsEnabled(true);
@@ -363,9 +406,7 @@ describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounde
     pocStore.getState().pushLog("system", "system-still-logged");
     expect(pocStore.getState().logs.length).toBe(2);
 
-    pocStore.getState().setDiagnosticsEnabled(true);
     pocStore.getState().clearLogs();
-    pocStore.getState().setTabs([], null);
   });
 
   it("initializes hidden terminals paused, deduplicates focus IPC, and unsubscribes events", async () => {
@@ -417,7 +458,8 @@ describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounde
     };
 
     try {
-      const mgr = new TerminalSessionManager(mock, fakeAdapterFactory as never);
+      const store = createAppStore();
+      const mgr = new TerminalSessionManager(mock, fakeAdapterFactory as never, { store });
       await mgr.startEventStream();
 
       const root = createFakeElement();
@@ -425,24 +467,20 @@ describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounde
       const s2 = await mgr.createSession("s2", "wterm-ghostty-dom", root, true);
       const s3 = await mgr.createSession("s3", "wterm-ghostty-dom", root, true);
 
-      // Hidden sessions start with renderingPaused: true
       expect(mountOptions[0]?.renderingPaused).toBe(false);
       expect(mountOptions[1]?.renderingPaused).toBe(true);
       expect(mountOptions[2]?.renderingPaused).toBe(true);
 
-      // Switching from s1 -> s2 should only send focus IPC for s1 (false) and s2 (true), NOT s3!
       mgr.setActive("s2");
       expect(focusCalls).toEqual([
         { attachId: s1.attachId, focused: false },
         { attachId: s2.attachId, focused: true },
       ]);
 
-      // Repeating setActive("s2") should send zero focus IPC calls
       focusCalls.length = 0;
       mgr.setActive("s2");
       expect(focusCalls).toEqual([]);
 
-      // Switching s2 -> s3 should only touch s2 and s3
       mgr.setActive("s3");
       expect(focusCalls).toEqual([
         { attachId: s2.attachId, focused: false },

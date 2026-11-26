@@ -13,20 +13,31 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigEvalParams {
     pub config_path: String,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub action_name: Option<String>,
+    #[cfg_attr(test, ts(type = "unknown"))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub action_args: Option<Value>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub event_name: Option<String>,
+    #[cfg_attr(test, ts(type = "unknown"))]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub event_payload: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigEvalResult {
+    #[cfg_attr(test, ts(type = "unknown"))]
     pub config: Value,
+    #[cfg_attr(test, ts(type = "unknown"))]
     pub action_result: Value,
+    #[cfg_attr(test, ts(type = "unknown"))]
     pub hook_result: Value,
     pub startup_ms: f64,
     pub rpc_ms: f64,
@@ -43,11 +54,25 @@ pub struct ConfigWorker {
 impl ConfigWorker {
     pub async fn spawn(worker_script: &Path) -> Result<(Self, f64), IpcError> {
         let start = Instant::now();
-        let mut child = Command::new("node")
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let node = std::env::split_paths(&path)
+            .filter(|dir| dir.is_absolute())
+            .map(|dir| dir.join("node"))
+            .find(|path| path.is_file())
+            .ok_or_else(|| {
+                IpcError::with_hint(
+                    "node_spawn_failed",
+                    "Node.js was not found in an absolute PATH entry",
+                    Some("Ensure Node.js 24 LTS is available in PATH".into()),
+                )
+            })?;
+        let mut child = Command::new(node)
             .arg(worker_script)
+            .env_remove("NODE_OPTIONS")
+            .env_remove("NODE_PATH")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| {
