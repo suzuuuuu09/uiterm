@@ -25,16 +25,21 @@ impl AppState {
     }
 
     pub async fn ensure_client(&self) -> Result<HerdrClient, IpcError> {
-        {
-            let guard = self.client.lock().await;
-            if let Some(client) = guard.as_ref() {
-                return Ok(client.clone());
-            }
-        }
-        self.connect_fresh().await
+        self.connect(false).await
     }
 
     pub async fn connect_fresh(&self) -> Result<HerdrClient, IpcError> {
+        self.connect(true).await
+    }
+
+    async fn connect(&self, reconnect: bool) -> Result<HerdrClient, IpcError> {
+        let mut guard = self.client.lock().await;
+        if let Some(client) = guard.as_ref()
+            && (client.is_connected() || !reconnect)
+        {
+            return Ok(client.clone());
+        }
+
         let (socket_path, session) = {
             let mut daemon_guard = self.daemon.lock().await;
             if daemon_guard.is_none() {
@@ -47,7 +52,6 @@ impl AppState {
         };
 
         let client = HerdrClient::connect(&socket_path, session).await?;
-        let mut guard = self.client.lock().await;
         *guard = Some(client.clone());
         Ok(client)
     }
@@ -94,8 +98,17 @@ pub async fn terminal_create(
         params.argv = Some(vec![shell]);
     }
 
-    // Ensure UTF-8 locale is always present for full-width Japanese character width handling.
+    // Supply a default when LANG is missing, preserving the caller's locale overrides.
     let env_map = params.env.get_or_insert_with(Default::default);
+    // The daemon's runtime path isolates holder startup from Linux's user manager.
+    // Programs need the user's compositor/session sockets.
+    if cfg!(target_os = "linux") {
+        for key in ["XDG_RUNTIME_DIR", "WAYLAND_DISPLAY"] {
+            if let Ok(value) = std::env::var(key) {
+                env_map.entry(key.into()).or_insert(value);
+            }
+        }
+    }
     if !env_map.contains_key("LANG")
         && std::env::var("LANG")
             .map(|v| v.trim().is_empty())
@@ -104,7 +117,14 @@ pub async fn terminal_create(
         let fallback_lang = std::env::var("LC_CTYPE")
             .ok()
             .filter(|v| v.to_uppercase().contains("UTF-8") || v.to_uppercase().contains("UTF8"))
-            .unwrap_or_else(|| "en_US.UTF-8".to_string());
+            .unwrap_or_else(|| {
+                if cfg!(target_os = "linux") {
+                    "C.UTF-8"
+                } else {
+                    "en_US.UTF-8"
+                }
+                .to_owned()
+            });
         env_map.insert("LANG".to_string(), fallback_lang);
     }
 
@@ -114,20 +134,37 @@ pub async fn terminal_create(
 
 #[cfg(unix)]
 fn resolve_os_default_shell() -> Option<String> {
-    // SAFETY: geteuid/getpwuid are standard POSIX calls; we immediately copy pw_shell
-    // into an owned String if the returned pointer and pw_shell are non-null.
-    let pw_shell = unsafe {
-        let pw = libc::getpwuid(libc::geteuid());
-        if pw.is_null() || (*pw).pw_shell.is_null() {
-            None
-        } else {
-            std::ffi::CStr::from_ptr((*pw).pw_shell)
-                .to_str()
-                .ok()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(String::from)
+    let mut size = 1024;
+    let pw_shell = loop {
+        let mut buffer = vec![0; size];
+        let mut pwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
+        let mut result = std::ptr::null_mut();
+
+        // The reentrant lookup stores the record and strings in our local buffers.
+        let status = unsafe {
+            libc::getpwuid_r(
+                libc::geteuid(),
+                pwd.as_mut_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut result,
+            )
+        };
+        if status == libc::ERANGE && size < 1024 * 1024 {
+            size *= 2;
+            continue;
         }
+        if status != 0 || result.is_null() {
+            break None;
+        }
+        let shell = unsafe { (*result).pw_shell };
+        if shell.is_null() {
+            break None;
+        }
+        break unsafe { std::ffi::CStr::from_ptr(shell) }
+            .to_str()
+            .ok()
+            .map(str::to_owned);
     };
 
     if let Some(shell) = pw_shell
@@ -170,10 +207,12 @@ pub async fn terminal_attach(
     let mut handle = client.terminal_attach(params).await?;
     let result = handle.result.clone();
 
+    let attach_id = result.attach_id;
     tokio::spawn(async move {
         while let Some(frame) = handle.rx.recv().await {
             let ipc_bytes = frame.into_ipc_bytes();
             if on_output.send(Response::new(ipc_bytes)).is_err() {
+                let _ = client.terminal_detach(attach_id).await;
                 break;
             }
         }
@@ -208,12 +247,12 @@ pub async fn terminal_write(
             )
         })?;
 
-    let automatic = request
-        .headers()
-        .get("x-uiterm-input-kind")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s == "automatic")
-        .unwrap_or(false);
+    let automatic = match request.headers().get("x-uiterm-input-kind") {
+        None => false,
+        Some(value) if value == "user" => false,
+        Some(value) if value == "automatic" => true,
+        _ => return Err(IpcError::new("invalid_args", "unknown input kind")),
+    };
 
     let bytes = match request.body() {
         InvokeBody::Raw(raw) => raw.clone(),
@@ -283,17 +322,47 @@ pub async fn terminal_kill(
     client.terminal_kill(&session_id).await
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventDelivery {
+    subscription_id: u32,
+    events: Vec<CoreEvent>,
+    bytes: u32,
+}
+
+#[tauri::command]
+pub async fn events_ack(
+    state: State<'_, Arc<AppState>>,
+    subscription_id: u32,
+    bytes: u32,
+) -> Result<(), IpcError> {
+    state
+        .ensure_client()
+        .await?
+        .events_ack(subscription_id, bytes)
+        .await
+}
+
 #[tauri::command]
 pub async fn events_subscribe(
     state: State<'_, Arc<AppState>>,
-    on_event: Channel<CoreEvent>,
+    on_event: Channel<EventDelivery>,
 ) -> Result<EventsSubscribeResult, IpcError> {
     let client = state.ensure_client().await?;
     let (result, mut rx) = client.events_subscribe().await?;
 
+    let subscription_id = result.subscription_id;
     tokio::spawn(async move {
-        while let Some(ev) = rx.recv().await {
-            if on_event.send(ev).is_err() {
+        while let Some(batch) = rx.recv().await {
+            if on_event
+                .send(EventDelivery {
+                    subscription_id,
+                    events: batch.events,
+                    bytes: batch.bytes,
+                })
+                .is_err()
+            {
+                let _ = client.events_unsubscribe(subscription_id).await;
                 break;
             }
         }
@@ -312,6 +381,19 @@ pub async fn events_unsubscribe(
 }
 
 #[tauri::command]
-pub async fn config_eval_poc(params: ConfigEvalParams) -> Result<ConfigEvalResult, IpcError> {
+pub async fn config_eval_poc(mut params: ConfigEvalParams) -> Result<ConfigEvalResult, IpcError> {
+    let sample = config_runtime::resolve_worker_script().with_file_name("sample.config.ts");
+    if std::path::Path::new(&params.config_path)
+        .canonicalize()
+        .ok()
+        .as_ref()
+        != Some(&sample)
+    {
+        return Err(IpcError::new(
+            "untrusted_config",
+            "only the PoC sample config is available over IPC",
+        ));
+    }
+    params.config_path = sample.to_string_lossy().into_owned();
     config_runtime::eval_config_poc(params).await
 }

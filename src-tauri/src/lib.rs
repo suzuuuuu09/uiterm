@@ -27,6 +27,7 @@ pub fn run() {
             commands::terminal_ack,
             commands::terminal_kill,
             commands::events_subscribe,
+            commands::events_ack,
             commands::events_unsubscribe,
             commands::config_eval_poc,
         ])

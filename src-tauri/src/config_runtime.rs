@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Instant;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -47,7 +47,7 @@ impl ConfigWorker {
             .arg(worker_script)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::inherit())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| {
@@ -81,6 +81,19 @@ impl ConfigWorker {
     }
 
     pub async fn call(&mut self, method: &str, params: Value) -> Result<Value, IpcError> {
+        match tokio::time::timeout(Duration::from_secs(10), self.exchange(method, params)).await {
+            Ok(result) => result,
+            Err(_) => {
+                let _ = self.child.start_kill();
+                Err(IpcError::new(
+                    "config_timeout",
+                    format!("Node worker did not answer {method}"),
+                ))
+            }
+        }
+    }
+
+    async fn exchange(&mut self, method: &str, params: Value) -> Result<Value, IpcError> {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -104,8 +117,8 @@ impl ConfigWorker {
             .map_err(|e| IpcError::new("io_error", format!("worker flush failed: {e}")))?;
 
         let mut resp_line = String::new();
-        let n = self
-            .stdout
+        let n = (&mut self.stdout)
+            .take(1024 * 1024)
             .read_line(&mut resp_line)
             .await
             .map_err(|e| IpcError::new("io_error", format!("worker read failed: {e}")))?;
@@ -118,6 +131,12 @@ impl ConfigWorker {
 
         let resp: Value = serde_json::from_str(&resp_line)
             .map_err(|e| IpcError::new("protocol_error", format!("invalid worker JSON: {e}")))?;
+        if !resp_line.ends_with('\n') || resp["id"].as_u64() != Some(id) {
+            return Err(IpcError::new(
+                "protocol_error",
+                "incomplete or mismatched worker reply",
+            ));
+        }
         if let Some(err) = resp.get("error") {
             let msg = err
                 .get("message")
@@ -130,11 +149,7 @@ impl ConfigWorker {
 
     pub async fn shutdown(mut self) -> Result<(), IpcError> {
         let _ = self.call("shutdown", json!({})).await;
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            self.child.wait(),
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), self.child.wait()).await;
         let _ = self.child.kill().await;
         Ok(())
     }

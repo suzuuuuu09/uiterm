@@ -14,7 +14,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 import { type DictKey, t } from "./i18n/dict.ts";
 import { type BenchmarkRow, pocStore, type TabMeta, usePocStore } from "./store/pocStore.ts";
 import { sessionManager } from "./terminal/sessionManager.ts";
@@ -57,6 +57,7 @@ export function App() {
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   const initializedRef = useRef(false);
+  const tabGenerationRef = useRef(0);
 
   const spawnTabs = useCallback(async (count: number, replace = false) => {
     const host = hostRef.current;
@@ -64,20 +65,22 @@ export function App() {
     const state = pocStore.getState();
 
     if (replace) {
+      tabGenerationRef.current++;
       sessionManager.disposeAll();
       state.setTabs([], null);
       state.resetStats();
     }
 
-    const existing = replace ? [] : [...pocStore.getState().tabs];
+    const generation = tabGenerationRef.current;
     const created: TabMeta[] = [];
 
     for (let i = 0; i < count; i++) {
       const id = `term-${nextTabCounter++}`;
       const tab: TabMeta = { id, title: id, cols: 80, rows: 24 };
-      const isFirst = existing.length === 0 && i === 0;
+      const isFirst = pocStore.getState().tabs.length === 0 && i === 0;
       try {
         await sessionManager.createSession(id, pocStore.getState().backendId, host, !isFirst);
+        if (generation !== tabGenerationRef.current) return;
         created.push(tab);
       } catch {
         // Error is already recorded in diagnostic log by sessionManager.
@@ -85,18 +88,29 @@ export function App() {
       }
     }
 
-    const allTabs = [...existing, ...created];
+    if (generation !== tabGenerationRef.current) return;
+    const current = pocStore.getState();
+    const allTabs = [...current.tabs, ...created];
     const nextActive = replace
       ? (created[0]?.id ?? null)
-      : (created[created.length - 1]?.id ?? state.activeTabId);
-    pocStore.getState().setTabs(allTabs, nextActive);
+      : (created[created.length - 1]?.id ?? current.activeTabId);
+    current.setTabs(allTabs, nextActive);
     sessionManager.setActive(nextActive);
   }, []);
 
   const handleHostReady = useCallback(
     (el: HTMLDivElement | null) => {
       hostRef.current = el;
-      if (el && !initializedRef.current) {
+      if (!el) {
+        // React StrictMode reattaches the same host before the microtask runs.
+        queueMicrotask(() => {
+          if (!hostRef.current) {
+            tabGenerationRef.current++;
+            initializedRef.current = false;
+            sessionManager.disposeAll();
+          }
+        });
+      } else if (!initializedRef.current) {
         initializedRef.current = true;
         void sessionManager.startEventStream();
         void spawnTabs(1, true);
@@ -104,12 +118,6 @@ export function App() {
     },
     [spawnTabs],
   );
-
-  useEffect(() => {
-    return () => {
-      sessionManager.disposeAll();
-    };
-  }, []);
 
   const handleBackendChange = async (nextBackend: TerminalBackendId) => {
     pocStore.getState().setBackendId(nextBackend);
@@ -128,6 +136,7 @@ export function App() {
   };
 
   const handleCloseAll = () => {
+    tabGenerationRef.current++;
     sessionManager.disposeAll();
     pocStore.getState().setTabs([], null);
     pocStore.getState().resetStats();
@@ -141,6 +150,7 @@ export function App() {
   const handleRunBenchmark = async () => {
     const host = hostRef.current;
     if (!host || pocStore.getState().benchRunning) return;
+    tabGenerationRef.current++;
     pocStore.getState().setBenchRunning(true);
     pocStore.getState().clearBenchResults();
     const currentBackend = pocStore.getState().backendId;
@@ -217,6 +227,11 @@ export function App() {
       }
       // Restore 1 active terminal after benchmark
       await spawnTabs(1, true);
+    } catch (err) {
+      for (const count of [1, 5, 10]) {
+        for (let i = 0; i < count; i++) sessionManager.disposeSession(`bench-${count}-${i}`);
+      }
+      pocStore.getState().pushLog("system", `Benchmark aborted: ${String(err)}`);
     } finally {
       pocStore.getState().setBenchRunning(false);
     }

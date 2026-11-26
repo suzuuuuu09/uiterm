@@ -1,78 +1,50 @@
-//! Isolated herdr-core daemon lifecycle manager.
-//!
-//! Launches a dedicated herdr-core instance with isolated XDG directories,
-//! session name, and Unix socket path so existing user Herdr / herdr-core
-//! sessions and configs are never modified.
+//! Lifecycle of the app's private herdr-core instance.
 
 use crate::herdr::types::IpcError;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 
 static INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(1);
+const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct HerdrLaunchConfig {
-    pub binary: PathBuf,
+    binary: PathBuf,
     pub session: String,
-    pub base_dir: PathBuf,
-    pub socket_path: PathBuf,
-    pub state_dir: PathBuf,
-    pub config_dir: PathBuf,
-    pub runtime_dir: PathBuf,
-    pub cleanup_on_drop: bool,
 }
 
 impl HerdrLaunchConfig {
-    /// Build an isolated configuration under `/tmp/ut-<pid>-<seq>/` so that
-    /// the Unix socket path always stays well under macOS's 104-byte limit.
     pub fn isolated(prefix: &str) -> Result<Self, IpcError> {
         let binary = resolve_herdr_core_bin()?;
         let pid = std::process::id();
         let seq = INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let base_dir = PathBuf::from(format!("/tmp/ut-{prefix}-{pid}-{seq}"));
-        let state_dir = base_dir.join("st");
-        let config_dir = base_dir.join("cf");
-        let runtime_dir = base_dir.join("rt");
-        let socket_path = base_dir.join("hc.sock");
-        let session = format!("ut-{prefix}-{pid}-{seq}");
-
         Ok(Self {
             binary,
-            session,
-            base_dir,
-            socket_path,
-            state_dir,
-            config_dir,
-            runtime_dir,
-            cleanup_on_drop: true,
+            session: format!("ut-{prefix}-{pid}-{seq}"),
         })
-    }
-
-    fn apply_env(&self, cmd: &mut Command) {
-        cmd.env("HC_SESSION", &self.session)
-            .env("HC_SOCKET", &self.socket_path)
-            .env("XDG_STATE_HOME", &self.state_dir)
-            .env("XDG_CONFIG_HOME", &self.config_dir)
-            .env("XDG_RUNTIME_DIR", &self.runtime_dir);
     }
 }
 
 pub fn resolve_herdr_core_bin() -> Result<PathBuf, IpcError> {
-    if let Ok(explicit) = std::env::var("HERDR_CORE_BIN") {
-        let p = PathBuf::from(explicit);
-        if p.exists() {
-            return Ok(p);
+    if let Some(explicit) = std::env::var_os("HERDR_CORE_BIN") {
+        let path = PathBuf::from(explicit);
+        if path.is_absolute() && path.is_file() {
+            return Ok(path);
         }
+        return Err(IpcError::new(
+            "invalid_core_path",
+            "HERDR_CORE_BIN must be an absolute file path",
+        ));
     }
-    if let Ok(path_var) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path_var) {
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var).filter(|path| path.is_absolute()) {
             for candidate in ["herdr-core", "hc"] {
-                let p = dir.join(candidate);
-                if p.is_file() {
-                    return Ok(p);
+                let path = dir.join(candidate);
+                if path.is_file() {
+                    return Ok(path);
                 }
             }
         }
@@ -87,66 +59,90 @@ pub fn resolve_herdr_core_bin() -> Result<PathBuf, IpcError> {
 #[derive(Debug)]
 pub struct HerdrDaemon {
     config: HerdrLaunchConfig,
+    base_dir: PathBuf,
+    socket_path: PathBuf,
+    child: Option<Child>,
+    ready: bool,
     stopped: bool,
 }
 
 impl HerdrDaemon {
-    /// Start an isolated herdr-core daemon and wait until its Unix socket accepts connections.
     pub async fn start(config: HerdrLaunchConfig) -> Result<Self, IpcError> {
-        for dir in [
-            &config.base_dir,
-            &config.state_dir,
-            &config.config_dir,
-            &config.runtime_dir,
-        ] {
-            std::fs::create_dir_all(dir).map_err(|e| {
-                IpcError::new(
-                    "io_error",
-                    format!("failed to create {}: {e}", dir.display()),
-                )
-            })?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-            }
-        }
-
-        let mut cmd = Command::new(&config.binary);
-        cmd.args(["server", "start"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        config.apply_env(&mut cmd);
-
-        let output = cmd.output().await.map_err(|e| {
-            IpcError::new(
-                "spawn_failed",
-                format!(
-                    "failed to spawn `{}` server start: {e}",
-                    config.binary.display()
-                ),
-            )
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut template = *b"/tmp/uiterm.XXXXXXXX\0";
+        // mkdtemp creates the directory atomically with mode 0700 and substitutes ASCII.
+        if unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) }.is_null() {
             return Err(IpcError::new(
-                "core_start_failed",
-                format!(
-                    "herdr-core server start failed (code {:?}): {}",
-                    output.status.code(),
-                    stderr.trim()
-                ),
+                "io_error",
+                std::io::Error::last_os_error().to_string(),
             ));
         }
-
-        wait_for_socket(&config.socket_path, Duration::from_secs(5)).await?;
-
-        Ok(Self {
+        let base_dir = PathBuf::from(std::str::from_utf8(&template[..template.len() - 1]).unwrap());
+        let mut daemon = Self {
+            socket_path: base_dir.join("hc.sock"),
+            base_dir,
             config,
+            child: None,
+            ready: false,
             stopped: false,
-        })
+        };
+
+        // The pinned core's `serve` runs in the foreground and skips shared launchd/systemd
+        // startup. We supervise only the process we spawn.
+        daemon.child = Some(
+            Command::from(daemon.command(&["serve"]))
+                .stderr(Stdio::inherit())
+                .kill_on_drop(true)
+                .spawn()
+                .map_err(|err| IpcError::new("spawn_failed", err.to_string()))?,
+        );
+
+        let deadline = Instant::now() + STOP_TIMEOUT;
+        loop {
+            let child = daemon.child.as_mut().unwrap();
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|err| IpcError::new("core_start_failed", err.to_string()))?
+            {
+                return Err(IpcError::new(
+                    "core_start_failed",
+                    format!("herdr-core serve: {status}"),
+                ));
+            }
+            if daemon.socket_path.exists()
+                && tokio::net::UnixStream::connect(daemon.socket_path())
+                    .await
+                    .is_ok()
+            {
+                daemon.ready = true;
+                return Ok(daemon);
+            }
+            if Instant::now() >= deadline {
+                return Err(IpcError::new(
+                    "core_start_timeout",
+                    "herdr-core did not open its socket",
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    fn command(&self, args: &[&str]) -> std::process::Command {
+        let mut cmd = std::process::Command::new(&self.config.binary);
+        cmd.args(args)
+            .env_remove("HC_SCOPE")
+            .env("HC_RUNTIME", "1")
+            .env("HC_LAUNCHD_DIRECT", std::process::id().to_string())
+            .env_remove("HC_LAUNCHD_DETACH")
+            .env("HC_SESSION", &self.config.session)
+            .env("HC_SOCKET", &self.socket_path)
+            .env("XDG_STATE_HOME", self.base_dir.join("st"))
+            .env("XDG_CONFIG_HOME", self.base_dir.join("cf"))
+            // v0.1.22 bypasses the systemd user manager with a private runtime directory.
+            .env("XDG_RUNTIME_DIR", self.base_dir.join("rt"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        cmd
     }
 
     pub fn config(&self) -> &HerdrLaunchConfig {
@@ -154,51 +150,105 @@ impl HerdrDaemon {
     }
 
     pub fn socket_path(&self) -> &Path {
-        &self.config.socket_path
+        &self.socket_path
     }
 
-    /// Gracefully stop this isolated herdr-core daemon and remove its temp directory.
     pub async fn stop(&mut self) -> Result<(), IpcError> {
         if self.stopped {
             return Ok(());
         }
-        self.stopped = true;
+        tokio::time::timeout(STOP_TIMEOUT, async {
+            self.ensure_graceful_stop_possible()?;
+            let output = Command::from(self.command(&["--json", "server", "stop"]))
+                .stdout(Stdio::piped())
+                .kill_on_drop(true)
+                .output()
+                .await
+                .map_err(stop_error)?;
+            check_stop_reply(output)?;
+            self.child
+                .as_mut()
+                .unwrap()
+                .wait()
+                .await
+                .map_err(stop_error)?;
+            self.remove_state()
+        })
+        .await
+        .map_err(|_| stop_error("graceful stop timed out"))?
+    }
 
-        let mut cmd = Command::new(&self.config.binary);
-        cmd.args(["server", "stop"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        self.config.apply_env(&mut cmd);
-        let _ = tokio::time::timeout(Duration::from_secs(5), cmd.status()).await;
-
-        if self.config.cleanup_on_drop {
-            let _ = std::fs::remove_dir_all(&self.config.base_dir);
+    fn ensure_graceful_stop_possible(&self) -> Result<(), IpcError> {
+        if !self.socket_path.exists() {
+            return Err(stop_error(
+                "core socket is missing; preserved state for its holders",
+            ));
         }
         Ok(())
     }
 
-    /// Synchronous best-effort stop for Drop / app exit handlers.
-    pub fn stop_blocking(&mut self) {
-        if self.stopped {
-            return;
-        }
+    fn remove_state(&mut self) -> Result<(), IpcError> {
+        std::fs::remove_dir_all(&self.base_dir)
+            .map_err(|err| IpcError::new("io_error", err.to_string()))?;
         self.stopped = true;
+        Ok(())
+    }
 
-        let mut cmd = std::process::Command::new(&self.config.binary);
-        cmd.args(["server", "stop"])
-            .env("HC_SESSION", &self.config.session)
-            .env("HC_SOCKET", &self.config.socket_path)
-            .env("XDG_STATE_HOME", &self.config.state_dir)
-            .env("XDG_CONFIG_HOME", &self.config.config_dir)
-            .env("XDG_RUNTIME_DIR", &self.config.runtime_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let _ = cmd.status();
+    fn stop_sync(&mut self) -> Result<(), IpcError> {
+        if self.stopped {
+            return Ok(());
+        }
+        if !self.ready {
+            if let Some(child) = &mut self.child {
+                let _ = child.start_kill();
+            }
+            return self.remove_state();
+        }
+        self.ensure_graceful_stop_possible()?;
+        let mut child = self
+            .command(&["--json", "server", "stop"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(stop_error)?;
+        let deadline = Instant::now() + STOP_TIMEOUT;
+        loop {
+            if child.try_wait().map_err(stop_error)?.is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(stop_error("graceful stop timed out"));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        check_stop_reply(child.wait_with_output().map_err(stop_error)?)?;
+        loop {
+            if self
+                .child
+                .as_mut()
+                .unwrap()
+                .try_wait()
+                .map_err(stop_error)?
+                .is_some()
+            {
+                return self.remove_state();
+            }
+            if Instant::now() >= deadline {
+                return Err(stop_error("core did not exit after accepting stop"));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
 
-        if self.config.cleanup_on_drop {
-            let _ = std::fs::remove_dir_all(&self.config.base_dir);
+    pub fn stop_blocking(&mut self) {
+        if let Err(err) = self.stop_sync() {
+            eprintln!(
+                "{}: {} ({})",
+                err.code,
+                err.message,
+                self.base_dir.display()
+            );
         }
     }
 }
@@ -209,18 +259,22 @@ impl Drop for HerdrDaemon {
     }
 }
 
-async fn wait_for_socket(path: &Path, timeout: Duration) -> Result<(), IpcError> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if path.exists() && tokio::net::UnixStream::connect(path).await.is_ok() {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(IpcError::new(
-                "core_start_timeout",
-                format!("timed out waiting for herdr-core socket at {}", path.display()),
-            ));
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+fn stop_error(err: impl std::fmt::Display) -> IpcError {
+    IpcError::new("core_stop_failed", err.to_string())
+}
+
+fn check_stop_reply(output: std::process::Output) -> Result<(), IpcError> {
+    if !output.status.success() {
+        return Err(stop_error(output.status));
     }
+    if serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .ok()
+        .and_then(|reply| reply["stopped"].as_bool())
+        != Some(true)
+    {
+        return Err(stop_error(
+            "core did not confirm stop; preserved state for its holders",
+        ));
+    }
+    Ok(())
 }

@@ -14,8 +14,8 @@ TypeScript 側の型定義・実装は [src/ipc/types.ts](../../src/ipc/types.ts
 | 識別子 | 型 | 説明 |
 | --- | --- | --- |
 | `SessionId` | `string` | `herdr-core` が採番する不変の端末アドレス（例: `"t1"`, `"t2"`）。プロセス終了後も一意。 |
-| `AttachId` | `number` (`u32`) | `terminal_attach` で割り当てられる Framed Mode のストリームチャンネル ID。`terminal_write` / `terminal_resize` / `terminal_focus` / `terminal_facts` / `terminal_ack` / `terminal_detach` の対象指定に使用する。 |
-| `subscriptionId` | `number` (`u32`) | `events_subscribe` で割り当てられるイベント購読チャンネル ID。 |
+| `AttachId` | `number` (`u32`) | `terminal_attach` で割り当てられる uiterm のプロセス内で一意なストリーム ID。Rust が接続ごとの Framed Mode チャンネルに変換する。`terminal_write` / `terminal_resize` / `terminal_focus` / `terminal_facts` / `terminal_ack` / `terminal_detach` の対象指定に使用する。 |
+| `subscriptionId` | `number` (`u32`) | `events_subscribe` で割り当てられるイベント購読 ID。アタッチと同様、Rust が接続ごとのチャンネルに変換する。 |
 
 1 つの `SessionId` に対して複数回 `terminal_attach`（再接続や `observe: true` での監視）を行えるため、セッション識別子とアタッチストリーム識別子を分離している。
 
@@ -38,7 +38,7 @@ export interface IpcError {
 | コマンド名 | 引数 | 戻り値 | 説明 |
 | --- | --- | --- | --- |
 | `core_status` | なし | `CoreStatus` | 起動中 `herdr-core` のバージョン・PID・稼働時間・対応機能（`automaticInputSupported`, `resizeNotificationsSupported`）を返す。 |
-| `core_reconnect` | なし | `CoreStatus` | Unix Domain Socket を再接続し Framed Mode ハンドシェイクをやり直す。 |
+| `core_reconnect` | なし | `CoreStatus` | 稼働中の接続を再利用する。切断済みの場合、同じ隔離コアに対して Framed Mode ハンドシェイクをやり直す。 |
 
 ### 2.2 ターミナル管理
 
@@ -64,14 +64,15 @@ export interface IpcError {
 
 | コマンド名 | 引数 | 戻り値 | 説明 |
 | --- | --- | --- | --- |
-| `events_subscribe` | `{ onEvent: Channel<CoreEvent> }` | `EventsSubscribeResult` | `herdr-core` の `events.subscribe` を開始し、初期スナップショット（`seq`, `terminals`）を返しつつ差分イベントを配信する。 |
+| `events_subscribe` | `{ onEvent: Channel<{ subscriptionId: number, events: CoreEvent[], bytes: number }> }` | `EventsSubscribeResult` | `herdr-core` の `events.subscribe` を開始し、初期スナップショット（`seq`, `terminals`）を返しつつ差分イベントを配信する。 |
+| `events_ack` | `{ subscriptionId: number, bytes: number }` | `void` | クライアントがイベントを受け取った後、JSON の分割分も含めた受信バイト数を CREDIT で返す。 |
 | `events_unsubscribe` | `{ subscriptionId: number }` | `void` | イベント購読チャンネルを閉じる。 |
 
 ### 2.5 TypeScript 設定ランタイム検証用
 
 | コマンド名 | 引数 | 戻り値 | 説明 |
 | --- | --- | --- | --- |
-| `config_eval_poc` | `{ params: ConfigEvalParams }` | `ConfigEvalResult` | 外部 Node.js プロセスを起動し、JSON-RPC over stdio で TypeScript 設定ファイル・ユーザー定義アクション・イベントフックを評価する。 |
+| `config_eval_poc` | `{ params: ConfigEvalParams }` | `ConfigEvalResult` | 外部 Node.js プロセスを起動し、JSON-RPC over stdio で リポジトリ内の PoC サンプル設定を評価する。WebView から渡された任意パスは拒否する。 |
 
 ---
 
@@ -111,7 +112,7 @@ export interface IpcError {
 1. `kind === "user"` の場合：常に `herdr-core` の **DATA フレーム（kind 0）** で送信する。
 2. `kind === "automatic"` の場合：
    - `hello.features` に `"automatic_input"` が含まれ、かつ `terminal.attach` 応答の `automatic_input === true` の場合のみ、`herdr-core` の **AUTOMATIC_INPUT フレーム（kind 6）** で送信する。
-   - 非対応の `herdr-core` に対しては仕様に従い **DATA フレーム（kind 0）** へフォールバックする（非対応コアへ kind 6 を送ると入力が破棄されるため）。
+   - 自動入力が未交渉の経路では `unsupported` を返す。旧クライアント向け仕様の DATA フォールバックではユーザー操作として扱われるため、uiterm の PoC では自動応答を送信しない。
 3. **フロントエンド側の責務**：
    - `wterm` / `libghostty` が端末クエリ（DA1/DA2、OSC カラー問い合わせ、mode 2048、XTGETTCAP 等）への自動応答を生成するコールバックからは必ず `kind: "automatic"` を指定して `terminalWrite` を呼ぶこと。バイト内容からの推測は行わない。
 
@@ -119,11 +120,10 @@ export interface IpcError {
 
 ## 5. フロー制御・過剰バッファリング防止
 
-1. `herdr-core` のアタッチストリームは初期クレジット **256 KiB**（`initialCreditBytes: 262144`）で開始する。
-2. Rust バックエンドの多重化ソケットリーダは、ストリーム単位でブロッキングしないノンブロッキング配送を行い、ヘッドオブライン（HOL）ブロッキング（1 つの遅延端末がチャンネル 0 の RPC や他端末を止める現象）を防ぐ。メモリ上限は `herdr-core` 側の 256 KiB クレジットウィンドウによって厳密に制御される（フロントエンドが `terminalAck` を返すまで `herdr-core` が追加送信を停止するため）。
-3. フロントエンドは `OUTPUT_FRAME_DATA` を `wterm` へ適用したあと、消費済みバイト数をまとめて `terminalAck(attachId, bytes)` で通知する（目安: 16 KiB 以上または 1 フレームごと）。
-4. バックエンドは受け取ったバイト数を `herdr-core` の **CREDIT フレーム（kind 1）** として返送する。
-5. フロントエンドが **4 MiB 以上遅延** した場合、`herdr-core` が自動的に未読バックログを破棄し、最新画面のフルリペイントを送信して再同期する。
+1. 端末とイベントの各ストリームは初期 CREDIT 256 KiB で開始する。Rust は受信済みかつ未 ACK のバイト数を追跡する。範囲を超える ACK を拒否し、受信側が CREDIT ウィンドウを超えた場合は接続を閉じる。
+2. Rust は購読を RPC 応答の処理中に登録する。フレームを待たずにキューへ配信し、満杯なら接続を閉じて再同期を要求する。端末キューは 4,096 件、イベントキューは 256 件で、CLOSE 用に各1枠を追加する。イベント購読応答前の保留は接続全体で 256 件・256 KiB とする。
+3. wterm の同期 VT 処理が戻った後、消費した DATA を 16 KiB 単位でまとめて送る。RESIZE と CLOSE は ACK の対象外。イベントは WebView で受け取ったバッチごとに ACK する。固定版の上流は 4 MiB 超の未送信バックログを破棄して再同期を行う。
+4. uiterm は接続あたり最大 128 ストリーム、保留 RPC と送信キューを各 64 件、送信ペイロードを 1 MiB に制限する。フレームの待機と RPC 応答にタイムアウトを設ける。フロントエンドはアタッチごとに入力を直列送信し、送信中と待機中の入力を合計 1 MiB、待機を 256 件までに制限する。長大な貼り付けの分割は今後の課題とする。
 
 ---
 
@@ -136,7 +136,7 @@ export interface IpcError {
 - AI エージェント状態（OSC 7501）: `status`（`{ status, records, reported }`）, `turn`（`{ turn, state }`）
 - 接続監視・再同期: `heartbeat`（15 秒間隔）, `missed`（遅延時の最新 `terminals` スナップショット）, `disconnected`
 
-`missed` を受信した場合、フロントエンドはローカルの端末一覧を `event.terminals` で置き換え、`event.seq` 以下の古いイベントを破棄する。
+Phase 0 の UI は `missed` を診断ログに記録する。イベントを一覧の更新に使用する Phase 1 では、`event.terminals` の適用と `event.seq` 以下のイベントの破棄が必要になる。
 
 ---
 

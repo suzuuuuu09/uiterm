@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { t } from "../../i18n/dict.ts";
 import { MockIpcClient } from "../../ipc/mock.ts";
 import type {
@@ -89,6 +89,48 @@ function createFakeElement(): HTMLDivElement {
   return el as unknown as HTMLDivElement;
 }
 
+function sessionAdapter(
+  capture: (callbacks: TerminalAdapterCallbacks) => void,
+  dispose = () => {},
+  write?: (bytes: Uint8Array) => void,
+) {
+  let fakeCols = 80;
+  let fakeRows = 24;
+  return (_backendId: unknown, callbacks: TerminalAdapterCallbacks): TerminalAdapter => {
+    capture(callbacks);
+    return {
+      backendId: "wterm-ghostty-dom",
+      get cols() {
+        return fakeCols;
+      },
+      get rows() {
+        return fakeRows;
+      },
+      async mount() {},
+      write(bytes: Uint8Array) {
+        // Simulate wterm synchronously generating an automatic VT reply during write()
+        if (write) write(bytes);
+        else if (bytes.byteLength > 0) {
+          callbacks.onAutoResponse(encoder.encode("\x1b[?62;22c"));
+        }
+      },
+      resize(cols: number, rows: number) {
+        fakeCols = cols;
+        fakeRows = rows;
+        // Simulate terminal renderer echoing onResize synchronously
+        callbacks.onResize(cols, rows);
+      },
+      fit() {},
+      focus() {},
+      setHidden() {},
+      async getSelection() {
+        return "";
+      },
+      dispose,
+    };
+  };
+}
+
 describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)", () => {
   it("never sends ACK or auto-response with attachId=0 before terminalAttach resolves", async () => {
     const prevDoc = globalThis.document;
@@ -122,40 +164,9 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
     };
 
     let capturedCallbacks!: TerminalAdapterCallbacks;
-    let fakeCols = 80;
-    let fakeRows = 24;
-    const fakeAdapterFactory = (_backendId: unknown, callbacks: TerminalAdapterCallbacks): TerminalAdapter => {
+    const fakeAdapterFactory = sessionAdapter((callbacks) => {
       capturedCallbacks = callbacks;
-      return {
-        backendId: "wterm-ghostty-dom",
-        get cols() {
-          return fakeCols;
-        },
-        get rows() {
-          return fakeRows;
-        },
-        async mount() {},
-        write(bytes: Uint8Array) {
-          // Simulate wterm synchronously generating an automatic VT reply during write()
-          if (bytes.byteLength > 0) {
-            callbacks.onAutoResponse(encoder.encode("\x1b[?62;22c"));
-          }
-        },
-        resize(cols: number, rows: number) {
-          fakeCols = cols;
-          fakeRows = rows;
-          // Simulate terminal renderer echoing onResize synchronously
-          callbacks.onResize(cols, rows);
-        },
-        fit() {},
-        focus() {},
-        setHidden() {},
-        async getSelection() {
-          return "";
-        },
-        dispose() {},
-      };
-    };
+    });
 
     try {
       pocStore.getState().setSuppressAutoReplies(false);
@@ -226,4 +237,92 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
       (globalThis as unknown as { document: typeof prevDoc }).document = prevDoc;
     }
   });
+  it("does not revive a closed attachment or replay its input after resync", async () => {
+    vi.stubGlobal("document", { createElement: createFakeElement });
+    try {
+      const mock = new MockIpcClient();
+      const attachMock = mock.terminalAttach.bind(mock);
+      const callbacks: Array<(frame: OutputFrame) => void> = [];
+      const writes = vi.spyOn(mock, "terminalWrite");
+      mock.terminalAttach = async (params, onFrame) => {
+        const index = callbacks.push(onFrame);
+        const result = await attachMock(params, (frame) => {
+          if (index > 1) onFrame(frame);
+        });
+        if (index === 1) {
+          onFrame({ kind: "close", reason: "disconnected", exitCode: null, signal: null });
+        }
+        return result;
+      };
+      let adapterCallbacks!: TerminalAdapterCallbacks;
+      const render = vi.fn();
+      const mgr = new TerminalSessionManager(mock, sessionAdapter((callbacks) => {
+        adapterCallbacks = callbacks;
+      }, undefined, render));
+      const session = await mgr.createSession("closed", "wterm-ghostty-dom", createFakeElement(), false);
+      adapterCallbacks.onUserInput(encoder.encode("stale"));
+      expect(session.attachId).toBe(0);
+      expect(writes).not.toHaveBeenCalled();
+
+      await Promise.all([mgr.resyncSession("closed"), mgr.resyncSession("closed")]);
+      expect(callbacks).toHaveLength(2);
+      expect(session.attachId).toBeGreaterThan(0);
+      const rendered = render.mock.calls.length;
+      callbacks[0]!({ kind: "data", bytes: encoder.encode("stale") });
+      expect(render).toHaveBeenCalledTimes(rendered);
+      adapterCallbacks.onUserInput(encoder.encode("新しい入力"));
+      expect(writes).toHaveBeenCalledExactlyOnceWith(session.attachId, encoder.encode("新しい入力"), "user");
+      mgr.disposeAll();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rolls back failed attach and cancels a pending terminal create", async () => {
+    vi.stubGlobal("document", { createElement: createFakeElement });
+    try {
+      const mock = new MockIpcClient();
+      const dispose = vi.fn();
+      const mgr = new TerminalSessionManager(mock, sessionAdapter(() => {}, dispose));
+      mock.terminalAttach = vi.fn().mockRejectedValue(new Error("attach failed"));
+      const host = createFakeElement();
+      await expect(mgr.createSession("failed", "wterm-ghostty-dom", host, false)).rejects.toThrow("attach failed");
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(await mock.terminalList()).toEqual([]);
+      expect(mgr.get("failed")).toBeUndefined();
+
+      const cancelled = mgr.createSession("pending", "wterm-ghostty-dom", host, false);
+      mgr.disposeAll();
+      await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+      expect(await mock.terminalList()).toEqual([]);
+      expect(mock.terminalAttach).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("waits for the first IPC write before sending later user input", async () => {
+    vi.stubGlobal("document", { createElement: createFakeElement });
+    try {
+      const mock = new MockIpcClient();
+      let release!: () => void;
+      const firstWrite = new Promise<void>((resolve) => { release = resolve; });
+      const writes = vi.spyOn(mock, "terminalWrite").mockReturnValueOnce(firstWrite);
+      let adapterCallbacks!: TerminalAdapterCallbacks;
+      const mgr = new TerminalSessionManager(mock, sessionAdapter((callbacks) => {
+        adapterCallbacks = callbacks;
+      }, undefined, () => {}));
+      const session = await mgr.createSession("order", "wterm-ghostty-dom", createFakeElement(), false);
+      adapterCallbacks.onUserInput(encoder.encode("日本語"));
+      adapterCallbacks.onUserInput(encoder.encode("\r"));
+      expect(writes).toHaveBeenCalledExactlyOnceWith(session.attachId, encoder.encode("日本語"), "user");
+      release();
+      await firstWrite;
+      expect(writes).toHaveBeenNthCalledWith(2, session.attachId, encoder.encode("\r"), "user");
+      mgr.disposeAll();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
 });

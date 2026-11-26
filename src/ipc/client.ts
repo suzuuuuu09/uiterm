@@ -99,8 +99,24 @@ export class TauriIpcClient implements UitermBackendClient {
   async eventsSubscribe(
     onEvent: (event: CoreEvent) => void,
   ): Promise<EventsSubscribeResult> {
-    const channel = new Channel<CoreEvent>();
-    channel.onmessage = onEvent;
+    const channel = new Channel<{
+      subscriptionId: number;
+      events: CoreEvent[];
+      bytes: number;
+    }>();
+    channel.onmessage = ({ subscriptionId, events, bytes }) => {
+      try {
+        for (const event of events) onEvent(event);
+      } catch (err) {
+        console.error("Core event handler failed", err);
+      } finally {
+        if (bytes > 0) {
+          void invoke("events_ack", { subscriptionId, bytes }).catch((err) => {
+            console.error("Core event ACK failed", err);
+          });
+        }
+      }
+    };
     return invoke<EventsSubscribeResult>("events_subscribe", {
       onEvent: channel,
     });
