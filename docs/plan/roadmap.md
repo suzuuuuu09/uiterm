@@ -11,13 +11,13 @@ description: "uitermの開発ロードマップをまとめる"
 - [x] herdr-coreとの通信（Unix Socket・Framed Mode・JSON-RPC・Attach・Events・OSC 7501・`AUTOMATIC_INPUT` 分離・フロー制御・`attachId=0` 防御）
 - [x] wtermによるターミナル描画（`@wterm/dom` + `@wterm/ghostty` 実装、Tauri 実ウィンドウ上で `herdr-core` と結合起動確認済み）
 - [x] ターミナルの入出力・リサイズ（`stty size` 反映・バックエンド起点リサイズループ防止・再アタッチ再同期・`fish`/`nvim`/`codex` 互換性確認済み）
-- [x] VTエンジンの二重動作による負荷の測定（Tauri 実ウィンドウ全プロセス RSS 237.75 MiB / CPU 0.1%、1〜10 端末スケーリング、20 秒連続出力でのメモリ安定性を実測済み）
-- [ ] macOS・NixOS / Hyprlandでの動作確認（macOS 実ウィンドウ起動・結合は確認済み。NixOS / Hyprland 実機は未検証・再現手順を [docs/poc/integration.md](../poc/integration.md) に整備）
-- [ ] 日本語IMEの動作確認（`wterm` ソース解析・診断 PoC・実ウィンドウ起動環境は整備済み。macOS WKWebView / Linux Fcitx5 での手動対話テストは未完了）
+- [x] VT エンジンの二重動作による負荷の予備測定（アプリ全体の単発 RSS、単体スケーリング、バックエンドの20秒負荷）。正式測定ではプロセスの帰属と長時間の変化を確認する。
+- [ ] 統合後の macOS 実ウィンドウで端末の入出力・切断後の再同期・終了を確認する。NixOS / Hyprland は静的検証までを Phase 0 の対象とする。
+- [ ] 統合後の macOS WKWebView で日本語 IME を手動確認する。Linux Fcitx5 は MVP 完成までに実機で確認する。
 - [x] TypeScript設定の実行方式の検証（外部 Node.js 24 LTS ネイティブ型除去 + JSON-RPC over stdio で実測済み）
-- [x] メモリ使用量・ディスク容量・起動時間の測定（配布 `.app` 13.73 MiB、ウォーム起動 534.1 ms、Ghostty / Herdr との比較を含め [docs/poc/integration.md](../poc/integration.md) に記録）
+- [ ] 統合後の配布ビルドでメモリ使用量・ディスク容量・起動時間を正式計測する。既存の PoC 値は参考記録とする。
 
-検証結果の詳細は [docs/poc/interface.md](../poc/interface.md)・[docs/poc/backend.md](../poc/backend.md)・[docs/poc/frontend.md](../poc/frontend.md)・[docs/poc/integration.md](../poc/integration.md) を参照。残る手動実機確認（macOS WKWebView 日本語 IME・NixOS / Hyprland）を完了して Phase 1 へ移行する。
+検証結果の詳細は [docs/poc/interface.md](../poc/interface.md)・[docs/poc/backend.md](../poc/backend.md)・[docs/poc/frontend.md](../poc/frontend.md)・[docs/poc/integration.md](../poc/integration.md) を参照。移行判定は [独立検証レポート](../poc/validation.md) を参照。NixOS / Hyprland の実機確認は Phase 1 への移行条件から一時的に除外し、[MVP の完成条件](./mvp.md#完成条件)として維持する。
 
 ## Phase 1 — 基盤構築
 
