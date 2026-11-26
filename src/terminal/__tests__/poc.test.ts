@@ -1,3 +1,4 @@
+import * as v from "valibot";
 import { describe, expect, it } from "vite-plus/test";
 import { t } from "../../i18n/dict.ts";
 import { MockIpcClient } from "../../ipc/mock.ts";
@@ -10,9 +11,13 @@ import type {
 } from "../../ipc/types.ts";
 import { pocStore } from "../../store/pocStore.ts";
 import { MockHerdrTransport } from "../../transport/mockHerdrTransport.ts";
-import { validateResizePayload } from "../../transport/schemas.ts";
+import { TerminalBackendIdSchema, validateResizePayload } from "../../transport/schemas.ts";
 import { TerminalSessionManager } from "../sessionManager.ts";
-import type { TerminalAdapter, TerminalAdapterCallbacks } from "../types.ts";
+import type {
+  TerminalAdapter,
+  TerminalAdapterCallbacks,
+  TerminalAdapterOptions,
+} from "../types.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -223,6 +228,134 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
       mgr.disposeAll();
     } finally {
       pocStore.getState().setSuppressAutoReplies(true);
+      (globalThis as unknown as { document: typeof prevDoc }).document = prevDoc;
+    }
+  });
+});
+
+describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounded logs, cleanup)", () => {
+  it("restricts TerminalBackendIdSchema to wterm + ghostty only", () => {
+    expect(v.parse(TerminalBackendIdSchema, "wterm-ghostty-dom")).toBe("wterm-ghostty-dom");
+    expect(v.parse(TerminalBackendIdSchema, "wterm-ghostty-webgl")).toBe("wterm-ghostty-webgl");
+    expect(() => v.parse(TerminalBackendIdSchema, "gespenst")).toThrow();
+    expect(() => v.parse(TerminalBackendIdSchema, "ghostty-web")).toThrow();
+    expect(() => v.parse(TerminalBackendIdSchema, "xterm")).toThrow();
+  });
+
+  it("avoids redundant store updates on unchanged tab dimensions and bounds diagnostic logs", () => {
+    pocStore.getState().setTabs([{ id: "t1", title: "t1", cols: 80, rows: 24 }], "t1");
+    const tabsBefore = pocStore.getState().tabs;
+    pocStore.getState().updateTabSize("t1", 80, 24);
+    expect(pocStore.getState().tabs).toBe(tabsBefore);
+
+    pocStore.getState().updateTabSize("t1", 100, 30);
+    expect(pocStore.getState().tabs).not.toBe(tabsBefore);
+    expect(pocStore.getState().tabs[0]).toEqual({ id: "t1", title: "t1", cols: 100, rows: 30 });
+
+    pocStore.getState().clearLogs();
+    pocStore.getState().setDiagnosticsEnabled(true);
+    pocStore.getState().pushLog("input", "x".repeat(500));
+    expect(pocStore.getState().logs.length).toBe(1);
+    expect(pocStore.getState().logs[0]!.detail.length).toBeLessThanOrEqual(163);
+
+    pocStore.getState().setDiagnosticsEnabled(false);
+    pocStore.getState().pushLog("ime", "should-be-skipped");
+    expect(pocStore.getState().logs.length).toBe(1);
+    pocStore.getState().pushLog("system", "system-still-logged");
+    expect(pocStore.getState().logs.length).toBe(2);
+
+    pocStore.getState().setDiagnosticsEnabled(true);
+    pocStore.getState().clearLogs();
+    pocStore.getState().setTabs([], null);
+  });
+
+  it("initializes hidden terminals paused, deduplicates focus IPC, and unsubscribes events", async () => {
+    const prevDoc = globalThis.document;
+    (globalThis as unknown as { document: { createElement: () => HTMLDivElement } }).document = {
+      createElement: createFakeElement,
+    };
+
+    const focusCalls: Array<{ attachId: AttachId; focused: boolean }> = [];
+    const unsubCalls: number[] = [];
+    const mountOptions: Array<TerminalAdapterOptions | undefined> = [];
+    let disposedCount = 0;
+
+    const mock = new MockIpcClient();
+    const origFocus = mock.terminalFocus.bind(mock);
+    mock.terminalFocus = async (attachId, focused) => {
+      focusCalls.push({ attachId, focused });
+      return origFocus(attachId, focused);
+    };
+    const origUnsub = mock.eventsUnsubscribe.bind(mock);
+    mock.eventsUnsubscribe = async (subId) => {
+      unsubCalls.push(subId);
+      return origUnsub(subId);
+    };
+
+    const fakeAdapterFactory = (
+      _backendId: unknown,
+      _callbacks: TerminalAdapterCallbacks,
+      options?: TerminalAdapterOptions,
+    ): TerminalAdapter => {
+      mountOptions.push(options);
+      return {
+        backendId: "wterm-ghostty-dom",
+        cols: 80,
+        rows: 24,
+        async mount() {},
+        write() {},
+        resize() {},
+        fit() {},
+        focus() {},
+        setHidden() {},
+        async getSelection() {
+          return "";
+        },
+        dispose() {
+          disposedCount++;
+        },
+      };
+    };
+
+    try {
+      const mgr = new TerminalSessionManager(mock, fakeAdapterFactory as never);
+      await mgr.startEventStream();
+
+      const root = createFakeElement();
+      const s1 = await mgr.createSession("s1", "wterm-ghostty-dom", root, false);
+      const s2 = await mgr.createSession("s2", "wterm-ghostty-dom", root, true);
+      const s3 = await mgr.createSession("s3", "wterm-ghostty-dom", root, true);
+
+      // Hidden sessions start with renderingPaused: true
+      expect(mountOptions[0]?.renderingPaused).toBe(false);
+      expect(mountOptions[1]?.renderingPaused).toBe(true);
+      expect(mountOptions[2]?.renderingPaused).toBe(true);
+
+      // Switching from s1 -> s2 should only send focus IPC for s1 (false) and s2 (true), NOT s3!
+      mgr.setActive("s2");
+      expect(focusCalls).toEqual([
+        { attachId: s1.attachId, focused: false },
+        { attachId: s2.attachId, focused: true },
+      ]);
+
+      // Repeating setActive("s2") should send zero focus IPC calls
+      focusCalls.length = 0;
+      mgr.setActive("s2");
+      expect(focusCalls).toEqual([]);
+
+      // Switching s2 -> s3 should only touch s2 and s3
+      mgr.setActive("s3");
+      expect(focusCalls).toEqual([
+        { attachId: s2.attachId, focused: false },
+        { attachId: s3.attachId, focused: true },
+      ]);
+
+      mgr.stopEventStream();
+      expect(unsubCalls.length).toBe(1);
+
+      mgr.disposeAll();
+      expect(disposedCount).toBe(3);
+    } finally {
       (globalThis as unknown as { document: typeof prevDoc }).document = prevDoc;
     }
   });

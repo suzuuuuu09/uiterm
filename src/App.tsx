@@ -24,9 +24,6 @@ import type { TerminalBackendId } from "./transport/schemas.ts";
 const BACKENDS: readonly { id: TerminalBackendId; labelKey: DictKey }[] = [
   { id: "wterm-ghostty-dom", labelKey: "backendWtermDom" },
   { id: "wterm-ghostty-webgl", labelKey: "backendWtermWebgl" },
-  { id: "gespenst", labelKey: "backendGespenst" },
-  { id: "ghostty-web", labelKey: "backendGhosttyWeb" },
-  { id: "xterm", labelKey: "backendXterm" },
 ];
 
 let nextTabCounter = 1;
@@ -41,19 +38,191 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-export function App() {
+/** Isolated status summary so high-frequency stats/IME updates never re-render App or Toolbar. */
+function StatusSummary() {
   const locale = usePocStore((s) => s.locale);
-  const backendId = usePocStore((s) => s.backendId);
   const tabs = usePocStore((s) => s.tabs);
   const activeTabId = usePocStore((s) => s.activeTabId);
-  const suppressAutoReplies = usePocStore((s) => s.suppressAutoReplies);
-  const pauseHiddenRendering = usePocStore((s) => s.pauseHiddenRendering);
   const isComposing = usePocStore((s) => s.isComposing);
   const totalBytesReceived = usePocStore((s) => s.totalBytesReceived);
   const totalRepliesBlocked = usePocStore((s) => s.totalRepliesBlocked);
-  const logs = usePocStore((s) => s.logs);
-  const benchRunning = usePocStore((s) => s.benchRunning);
+
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+
+  return (
+    <div className="grid grid-cols-2 gap-1 border-b border-zinc-800 p-2 font-mono text-[11px]">
+      <div>
+        {t(locale, "totalTabs")}: <span className="text-zinc-100">{tabs.length}</span>
+      </div>
+      <div>
+        {t(locale, "colsRows")}:{" "}
+        <span className="text-zinc-100">
+          {activeTab ? `${activeTab.cols}x${activeTab.rows}` : "-"}
+        </span>
+      </div>
+      <div>
+        {t(locale, "bytesReceived")}:{" "}
+        <span className="text-zinc-100">{(totalBytesReceived / 1024).toFixed(1)} KB</span>
+      </div>
+      <div>
+        {t(locale, "repliesBlocked")}:{" "}
+        <span className="text-amber-300">{totalRepliesBlocked}</span>
+      </div>
+      <div className="col-span-2">
+        <span
+          className={
+            isComposing
+              ? "rounded bg-sky-900/80 px-1.5 py-0.5 text-sky-200"
+              : "rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-400"
+          }
+        >
+          {isComposing ? t(locale, "imeComposing") : t(locale, "imeIdle")}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Isolated benchmark results table. */
+function BenchmarkPanel() {
+  const locale = usePocStore((s) => s.locale);
   const benchResults = usePocStore((s) => s.benchResults);
+
+  return (
+    <div className="border-b border-zinc-800 p-2">
+      <div className="mb-1 font-semibold text-zinc-300">{t(locale, "runBench")}</div>
+      {benchResults.length === 0 ? (
+        <p className="text-[11px] text-zinc-500">{t(locale, "noBenchYet")}</p>
+      ) : (
+        <table className="w-full font-mono text-[10px]">
+          <thead>
+            <tr className="border-b border-zinc-800 text-left text-zinc-400">
+              <th>N</th>
+              <th>Mount</th>
+              <th>10k</th>
+              <th>Hid</th>
+              <th>Sw</th>
+              <th>Disp</th>
+            </tr>
+          </thead>
+          <tbody>
+            {benchResults.map((r) => (
+              <tr key={`${r.backendId}-${r.count}`} className="border-b border-zinc-800/50">
+                <td>{r.count}</td>
+                <td>{r.mountMs}ms</td>
+                <td>{r.burst10kMs}ms</td>
+                <td>{r.hiddenBurstMs}ms</td>
+                <td>{r.switchAvgMs}ms</td>
+                <td>{r.disposeMs}ms</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/** Isolated diagnostic log panel so per-keystroke IME/input logs never re-render App. */
+function DiagnosticLogPanel() {
+  const locale = usePocStore((s) => s.locale);
+  const logs = usePocStore((s) => s.logs);
+  const diagnosticsEnabled = usePocStore((s) => s.diagnosticsEnabled);
+
+  return (
+    <>
+      <div className="flex items-center justify-between border-b border-zinc-800 px-2 py-1">
+        <span className="font-semibold text-zinc-300">{t(locale, "imePanel")}</span>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1 text-[10px] text-zinc-400">
+            <Switch.Root
+              checked={diagnosticsEnabled}
+              onCheckedChange={(v) => pocStore.getState().setDiagnosticsEnabled(v)}
+              className="relative inline-flex h-3.5 w-6 items-center rounded-full bg-zinc-700 data-[checked]:bg-emerald-600"
+            >
+              <Switch.Thumb className="block h-2.5 w-2.5 translate-x-0.5 rounded-full bg-white transition-transform data-[checked]:translate-x-3" />
+            </Switch.Root>
+            <span>{t(locale, "diagnosticsLog")}</span>
+          </label>
+          <button
+            type="button"
+            onClick={() => pocStore.getState().clearLogs()}
+            className="text-[11px] text-zinc-400 hover:text-zinc-200"
+          >
+            {t(locale, "clearLog")}
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed">
+        {logs.map((entry) => (
+          <div key={entry.id} className="truncate">
+            <span className="text-zinc-500">{entry.time}</span>{" "}
+            <span
+              className={
+                entry.kind === "auto-reply"
+                  ? "text-amber-300"
+                  : entry.kind === "ime"
+                    ? "text-sky-300"
+                    : entry.kind === "input"
+                      ? "text-emerald-300"
+                      : "text-zinc-400"
+              }
+            >
+              [{entry.kind}]
+            </span>{" "}
+            <span className="text-zinc-200">{entry.detail}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** Isolated tab strip so tab/size updates do not re-render toolbar or log panel. */
+function TabBar({ onCloseTab }: { onCloseTab: (id: string) => void }) {
+  const tabs = usePocStore((s) => s.tabs);
+  const activeTabId = usePocStore((s) => s.activeTabId);
+
+  return (
+    <Tabs.Root
+      value={activeTabId ?? ""}
+      onValueChange={(value) => {
+        if (typeof value === "string" && value) {
+          pocStore.getState().setActiveTabId(value);
+        }
+      }}
+      className="border-b border-zinc-800 bg-zinc-900/60"
+    >
+      <Tabs.List className="flex items-center gap-1 overflow-x-auto px-2 py-1">
+        {tabs.map((tab) => (
+          <div key={tab.id} className="flex items-center">
+            <Tabs.Tab
+              value={tab.id}
+              className="rounded-l px-2.5 py-1 text-zinc-400 hover:bg-zinc-800 data-[selected]:bg-zinc-800 data-[selected]:text-emerald-300"
+            >
+              {tab.title} ({tab.cols}x{tab.rows})
+            </Tabs.Tab>
+            <button
+              type="button"
+              aria-label={`Close ${tab.title}`}
+              onClick={() => onCloseTab(tab.id)}
+              className="rounded-r px-1 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
+      </Tabs.List>
+    </Tabs.Root>
+  );
+}
+
+export function App() {
+  const locale = usePocStore((s) => s.locale);
+  const backendId = usePocStore((s) => s.backendId);
+  const suppressAutoReplies = usePocStore((s) => s.suppressAutoReplies);
+  const pauseHiddenRendering = usePocStore((s) => s.pauseHiddenRendering);
+  const benchRunning = usePocStore((s) => s.benchRunning);
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   const initializedRef = useRef(false);
@@ -107,6 +276,7 @@ export function App() {
 
   useEffect(() => {
     return () => {
+      sessionManager.stopEventStream();
       sessionManager.disposeAll();
     };
   }, []);
@@ -221,8 +391,6 @@ export function App() {
       pocStore.getState().setBenchRunning(false);
     }
   };
-
-  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
 
   return (
     <div className="flex h-screen w-screen flex-col bg-zinc-950 text-xs text-zinc-100">
@@ -425,139 +593,16 @@ export function App() {
       </header>
 
       {/* Base UI Tabs for Terminal Switching */}
-      <Tabs.Root
-        value={activeTabId ?? ""}
-        onValueChange={(value) => {
-          if (typeof value === "string" && value) {
-            pocStore.getState().setActiveTabId(value);
-          }
-        }}
-        className="border-b border-zinc-800 bg-zinc-900/60"
-      >
-        <Tabs.List className="flex items-center gap-1 overflow-x-auto px-2 py-1">
-          {tabs.map((tab) => (
-            <div key={tab.id} className="flex items-center">
-              <Tabs.Tab
-                value={tab.id}
-                className="rounded-l px-2.5 py-1 text-zinc-400 hover:bg-zinc-800 data-[selected]:bg-zinc-800 data-[selected]:text-emerald-300"
-              >
-                {tab.title} ({tab.cols}x{tab.rows})
-              </Tabs.Tab>
-              <button
-                type="button"
-                aria-label={`Close ${tab.title}`}
-                onClick={() => handleCloseTab(tab.id)}
-                className="rounded-r px-1 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-        </Tabs.List>
-      </Tabs.Root>
+      <TabBar onCloseTab={handleCloseTab} />
 
       {/* Main Split: Terminal Viewport + Diagnostic / Benchmark Sidebar */}
       <div className="flex min-h-0 flex-1">
         <TerminalViewport onHostReady={handleHostReady} />
 
         <aside className="flex w-80 flex-col border-l border-zinc-800 bg-zinc-900/70">
-          {/* Status Summary */}
-          <div className="grid grid-cols-2 gap-1 border-b border-zinc-800 p-2 font-mono text-[11px]">
-            <div>
-              {t(locale, "totalTabs")}: <span className="text-zinc-100">{tabs.length}</span>
-            </div>
-            <div>
-              {t(locale, "colsRows")}:{" "}
-              <span className="text-zinc-100">
-                {activeTab ? `${activeTab.cols}x${activeTab.rows}` : "-"}
-              </span>
-            </div>
-            <div>
-              {t(locale, "bytesReceived")}:{" "}
-              <span className="text-zinc-100">{(totalBytesReceived / 1024).toFixed(1)} KB</span>
-            </div>
-            <div>
-              {t(locale, "repliesBlocked")}:{" "}
-              <span className="text-amber-300">{totalRepliesBlocked}</span>
-            </div>
-            <div className="col-span-2">
-              <span
-                className={
-                  isComposing
-                    ? "rounded bg-sky-900/80 px-1.5 py-0.5 text-sky-200"
-                    : "rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-400"
-                }
-              >
-                {isComposing ? t(locale, "imeComposing") : t(locale, "imeIdle")}
-              </span>
-            </div>
-          </div>
-
-          {/* Benchmark Results */}
-          <div className="border-b border-zinc-800 p-2">
-            <div className="mb-1 font-semibold text-zinc-300">{t(locale, "runBench")}</div>
-            {benchResults.length === 0 ? (
-              <p className="text-[11px] text-zinc-500">{t(locale, "noBenchYet")}</p>
-            ) : (
-              <table className="w-full font-mono text-[10px]">
-                <thead>
-                  <tr className="border-b border-zinc-800 text-left text-zinc-400">
-                    <th>N</th>
-                    <th>Mount</th>
-                    <th>10k</th>
-                    <th>Hid</th>
-                    <th>Sw</th>
-                    <th>Disp</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {benchResults.map((r) => (
-                    <tr key={`${r.backendId}-${r.count}`} className="border-b border-zinc-800/50">
-                      <td>{r.count}</td>
-                      <td>{r.mountMs}ms</td>
-                      <td>{r.burst10kMs}ms</td>
-                      <td>{r.hiddenBurstMs}ms</td>
-                      <td>{r.switchAvgMs}ms</td>
-                      <td>{r.disposeMs}ms</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {/* IME & Auto-Reply Diagnostic Log */}
-          <div className="flex items-center justify-between border-b border-zinc-800 px-2 py-1">
-            <span className="font-semibold text-zinc-300">{t(locale, "imePanel")}</span>
-            <button
-              type="button"
-              onClick={() => pocStore.getState().clearLogs()}
-              className="text-[11px] text-zinc-400 hover:text-zinc-200"
-            >
-              {t(locale, "clearLog")}
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed">
-            {logs.map((entry) => (
-              <div key={entry.id} className="truncate">
-                <span className="text-zinc-500">{entry.time}</span>{" "}
-                <span
-                  className={
-                    entry.kind === "auto-reply"
-                      ? "text-amber-300"
-                      : entry.kind === "ime"
-                        ? "text-sky-300"
-                        : entry.kind === "input"
-                          ? "text-emerald-300"
-                          : "text-zinc-400"
-                  }
-                >
-                  [{entry.kind}]
-                </span>{" "}
-                <span className="text-zinc-200">{entry.detail}</span>
-              </div>
-            ))}
-          </div>
+          <StatusSummary />
+          <BenchmarkPanel />
+          <DiagnosticLogPanel />
         </aside>
       </div>
     </div>

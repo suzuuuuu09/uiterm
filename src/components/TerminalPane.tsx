@@ -21,24 +21,34 @@ export function TerminalViewport({ onHostReady }: TerminalViewportProps) {
     if (!el) return;
 
     const onCompStart = (e: CompositionEvent) => {
-      pocStore.getState().setIsComposing(true);
-      pocStore.getState().pushLog("ime", `compositionstart data="${e.data}"`);
+      const state = pocStore.getState();
+      state.setIsComposing(true);
+      if (state.diagnosticsEnabled) {
+        state.pushLog("ime", `compositionstart data="${e.data}"`);
+      }
     };
     const onCompUpdate = (e: CompositionEvent) => {
-      pocStore.getState().pushLog("ime", `compositionupdate data="${e.data}"`);
+      const state = pocStore.getState();
+      if (state.diagnosticsEnabled) {
+        state.pushLog("ime", `compositionupdate data="${e.data}"`);
+      }
     };
     const onCompEnd = (e: CompositionEvent) => {
-      pocStore.getState().setIsComposing(false);
-      pocStore.getState().pushLog("ime", `compositionend data="${e.data}"`);
+      const state = pocStore.getState();
+      state.setIsComposing(false);
+      if (state.diagnosticsEnabled) {
+        state.pushLog("ime", `compositionend data="${e.data}"`);
+      }
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.isComposing || e.keyCode === 229 || e.key === "Enter" || e.key === "Process") {
-        pocStore
-          .getState()
-          .pushLog(
+        const state = pocStore.getState();
+        if (state.diagnosticsEnabled) {
+          state.pushLog(
             "ime",
             `keydown key="${e.key}" code="${e.code}" isComposing=${e.isComposing} keyCode=${e.keyCode}`,
           );
+        }
       }
     };
 

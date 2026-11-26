@@ -17,19 +17,28 @@ import {
 } from "../transport/mockHerdrTransport.ts";
 import type { TerminalBackendId } from "../transport/schemas.ts";
 import { createTerminalAdapter } from "./createAdapter.ts";
-import type { TerminalAdapter, TerminalAdapterCallbacks } from "./types.ts";
+import type {
+  TerminalAdapter,
+  TerminalAdapterCallbacks,
+  TerminalAdapterOptions,
+} from "./types.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const ACK_BATCH_THRESHOLD = 16 * 1024;
+const STATS_FLUSH_INTERVAL_MS = 100;
+const MAX_LOG_BYTES_PREVIEW = 128;
 
 function formatControlBytes(bytes: Uint8Array): string {
-  const raw = decoder.decode(bytes);
-  return raw
+  const truncated = bytes.byteLength > MAX_LOG_BYTES_PREVIEW;
+  const slice = truncated ? bytes.subarray(0, MAX_LOG_BYTES_PREVIEW) : bytes;
+  const raw = decoder.decode(slice);
+  const formatted = raw
     .replaceAll("\x1b", "ESC")
     .replaceAll("\r", "\\r")
     .replaceAll("\n", "\\n")
     .replaceAll("\x07", "BEL");
+  return truncated ? `${formatted}...` : formatted;
 }
 
 function formatIpcError(err: unknown): string {
@@ -56,6 +65,7 @@ export interface ManagedSession {
   unackedBytes: number;
   mounted: boolean;
   disposed: boolean;
+  focused: boolean;
   applyingBackendResize: boolean;
   lastSentCols: number;
   lastSentRows: number;
@@ -66,6 +76,7 @@ export interface ManagedSession {
 export type AdapterFactory = (
   backendId: TerminalBackendId,
   callbacks: TerminalAdapterCallbacks,
+  options?: TerminalAdapterOptions,
 ) => TerminalAdapter;
 
 /**
@@ -83,14 +94,15 @@ export class TerminalSessionManager {
 
   private sessions = new Map<string, ManagedSession>();
   private eventSubscriptionId: number | null = null;
+  private activeId: string | null = null;
   private pendingBytesDelta = 0;
   private pendingRepliesDelta = 0;
-  private statsFlushScheduled = false;
+  private statsFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     client?: UitermBackendClient,
-    adapterFactory: AdapterFactory = (backendId, callbacks) =>
-      createTerminalAdapter(backendId, callbacks),
+    adapterFactory: AdapterFactory = (backendId, callbacks, options) =>
+      createTerminalAdapter(backendId, callbacks, options),
   ) {
     if (client) {
       this.client = client;
@@ -110,10 +122,9 @@ export class TerminalSessionManager {
   }
 
   private scheduleStatsFlush(): void {
-    if (this.statsFlushScheduled) return;
-    this.statsFlushScheduled = true;
-    queueMicrotask(() => {
-      this.statsFlushScheduled = false;
+    if (this.statsFlushTimer !== null) return;
+    this.statsFlushTimer = setTimeout(() => {
+      this.statsFlushTimer = null;
       if (this.pendingBytesDelta > 0 || this.pendingRepliesDelta > 0) {
         const b = this.pendingBytesDelta;
         const r = this.pendingRepliesDelta;
@@ -121,7 +132,16 @@ export class TerminalSessionManager {
         this.pendingRepliesDelta = 0;
         pocStore.getState().addStats(b, r);
       }
-    });
+    }, STATS_FLUSH_INTERVAL_MS);
+  }
+
+  private cancelStatsFlush(): void {
+    if (this.statsFlushTimer !== null) {
+      clearTimeout(this.statsFlushTimer);
+      this.statsFlushTimer = null;
+    }
+    this.pendingBytesDelta = 0;
+    this.pendingRepliesDelta = 0;
   }
 
   async startEventStream(): Promise<void> {
@@ -138,6 +158,15 @@ export class TerminalSessionManager {
     } catch (err) {
       this.reportIpcError("eventsSubscribe", err);
     }
+  }
+
+  stopEventStream(): void {
+    if (this.eventSubscriptionId === null) return;
+    const subId = this.eventSubscriptionId;
+    this.eventSubscriptionId = null;
+    void this.client
+      .eventsUnsubscribe(subId)
+      .catch((err) => this.reportIpcError("eventsUnsubscribe", err));
   }
 
   private handleCoreEvent(ev: CoreEvent): void {
@@ -259,63 +288,73 @@ export class TerminalSessionManager {
     try {
       termInfo = await this.client.terminalCreate({ name: id, cols: 80, rows: 24 });
 
-      adapter = this.adapterFactory(backendId, {
-        onUserInput: (bytes) => {
-          pocStore
-            .getState()
-            .pushLog("input", `[${id}] user (${bytes.byteLength}B): ${formatControlBytes(bytes)}`);
-          if (!sessionRef || sessionRef.disposed) return;
-          if (sessionRef.attachId > 0) {
-            void this.client
-              .terminalWrite(sessionRef.attachId, bytes, "user")
-              .catch((err) => this.reportIpcError(`terminalWrite:${id}`, err));
-          } else {
-            sessionRef.pendingWrites.push({ bytes: new Uint8Array(bytes), kind: "user" });
-          }
+      const initialPaused = hidden && pocStore.getState().pauseHiddenRendering;
+      adapter = this.adapterFactory(
+        backendId,
+        {
+          onUserInput: (bytes) => {
+            const state = pocStore.getState();
+            if (state.diagnosticsEnabled) {
+              state.pushLog(
+                "input",
+                `[${id}] user (${bytes.byteLength}B): ${formatControlBytes(bytes)}`,
+              );
+            }
+            if (!sessionRef || sessionRef.disposed) return;
+            if (sessionRef.attachId > 0) {
+              void this.client
+                .terminalWrite(sessionRef.attachId, bytes, "user")
+                .catch((err) => this.reportIpcError(`terminalWrite:${id}`, err));
+            } else {
+              sessionRef.pendingWrites.push({ bytes: new Uint8Array(bytes), kind: "user" });
+            }
+          },
+          onAutoResponse: (bytes) => {
+            const state = pocStore.getState();
+            const suppress = state.suppressAutoReplies;
+            if (state.diagnosticsEnabled) {
+              state.pushLog(
+                "auto-reply",
+                `[${id}] ${suppress ? "BLOCKED" : "AUTO(kind=6)"} (${bytes.byteLength}B): ${formatControlBytes(bytes)}`,
+              );
+            }
+            if (suppress) {
+              this.pendingRepliesDelta += 1;
+              this.scheduleStatsFlush();
+              return;
+            }
+            if (!sessionRef || sessionRef.disposed) return;
+            if (sessionRef.attachId > 0) {
+              void this.client
+                .terminalWrite(sessionRef.attachId, bytes, "automatic")
+                .catch((err) => this.reportIpcError(`terminalWriteAuto:${id}`, err));
+            } else {
+              sessionRef.pendingWrites.push({ bytes: new Uint8Array(bytes), kind: "automatic" });
+            }
+          },
+          onResize: (cols, rows) => {
+            pocStore.getState().updateTabSize(id, cols, rows);
+            if (!sessionRef || sessionRef.disposed) return;
+            // Suppress feedback loop when resize originated from backend or dimensions are unchanged.
+            if (
+              sessionRef.applyingBackendResize ||
+              (cols === sessionRef.lastSentCols && rows === sessionRef.lastSentRows)
+            ) {
+              return;
+            }
+            if (sessionRef.attachId > 0) {
+              sessionRef.lastSentCols = cols;
+              sessionRef.lastSentRows = rows;
+              void this.client
+                .terminalResize(sessionRef.attachId, cols, rows)
+                .catch((err) => this.reportIpcError(`terminalResize:${id}`, err));
+            } else {
+              sessionRef.pendingResize = { cols, rows };
+            }
+          },
         },
-        onAutoResponse: (bytes) => {
-          const suppress = pocStore.getState().suppressAutoReplies;
-          pocStore
-            .getState()
-            .pushLog(
-              "auto-reply",
-              `[${id}] ${suppress ? "BLOCKED" : "AUTO(kind=6)"} (${bytes.byteLength}B): ${formatControlBytes(bytes)}`,
-            );
-          if (suppress) {
-            this.pendingRepliesDelta += 1;
-            this.scheduleStatsFlush();
-            return;
-          }
-          if (!sessionRef || sessionRef.disposed) return;
-          if (sessionRef.attachId > 0) {
-            void this.client
-              .terminalWrite(sessionRef.attachId, bytes, "automatic")
-              .catch((err) => this.reportIpcError(`terminalWriteAuto:${id}`, err));
-          } else {
-            sessionRef.pendingWrites.push({ bytes: new Uint8Array(bytes), kind: "automatic" });
-          }
-        },
-        onResize: (cols, rows) => {
-          pocStore.getState().updateTabSize(id, cols, rows);
-          if (!sessionRef || sessionRef.disposed) return;
-          // Suppress feedback loop when resize originated from backend or dimensions are unchanged.
-          if (
-            sessionRef.applyingBackendResize ||
-            (cols === sessionRef.lastSentCols && rows === sessionRef.lastSentRows)
-          ) {
-            return;
-          }
-          if (sessionRef.attachId > 0) {
-            sessionRef.lastSentCols = cols;
-            sessionRef.lastSentRows = rows;
-            void this.client
-              .terminalResize(sessionRef.attachId, cols, rows)
-              .catch((err) => this.reportIpcError(`terminalResize:${id}`, err));
-          } else {
-            sessionRef.pendingResize = { cols, rows };
-          }
-        },
-      });
+        { renderingPaused: initialPaused },
+      );
 
       await adapter.mount(container);
 
@@ -328,6 +367,7 @@ export class TerminalSessionManager {
         unackedBytes: 0,
         mounted: true,
         disposed: false,
+        focused: !hidden,
         applyingBackendResize: false,
         lastSentCols: adapter.cols,
         lastSentRows: adapter.rows,
@@ -337,7 +377,7 @@ export class TerminalSessionManager {
       sessionRef = session;
       this.sessions.set(id, session);
 
-      if (hidden && pocStore.getState().pauseHiddenRendering) {
+      if (initialPaused) {
         adapter.setHidden(true);
       }
 
@@ -381,16 +421,25 @@ export class TerminalSessionManager {
 
   setActive(activeId: string | null): void {
     const pauseHidden = pocStore.getState().pauseHiddenRendering;
+    const prevActiveId = this.activeId;
+    this.activeId = activeId;
+
     for (const [id, session] of this.sessions) {
       const isActive = id === activeId;
-      session.container.style.display = isActive ? "block" : "none";
-      session.adapter.setHidden(pauseHidden && !isActive);
-      if (session.attachId > 0) {
-        void this.client
-          .terminalFocus(session.attachId, isActive)
-          .catch((err) => this.reportIpcError(`terminalFocus:${id}`, err));
+      const nextDisplay = isActive ? "block" : "none";
+      if (session.container.style.display !== nextDisplay) {
+        session.container.style.display = nextDisplay;
       }
-      if (isActive) {
+      session.adapter.setHidden(pauseHidden && !isActive);
+      if (session.focused !== isActive) {
+        session.focused = isActive;
+        if (session.attachId > 0) {
+          void this.client
+            .terminalFocus(session.attachId, isActive)
+            .catch((err) => this.reportIpcError(`terminalFocus:${id}`, err));
+        }
+      }
+      if (isActive && prevActiveId !== activeId) {
         session.adapter.fit();
         session.adapter.focus();
       }
@@ -491,7 +540,12 @@ export class TerminalSessionManager {
     const session = this.sessions.get(id);
     if (!session) return;
     session.disposed = true;
+    session.pendingWrites.length = 0;
+    session.pendingResize = null;
     this.sessions.delete(id);
+    if (this.activeId === id) {
+      this.activeId = null;
+    }
     if (session.attachId > 0) {
       const aid = session.attachId;
       session.attachId = 0;
@@ -507,6 +561,8 @@ export class TerminalSessionManager {
   }
 
   disposeAll(): void {
+    this.cancelStatsFlush();
+    this.activeId = null;
     for (const id of Array.from(this.sessions.keys())) {
       this.disposeSession(id);
     }

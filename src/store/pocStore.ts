@@ -36,6 +36,7 @@ export interface PocState {
   activeTabId: string | null;
   suppressAutoReplies: boolean;
   pauseHiddenRendering: boolean;
+  diagnosticsEnabled: boolean;
   isComposing: boolean;
   totalBytesReceived: number;
   totalRepliesBlocked: number;
@@ -50,6 +51,7 @@ export interface PocState {
   updateTabSize: (id: string, cols: number, rows: number) => void;
   setSuppressAutoReplies: (value: boolean) => void;
   setPauseHiddenRendering: (value: boolean) => void;
+  setDiagnosticsEnabled: (value: boolean) => void;
   setIsComposing: (value: boolean) => void;
   addStats: (bytesDelta: number, repliesDelta: number) => void;
   resetStats: () => void;
@@ -62,6 +64,7 @@ export interface PocState {
 
 let nextLogId = 1;
 const MAX_LOGS = 80;
+const MAX_LOG_DETAIL_CHARS = 160;
 
 function nowTime(): string {
   const d = new Date();
@@ -79,6 +82,7 @@ export const pocStore = createStore<PocState>((set) => ({
   activeTabId: null,
   suppressAutoReplies: true,
   pauseHiddenRendering: true,
+  diagnosticsEnabled: true,
   isComposing: false,
   totalBytesReceived: 0,
   totalRepliesBlocked: 0,
@@ -91,12 +95,20 @@ export const pocStore = createStore<PocState>((set) => ({
   setTabs: (tabs, activeTabId) => set({ tabs, activeTabId }),
   setActiveTabId: (activeTabId) => set({ activeTabId }),
   updateTabSize: (id, cols, rows) =>
-    set((s) => ({
-      tabs: s.tabs.map((tab) => (tab.id === id ? { ...tab, cols, rows } : tab)),
-    })),
+    set((s) => {
+      const target = s.tabs.find((tab) => tab.id === id);
+      if (!target || (target.cols === cols && target.rows === rows)) {
+        return s;
+      }
+      return {
+        tabs: s.tabs.map((tab) => (tab.id === id ? { ...tab, cols, rows } : tab)),
+      };
+    }),
   setSuppressAutoReplies: (suppressAutoReplies) => set({ suppressAutoReplies }),
   setPauseHiddenRendering: (pauseHiddenRendering) => set({ pauseHiddenRendering }),
-  setIsComposing: (isComposing) => set({ isComposing }),
+  setDiagnosticsEnabled: (diagnosticsEnabled) => set({ diagnosticsEnabled }),
+  setIsComposing: (isComposing) =>
+    set((s) => (s.isComposing === isComposing ? s : { isComposing })),
   addStats: (bytesDelta, repliesDelta) =>
     set((s) => ({
       totalBytesReceived: s.totalBytesReceived + bytesDelta,
@@ -105,7 +117,14 @@ export const pocStore = createStore<PocState>((set) => ({
   resetStats: () => set({ totalBytesReceived: 0, totalRepliesBlocked: 0 }),
   pushLog: (kind, detail) =>
     set((s) => {
-      const next: DiagnosticEvent = { id: nextLogId++, time: nowTime(), kind, detail };
+      if (!s.diagnosticsEnabled && kind !== "system") {
+        return s;
+      }
+      const bounded =
+        detail.length > MAX_LOG_DETAIL_CHARS
+          ? `${detail.slice(0, MAX_LOG_DETAIL_CHARS)}...`
+          : detail;
+      const next: DiagnosticEvent = { id: nextLogId++, time: nowTime(), kind, detail: bounded };
       const merged = [...s.logs, next];
       return { logs: merged.length > MAX_LOGS ? merged.slice(merged.length - MAX_LOGS) : merged };
     }),

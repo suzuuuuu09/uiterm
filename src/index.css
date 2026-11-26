@@ -1,7 +1,5 @@
 @import "tailwindcss";
 @import "@wterm/dom/css";
-@import "@gespenst/core/style.css";
-@import "@xterm/xterm/css/xterm.css";
 
 @theme {
   --font-mono:

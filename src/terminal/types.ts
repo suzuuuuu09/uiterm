@@ -13,6 +13,7 @@ export interface TerminalAdapterOptions {
   scrollbackLines?: number;
   fontSize?: number;
   fontFamily?: string;
+  renderingPaused?: boolean;
 }
 
 export interface TerminalAdapter {

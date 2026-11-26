@@ -19,8 +19,11 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    target: "es2023",
+  },
   optimizeDeps: {
-    exclude: ["@wterm/ghostty", "@wterm/core", "@gespenst/core", "ghostty-web"],
+    exclude: ["@wterm/ghostty"],
   },
   assetsInclude: ["**/*.wasm"],
 });
