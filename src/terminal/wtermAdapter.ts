@@ -1,7 +1,7 @@
 import { WTerm } from "@wterm/dom";
 import { GhosttyCore } from "@wterm/ghostty";
 import ghosttyWasmUrl from "@wterm/ghostty/ghostty-vt.wasm?url";
-import type { TerminalBackendId } from "../transport/schemas.ts";
+import type { TerminalBackendId } from "../validation/settingsSchemas.ts";
 import type {
   TerminalAdapter,
   TerminalAdapterCallbacks,

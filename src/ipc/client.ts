@@ -1,4 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { normalizeError } from "../errors/appError.ts";
+import { appLogger } from "../logging/logger.ts";
 import {
   type AttachId,
   type ConfigEvalParams,
@@ -7,6 +9,7 @@ import {
   type CoreStatus,
   decodeOutputFrame,
   type DisplayFacts,
+  type EventDelivery,
   type EventsSubscribeResult,
   type InputKind,
   type OutputFrame,
@@ -99,24 +102,20 @@ export class TauriIpcClient implements UitermBackendClient {
   async eventsSubscribe(
     onEvent: (event: CoreEvent) => void,
   ): Promise<EventsSubscribeResult> {
-    const channel = new Channel<{
-      subscriptionId: number;
-      events: CoreEvent[];
-      bytes: number;
-    }>();
+    const channel = new Channel<EventDelivery>();
     channel.onmessage = ({ subscriptionId, events, bytes }) => {
       try {
         for (const event of events) {
           try {
             onEvent(event);
           } catch (err) {
-            console.error("Core event handler failed", err);
+            appLogger.logError("ipc", normalizeError(err, { context: "eventsSubscribe:handler" }));
           }
         }
       } finally {
         if (bytes > 0) {
           void invoke("events_ack", { subscriptionId, bytes }).catch((err) => {
-            console.error("Core event ACK failed", err);
+            appLogger.logError("ipc", normalizeError(err, { context: "events_ack" }));
           });
         }
       }

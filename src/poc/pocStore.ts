@@ -1,14 +1,6 @@
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
-import type { Locale } from "../i18n/dict.ts";
-import type { TerminalBackendId } from "../transport/schemas.ts";
-
-export interface TabMeta {
-  readonly id: string;
-  readonly title: string;
-  readonly cols: number;
-  readonly rows: number;
-}
+import type { TerminalBackendId } from "../validation/settingsSchemas.ts";
 
 export interface DiagnosticEvent {
   readonly id: number;
@@ -29,30 +21,19 @@ export interface BenchmarkRow {
   readonly heapDeltaMB: number | null;
 }
 
-export interface PocState {
-  locale: Locale;
-  backendId: TerminalBackendId;
-  tabs: readonly TabMeta[];
-  activeTabId: string | null;
-  suppressAutoReplies: boolean;
-  pauseHiddenRendering: boolean;
+export interface PocDiagnosticsState {
+  /**
+   * Explicit opt-in for verbose Phase 0 PoC diagnostics (disabled by default in product mode
+   * so terminal input metadata / IME events are not recorded unless requested).
+   */
   diagnosticsEnabled: boolean;
-  isComposing: boolean;
   totalBytesReceived: number;
   totalRepliesBlocked: number;
   logs: readonly DiagnosticEvent[];
   benchRunning: boolean;
   benchResults: readonly BenchmarkRow[];
 
-  setLocale: (locale: Locale) => void;
-  setBackendId: (backendId: TerminalBackendId) => void;
-  setTabs: (tabs: readonly TabMeta[], activeTabId: string | null) => void;
-  setActiveTabId: (id: string | null) => void;
-  updateTabSize: (id: string, cols: number, rows: number) => void;
-  setSuppressAutoReplies: (value: boolean) => void;
-  setPauseHiddenRendering: (value: boolean) => void;
   setDiagnosticsEnabled: (value: boolean) => void;
-  setIsComposing: (value: boolean) => void;
   addStats: (bytesDelta: number, repliesDelta: number) => void;
   resetStats: () => void;
   pushLog: (kind: DiagnosticEvent["kind"], detail: string) => void;
@@ -72,43 +53,18 @@ function nowTime(): string {
 }
 
 /**
- * Zustand Vanilla store for UI & workspace metadata ONLY.
- * Terminal output bytes NEVER enter this store.
+ * Isolated PoC-only store for Phase 0 benchmarks and diagnostic probes.
+ * Product state lives exclusively in `src/state/appStore.ts`.
  */
-export const pocStore = createStore<PocState>((set) => ({
-  locale: "ja",
-  backendId: "wterm-ghostty-dom",
-  tabs: [],
-  activeTabId: null,
-  suppressAutoReplies: true,
-  pauseHiddenRendering: true,
-  diagnosticsEnabled: true,
-  isComposing: false,
+export const pocStore = createStore<PocDiagnosticsState>((set) => ({
+  diagnosticsEnabled: false,
   totalBytesReceived: 0,
   totalRepliesBlocked: 0,
   logs: [],
   benchRunning: false,
   benchResults: [],
 
-  setLocale: (locale) => set({ locale }),
-  setBackendId: (backendId) => set({ backendId }),
-  setTabs: (tabs, activeTabId) => set({ tabs, activeTabId }),
-  setActiveTabId: (activeTabId) => set({ activeTabId }),
-  updateTabSize: (id, cols, rows) =>
-    set((s) => {
-      const target = s.tabs.find((tab) => tab.id === id);
-      if (!target || (target.cols === cols && target.rows === rows)) {
-        return s;
-      }
-      return {
-        tabs: s.tabs.map((tab) => (tab.id === id ? { ...tab, cols, rows } : tab)),
-      };
-    }),
-  setSuppressAutoReplies: (suppressAutoReplies) => set({ suppressAutoReplies }),
-  setPauseHiddenRendering: (pauseHiddenRendering) => set({ pauseHiddenRendering }),
   setDiagnosticsEnabled: (diagnosticsEnabled) => set({ diagnosticsEnabled }),
-  setIsComposing: (isComposing) =>
-    set((s) => (s.isComposing === isComposing ? s : { isComposing })),
   addStats: (bytesDelta, repliesDelta) =>
     set((s) => ({
       totalBytesReceived: s.totalBytesReceived + bytesDelta,
@@ -134,6 +90,6 @@ export const pocStore = createStore<PocState>((set) => ({
   clearBenchResults: () => set({ benchResults: [] }),
 }));
 
-export function usePocStore<T>(selector: (state: PocState) => T): T {
+export function usePocStore<T>(selector: (state: PocDiagnosticsState) => T): T {
   return useStore(pocStore, selector);
 }

@@ -1,4 +1,4 @@
-import type { TerminalBackendId } from "../transport/schemas.ts";
+import type { TerminalBackendId } from "../validation/settingsSchemas.ts";
 import type {
   TerminalAdapter,
   TerminalAdapterCallbacks,

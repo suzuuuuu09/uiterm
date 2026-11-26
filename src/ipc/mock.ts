@@ -247,6 +247,14 @@ export class MockIpcClient implements UitermBackendClient {
     };
   }
 
+  /** Injects a synthetic CoreEvent to all active subscribers (for integration testing). */
+  emitTestEvent(event: CoreEvent): void {
+    if ("seq" in event && event.seq > this.seq) {
+      this.seq = event.seq;
+    }
+    this.emit(event);
+  }
+
   private emit(event: CoreEvent): void {
     for (const sub of this.subscribers.values()) {
       sub(event);
