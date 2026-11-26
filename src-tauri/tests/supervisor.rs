@@ -104,19 +104,24 @@ async fn gui_pipe_eof_cleans_up_after_core_crash_and_leaves_other_instance_runni
     );
     let second_core_pid_i32 = i32::try_from(second_core_pid).unwrap();
     assert_eq!(unsafe { libc::kill(second_core_pid_i32, libc::SIGKILL) }, 0);
-    let recovered_again = timeout(Duration::from_secs(8), async {
+    let (recovered_again, third_core_pid) = timeout(Duration::from_secs(8), async {
         loop {
             if let Ok(client) = HerdrClient::connect(&socket, &session).await
                 && let Ok(status) = client.server_status().await
                 && status.pid != second_core_pid
             {
-                return client;
+                return (client, status.pid);
             }
             sleep(Duration::from_millis(50)).await;
         }
     })
     .await
     .unwrap();
+    assert!(
+        third_core_pid > 0,
+        "expected positive third core PID, got {third_core_pid}"
+    );
+    let third_core_pid_i32 = i32::try_from(third_core_pid).unwrap();
     assert!(
         recovered_again
             .terminal_list(false)
@@ -136,7 +141,13 @@ async fn gui_pipe_eof_cleans_up_after_core_crash_and_leaves_other_instance_runni
     );
     assert!(!socket.parent().unwrap().exists());
     timeout(Duration::from_secs(3), async {
-        for pid in [core_pid_i32, second_core_pid_i32, holder_pid, shell_pid] {
+        for pid in [
+            core_pid_i32,
+            second_core_pid_i32,
+            third_core_pid_i32,
+            holder_pid,
+            shell_pid,
+        ] {
             while unsafe { libc::kill(pid, 0) } == 0 {
                 sleep(Duration::from_millis(25)).await;
             }

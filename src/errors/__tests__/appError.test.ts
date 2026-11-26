@@ -58,16 +58,19 @@ describe("AppError & async error handling", () => {
     expect(captured).toHaveLength(1);
 
     // Observer failures must not turn runSafeAsync into a rejected promise
+    let observerCalled = false;
     const isolated = await runSafeAsync(
       async () => {
         throw new Error("primary failure");
       },
       {
         onError: () => {
+          observerCalled = true;
           throw new Error("observer boom");
         },
       },
     );
+    expect(observerCalled).toBe(true);
     expect(isolated.ok).toBe(false);
     if (!isolated.ok) {
       expect(isolated.error.message).toBe("primary failure");

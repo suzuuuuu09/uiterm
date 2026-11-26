@@ -70,6 +70,16 @@ impl CoreSupervisor {
         }
         if matches!(self.child.try_wait(), Ok(None)) {
             eprintln!("uiterm: core_supervisor_stop_timeout");
+            #[cfg(unix)]
+            if let Some(pid) = self.child.id()
+                && let Ok(pgid) = i32::try_from(pid)
+                && pgid > 0
+            {
+                // Supervisor was spawned with process_group(0), so its PID is its PGID.
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+            }
             let _ = self.child.start_kill();
         }
     }
@@ -96,29 +106,53 @@ pub async fn run_supervisor() -> Result<(), IpcError> {
             let mut byte = [0; 1];
             std::io::Read::read(&mut std::io::stdin(), &mut byte)
         });
+        let mut backoff = Duration::from_millis(250);
+        let mut last_recovery_err: Option<String> = None;
         loop {
             let child_alive = matches!(daemon.child.as_mut().unwrap().try_wait(), Ok(None));
             if child_alive {
                 tokio::select! {
                     _ = &mut gui_exit => break,
                     _ = daemon.child.as_mut().unwrap().wait() => {
-                        if let Err(err) = daemon.recover().await {
-                            eprintln!("uiterm: core_recovery_failed: [{}] {}", err.code, err.message);
-                            tokio::select! {
-                                _ = &mut gui_exit => break,
-                                _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                        match daemon.recover().await {
+                            Ok(()) => {
+                                backoff = Duration::from_millis(250);
+                                last_recovery_err = None;
+                            }
+                            Err(err) => {
+                                let summary = format!("[{}] {}", err.code, err.message);
+                                if last_recovery_err.as_deref() != Some(summary.as_str()) {
+                                    eprintln!("uiterm: core_recovery_failed: {summary}");
+                                    last_recovery_err = Some(summary);
+                                }
+                                tokio::select! {
+                                    _ = &mut gui_exit => break,
+                                    _ = tokio::time::sleep(backoff) => {}
+                                }
+                                backoff = (backoff * 2).min(Duration::from_secs(5));
                             }
                         }
                     }
                 }
             } else {
                 // The tracked child already exited (e.g. a holder adopted the lock or a
-                // prior recovery failed). Poll recovery on a short interval without spinning.
+                // prior recovery failed). Poll recovery with backoff without spinning.
                 tokio::select! {
                     _ = &mut gui_exit => break,
-                    _ = tokio::time::sleep(Duration::from_millis(250)) => {
-                        if let Err(err) = daemon.recover().await {
-                            eprintln!("uiterm: core_recovery_failed: [{}] {}", err.code, err.message);
+                    _ = tokio::time::sleep(backoff) => {
+                        match daemon.recover().await {
+                            Ok(()) => {
+                                backoff = Duration::from_millis(250);
+                                last_recovery_err = None;
+                            }
+                            Err(err) => {
+                                let summary = format!("[{}] {}", err.code, err.message);
+                                if last_recovery_err.as_deref() != Some(summary.as_str()) {
+                                    eprintln!("uiterm: core_recovery_failed: {summary}");
+                                    last_recovery_err = Some(summary);
+                                }
+                                backoff = (backoff * 2).min(Duration::from_secs(5));
+                            }
                         }
                     }
                 }

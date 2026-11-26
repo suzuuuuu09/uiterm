@@ -86,8 +86,22 @@ describe("Valibot validation schemas", () => {
     ).toEqual({
       reason: "signaled",
       exitCode: null,
-      signal: "15",
+      signal: "SIGTERM",
       finishedMs: 1234,
+    });
+
+    expect(
+      parseTerminationEventData({
+        reason: "signaled",
+        exit_code: null,
+        signal: "SIGTERM",
+        finished_ms: 2345,
+      }),
+    ).toEqual({
+      reason: "signaled",
+      exitCode: null,
+      signal: "SIGTERM",
+      finishedMs: 2345,
     });
 
     expect(

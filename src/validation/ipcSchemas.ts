@@ -147,6 +147,25 @@ export interface ParsedTerminationEventData {
   readonly finishedMs: number | null;
 }
 
+const POSIX_SIGNAL_NAMES: Readonly<Record<number, string>> = {
+  1: "SIGHUP",
+  2: "SIGINT",
+  3: "SIGQUIT",
+  6: "SIGABRT",
+  9: "SIGKILL",
+  13: "SIGPIPE",
+  14: "SIGALRM",
+  15: "SIGTERM",
+};
+
+function normalizeSignal(raw: string | number | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") {
+    return POSIX_SIGNAL_NAMES[raw] ?? String(raw);
+  }
+  return raw;
+}
+
 /**
  * Parses `CoreEvent` `finished` / `lost` `data: unknown`, normalizing both
  * raw `herdr-core` snake_case (`exit_code`, `finished_ms`) and camelCase keys.
@@ -156,11 +175,10 @@ export function parseTerminationEventData(data: unknown): ParsedTerminationEvent
   if (!res.success) {
     return { reason: null, exitCode: null, signal: null, finishedMs: null };
   }
-  const rawSignal = res.output.signal;
   return {
     reason: res.output.reason ?? null,
     exitCode: res.output.exitCode ?? res.output.exit_code ?? null,
-    signal: rawSignal === null || rawSignal === undefined ? null : String(rawSignal),
+    signal: normalizeSignal(res.output.signal),
     finishedMs: res.output.finishedMs ?? res.output.finished_ms ?? null,
   };
 }

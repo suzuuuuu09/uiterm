@@ -108,9 +108,13 @@ export function registerBuiltinActions(
           });
           if (activate) {
             const selectedPaneId = deps.store.getState().selection.activePaneId;
-            deps.sessionManager.setActive(selectedPaneId);
-            if (selectedPaneId === tabId) {
-              deps.sessionManager.focusSession(tabId);
+            if (selectedPaneId === null || deps.sessionManager.get(selectedPaneId)) {
+              deps.sessionManager.setActive(selectedPaneId);
+              if (selectedPaneId === tabId) {
+                deps.sessionManager.focusSession(tabId);
+              }
+            } else {
+              session.container.style.display = "none";
             }
           }
           return {
