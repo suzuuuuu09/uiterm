@@ -69,7 +69,6 @@ pub struct HerdrDaemon {
     child: Option<Child>,
     ready: bool,
     stopped: bool,
-    stop_attempted: bool,
 }
 
 impl HerdrDaemon {
@@ -91,7 +90,7 @@ impl HerdrDaemon {
         {
             return Err(IpcError::new(
                 "core_version_mismatch",
-                "herdr-core v0.1.22 is required",
+                format!("herdr-core v{CORE_VERSION} is required"),
             ));
         }
 
@@ -111,7 +110,6 @@ impl HerdrDaemon {
             child: None,
             ready: false,
             stopped: false,
-            stop_attempted: false,
         };
 
         // The pinned core's `serve` runs in the foreground and skips shared launchd/systemd
@@ -125,6 +123,7 @@ impl HerdrDaemon {
     fn spawn_core(&mut self) -> Result<(), IpcError> {
         self.child = Some(
             Command::from(self.command(&["serve"]))
+                .stderr(Stdio::inherit())
                 .kill_on_drop(true)
                 .spawn()
                 .map_err(|err| IpcError::new("spawn_failed", err.to_string()))?,
@@ -143,17 +142,16 @@ impl HerdrDaemon {
                     return Ok(());
                 }
                 if !recovering
-                    && self
+                    && let Some(status) = self
                         .child
                         .as_mut()
                         .unwrap()
                         .try_wait()
-                        .map_err(stop_error)?
-                        .is_some()
+                        .map_err(|err| IpcError::new("core_start_failed", err.to_string()))?
                 {
                     return Err(IpcError::new(
                         "core_start_failed",
-                        "herdr-core exited before opening its socket",
+                        format!("herdr-core exited before opening its socket ({status})"),
                     ));
                 }
                 tokio::time::sleep(Duration::from_millis(25)).await;
@@ -207,7 +205,6 @@ impl HerdrDaemon {
         if self.stopped {
             return Ok(());
         }
-        self.stop_attempted = true;
         tokio::time::timeout(STOP_TIMEOUT, async {
             self.ensure_graceful_stop_possible()?;
             let output = Command::from(self.command(&["--json", "server", "stop"]))
@@ -293,8 +290,8 @@ impl HerdrDaemon {
     }
 
     pub fn stop_blocking(&mut self) {
-        if !self.stop_attempted && self.stop_sync().is_err() {
-            eprintln!("uiterm: core_stop_failed");
+        if let Err(err) = self.stop_sync() {
+            eprintln!("uiterm: {}: {}", err.code, err.message);
         }
     }
 }

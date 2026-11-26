@@ -174,11 +174,19 @@ export class TerminalSessionManager {
 
   async startEventStream(): Promise<void> {
     if (this.eventStream !== null) return;
-    const stream: { subscriptionId: number | null } = { subscriptionId: null };
+    const stream: {
+      subscriptionId: number | null;
+      ready: boolean;
+      pending: CoreEvent[];
+    } = { subscriptionId: null, ready: false, pending: [] };
     this.eventStream = stream;
     try {
       const sub = await this.client.eventsSubscribe((ev) => {
         if (this.eventStream !== stream) return;
+        if (!stream.ready) {
+          stream.pending.push(ev);
+          return;
+        }
         if (ev.type === "disconnected") this.eventStream = null;
         this.handleCoreEvent(ev);
       });
@@ -190,6 +198,12 @@ export class TerminalSessionManager {
       }
       stream.subscriptionId = sub.subscriptionId;
       this.store.getState().applyCoreSnapshot(sub.terminals, sub.seq);
+      stream.ready = true;
+      for (const ev of stream.pending.splice(0)) {
+        if (this.eventStream !== stream) break;
+        if (ev.type === "disconnected") this.eventStream = null;
+        this.handleCoreEvent(ev);
+      }
       this.logger.info("terminal", "Subscribed to herdr-core event stream", {
         subscriptionId: sub.subscriptionId,
         seq: sub.seq,

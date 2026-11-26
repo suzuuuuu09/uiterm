@@ -1,4 +1,14 @@
 #[cfg(unix)]
+fn is_executable_file(path: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = std::path::Path::new(path);
+    path.is_absolute()
+        && path.is_file()
+        && std::fs::metadata(path).is_ok_and(|meta| meta.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(unix)]
 pub(crate) fn resolve_os_default_shell() -> Option<String> {
     let mut size = 1024;
     let pw_shell = loop {
@@ -34,14 +44,14 @@ pub(crate) fn resolve_os_default_shell() -> Option<String> {
     };
 
     if let Some(shell) = pw_shell
-        && std::path::Path::new(&shell).is_file()
+        && is_executable_file(&shell)
     {
         return Some(shell);
     }
 
     if let Ok(env_shell) = std::env::var("SHELL")
         && !env_shell.is_empty()
-        && std::path::Path::new(&env_shell).is_file()
+        && is_executable_file(&env_shell)
     {
         return Some(env_shell);
     }

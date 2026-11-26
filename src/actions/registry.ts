@@ -90,18 +90,15 @@ export class ActionRegistry {
       };
     }
 
-    let parsedArgs: unknown = args;
-    if (args !== undefined) {
-      const parsed = v.safeParse(def.argsSchema, args);
-      if (!parsed.success) {
-        return {
-          allowed: false,
-          reasonKey: "error.action.invalidArgs",
-          reasonParams: { actionId: id },
-        };
-      }
-      parsedArgs = parsed.output;
+    const parsed = v.safeParse(def.argsSchema, args ?? {});
+    if (!parsed.success) {
+      return {
+        allowed: false,
+        reasonKey: "error.action.invalidArgs",
+        reasonParams: { actionId: id },
+      };
     }
+    const parsedArgs: unknown = parsed.output;
 
     if (!def.canExecute) {
       return { allowed: true };
@@ -157,23 +154,28 @@ export class ActionRegistry {
       signal: options.signal,
     };
 
-    if (def.canExecute) {
-      const availability = def.canExecute(parsed.output, ctx);
-      if (!availability.allowed) {
-        const error = new AppError({
-          code: "ACTION_UNAVAILABLE",
-          severity: "warn",
-          messageKey: availability.reasonKey,
-          messageParams: availability.reasonParams,
-          devMessage: `Action ${id} is unavailable (${availability.reasonKey})`,
-          diagnostics: { actionId: id, caller, owner: def.owner, reasonKey: availability.reasonKey },
-        });
-        this.logger.logError("actions", error);
-        return { ok: false, error };
-      }
-    }
-
     try {
+      if (def.canExecute) {
+        const availability = def.canExecute(parsed.output, ctx);
+        if (!availability.allowed) {
+          const error = new AppError({
+            code: "ACTION_UNAVAILABLE",
+            severity: "warn",
+            messageKey: availability.reasonKey,
+            messageParams: availability.reasonParams,
+            devMessage: `Action ${id} is unavailable (${availability.reasonKey})`,
+            diagnostics: {
+              actionId: id,
+              caller,
+              owner: def.owner,
+              reasonKey: availability.reasonKey,
+            },
+          });
+          this.logger.logError("actions", error);
+          return { ok: false, error };
+        }
+      }
+
       const value = (await def.execute(parsed.output, ctx)) as ActionResultOf<TId>;
       this.logger.debug("actions", `Executed ${id}`, {
         actionId: id,

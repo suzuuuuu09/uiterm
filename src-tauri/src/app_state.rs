@@ -30,10 +30,27 @@ impl AppState {
         }
 
         if connection.supervisor.is_none() {
-            connection.supervisor = Some(CoreSupervisor::start().await?);
+            let mut started = CoreSupervisor::start().await?;
+            if self.exiting.load(Ordering::Acquire) {
+                started.stop_blocking();
+                return Err(IpcError::new(
+                    "core_disconnected",
+                    "uiterm is shutting down",
+                ));
+            }
+            connection.supervisor = Some(started);
         }
         let supervisor = connection.supervisor.as_ref().unwrap();
         let client = supervisor.connect().await?;
+        if self.exiting.load(Ordering::Acquire) {
+            if let Some(mut supervisor) = connection.supervisor.take() {
+                supervisor.stop_blocking();
+            }
+            return Err(IpcError::new(
+                "core_disconnected",
+                "uiterm is shutting down",
+            ));
+        }
         connection.client = Some(client.clone());
         Ok(client)
     }

@@ -5,6 +5,7 @@ import {
   AttachIdSchema,
   IpcErrorSchema,
   parseExternalInput,
+  parseTerminationEventData,
   ResizePayloadSchema,
   TerminalAttachParamsSchema,
   TerminalCreateParamsSchema,
@@ -72,5 +73,49 @@ describe("Valibot validation schemas", () => {
       v.parse(UserSettingsSchema, { ...DEFAULT_USER_SETTINGS, scrollbackLines: 10 }),
     ).toThrow();
     expect(() => v.parse(TerminalBackendIdSchema, "xterm")).toThrow();
+  });
+
+  it("normalizes numeric and string signals in termination events and omits raw values from validation diagnostics", () => {
+    expect(
+      parseTerminationEventData({
+        reason: "signaled",
+        exit_code: null,
+        signal: 15,
+        finished_ms: 1234,
+      }),
+    ).toEqual({
+      reason: "signaled",
+      exitCode: null,
+      signal: "15",
+      finishedMs: 1234,
+    });
+
+    expect(
+      parseTerminationEventData({
+        reason: "exited",
+        exit_code: 0,
+        signal: null,
+        finished_ms: 5678,
+      }),
+    ).toEqual({
+      reason: "exited",
+      exitCode: 0,
+      signal: null,
+      finishedMs: 5678,
+    });
+
+    try {
+      parseExternalInput(
+        TerminalCreateParamsSchema,
+        { env: "TOP_SECRET_VALUE" },
+        "terminal.create",
+      );
+      expect.unreachable("should throw AppError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(AppError);
+      const appErr = err as AppError;
+      expect(appErr.message).not.toContain("TOP_SECRET_VALUE");
+      expect(JSON.stringify(appErr.diagnostics)).not.toContain("TOP_SECRET_VALUE");
+    }
   });
 });

@@ -80,9 +80,11 @@ export class AppError extends Error {
     const causeMessage =
       this.cause instanceof Error
         ? this.cause.message
-        : this.cause !== undefined
-          ? String(this.cause)
-          : undefined;
+        : isIpcErrorLike(this.cause)
+          ? this.cause.message
+          : this.cause !== undefined
+            ? String(this.cause)
+            : undefined;
 
     return {
       code: this.code,
@@ -221,7 +223,11 @@ export async function runSafeAsync<T>(
       messageKey: options?.messageKey,
       context: options?.context,
     });
-    options?.onError?.(error);
+    try {
+      options?.onError?.(error);
+    } catch {
+      // Error observers must not replace the normalized operation result.
+    }
     return { ok: false, error };
   }
 }

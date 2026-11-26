@@ -109,6 +109,7 @@ export function App() {
 
   const initializedRef = useRef(false);
   const tabGenerationRef = useRef(0);
+  const benchInFlightRef = useRef(false);
 
   const spawnTabs = useCallback(async (count: number, replace = false) => {
     const host = appRuntime.getMountRoot();
@@ -175,89 +176,99 @@ export function App() {
 
   const handleRunBenchmark = async () => {
     const host = appRuntime.getMountRoot();
-    if (!host || pocStore.getState().benchRunning) return;
+    if (!host || benchInFlightRef.current || pocStore.getState().benchRunning) return;
+    benchInFlightRef.current = true;
     tabGenerationRef.current++;
     pocStore.getState().setBenchRunning(true);
     pocStore.getState().clearBenchResults();
     const currentBackend = appStore.getState().settings.renderer;
+    let completed = false;
 
     try {
-      for (const count of [1, 5, 10]) {
-        appRuntime.sessionManager.disposeAll();
-        appStore.getState().clearWorkspaceTabs();
-        await nextFrame();
-        const heapBefore = readHeapMB();
-
-        const tMount0 = performance.now();
-        const ids: string[] = [];
-        for (let i = 0; i < count; i++) {
-          const id = `bench-${count}-${i}`;
-          ids.push(id);
-          await appRuntime.sessionManager.createSession(id, currentBackend, host, i !== 0);
-        }
-        await nextFrame();
-        const mountMs = performance.now() - tMount0;
-
-        const burst = appRuntime.sessionManager.injectBurst(ids[0]!, 10_000, 200);
-        await nextFrame();
-        const burstMBps =
-          burst.durationMs > 0 ? burst.totalBytes / (1024 * 1024) / (burst.durationMs / 1000) : 0;
-
-        let hiddenBurstMs = 0;
-        if (count > 1) {
-          const hb = appRuntime.sessionManager.injectBurst(ids[1]!, 10_000, 200);
+      try {
+        for (const count of [1, 5, 10]) {
+          appRuntime.sessionManager.disposeAll();
+          appStore.getState().clearWorkspaceTabs();
           await nextFrame();
-          hiddenBurstMs = hb.durationMs;
-        }
+          const heapBefore = readHeapMB();
 
-        const switchTimes: number[] = [];
-        if (count > 1) {
-          for (let i = 0; i < 10; i++) {
-            const targetId = ids[i % count]!;
-            const tSw0 = performance.now();
-            appRuntime.sessionManager.setActive(targetId);
+          const tMount0 = performance.now();
+          const ids: string[] = [];
+          for (let i = 0; i < count; i++) {
+            const id = `bench-${count}-${i}`;
+            ids.push(id);
+            await appRuntime.sessionManager.createSession(id, currentBackend, host, i !== 0);
+          }
+          await nextFrame();
+          const mountMs = performance.now() - tMount0;
+
+          const burst = appRuntime.sessionManager.injectBurst(ids[0]!, 10_000, 200);
+          await nextFrame();
+          const burstMBps =
+            burst.durationMs > 0 ? burst.totalBytes / (1024 * 1024) / (burst.durationMs / 1000) : 0;
+
+          let hiddenBurstMs = 0;
+          if (count > 1) {
+            const hb = appRuntime.sessionManager.injectBurst(ids[1]!, 10_000, 200);
             await nextFrame();
-            switchTimes.push(performance.now() - tSw0);
+            hiddenBurstMs = hb.durationMs;
+          }
+
+          const switchTimes: number[] = [];
+          if (count > 1) {
+            for (let i = 0; i < 10; i++) {
+              const targetId = ids[i % count]!;
+              const tSw0 = performance.now();
+              appRuntime.sessionManager.setActive(targetId);
+              await nextFrame();
+              switchTimes.push(performance.now() - tSw0);
+            }
+          }
+          const switchAvgMs =
+            switchTimes.length > 0
+              ? switchTimes.reduce((a, b) => a + b, 0) / switchTimes.length
+              : 0;
+
+          const heapAfter = readHeapMB();
+
+          const tDisp0 = performance.now();
+          appRuntime.sessionManager.disposeAll();
+          await nextFrame();
+          const disposeMs = performance.now() - tDisp0;
+
+          const row: BenchmarkRow = {
+            backendId: currentBackend,
+            count,
+            mountMs: Number(mountMs.toFixed(1)),
+            burst10kMs: Number(burst.durationMs.toFixed(1)),
+            burstMBps: Number(burstMBps.toFixed(1)),
+            hiddenBurstMs: Number(hiddenBurstMs.toFixed(1)),
+            switchAvgMs: Number(switchAvgMs.toFixed(2)),
+            disposeMs: Number(disposeMs.toFixed(1)),
+            heapDeltaMB:
+              heapBefore !== null && heapAfter !== null
+                ? Number((heapAfter - heapBefore).toFixed(2))
+                : null,
+          };
+          pocStore.getState().addBenchResult(row);
+        }
+        completed = true;
+      } catch (err) {
+        for (const count of [1, 5, 10]) {
+          for (let i = 0; i < count; i++) {
+            appRuntime.sessionManager.disposeSession(`bench-${count}-${i}`);
           }
         }
-        const switchAvgMs =
-          switchTimes.length > 0
-            ? switchTimes.reduce((a, b) => a + b, 0) / switchTimes.length
-            : 0;
-
-        const heapAfter = readHeapMB();
-
-        const tDisp0 = performance.now();
-        appRuntime.sessionManager.disposeAll();
-        await nextFrame();
-        const disposeMs = performance.now() - tDisp0;
-
-        const row: BenchmarkRow = {
-          backendId: currentBackend,
-          count,
-          mountMs: Number(mountMs.toFixed(1)),
-          burst10kMs: Number(burst.durationMs.toFixed(1)),
-          burstMBps: Number(burstMBps.toFixed(1)),
-          hiddenBurstMs: Number(hiddenBurstMs.toFixed(1)),
-          switchAvgMs: Number(switchAvgMs.toFixed(2)),
-          disposeMs: Number(disposeMs.toFixed(1)),
-          heapDeltaMB:
-            heapBefore !== null && heapAfter !== null
-              ? Number((heapAfter - heapBefore).toFixed(2))
-              : null,
-        };
-        pocStore.getState().addBenchResult(row);
+        pocStore.getState().pushLog("system", `Benchmark aborted: ${String(err)}`);
+      } finally {
+        pocStore.getState().setBenchRunning(false);
       }
-      await spawnTabs(1, true);
-    } catch (err) {
-      for (const count of [1, 5, 10]) {
-        for (let i = 0; i < count; i++) {
-          appRuntime.sessionManager.disposeSession(`bench-${count}-${i}`);
-        }
+
+      if (completed) {
+        await spawnTabs(1, true);
       }
-      pocStore.getState().pushLog("system", `Benchmark aborted: ${String(err)}`);
     } finally {
-      pocStore.getState().setBenchRunning(false);
+      benchInFlightRef.current = false;
     }
   };
 

@@ -421,3 +421,114 @@ pub enum CoreEvent {
         reason: String,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_create_params_validate_accepts_valid_variants() {
+        assert!(TerminalCreateParams::default().validate().is_ok());
+
+        assert!(
+            TerminalCreateParams {
+                argv: Some(vec!["/bin/sh".into(), "-c".into(), "echo ok".into()]),
+                cwd: Some("/tmp".into()),
+                env: Some(HashMap::from([("TERM".into(), "xterm-256color".into())])),
+                cols: Some(80),
+                rows: Some(24),
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
+
+        assert!(
+            TerminalCreateParams {
+                line: Some("echo hello".into()),
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn terminal_create_params_validate_rejects_invalid_inputs() {
+        let cases = [
+            // 1. argv and line both set
+            TerminalCreateParams {
+                argv: Some(vec!["/bin/sh".into()]),
+                line: Some("echo hi".into()),
+                ..Default::default()
+            },
+            // 2a. empty argv
+            TerminalCreateParams {
+                argv: Some(vec![]),
+                ..Default::default()
+            },
+            // 2b. empty program in argv
+            TerminalCreateParams {
+                argv: Some(vec!["".into()]),
+                ..Default::default()
+            },
+            // 2c. NUL byte in argv
+            TerminalCreateParams {
+                argv: Some(vec!["/bin/sh".into(), "a\0b".into()]),
+                ..Default::default()
+            },
+            // 3a. whitespace-only line
+            TerminalCreateParams {
+                line: Some("   ".into()),
+                ..Default::default()
+            },
+            // 3b. NUL byte in line
+            TerminalCreateParams {
+                line: Some("echo \0".into()),
+                ..Default::default()
+            },
+            // 4. NUL byte in cwd
+            TerminalCreateParams {
+                cwd: Some("/tmp/\0bad".into()),
+                ..Default::default()
+            },
+            // 5a. empty env key
+            TerminalCreateParams {
+                env: Some(HashMap::from([("".into(), "1".into())])),
+                ..Default::default()
+            },
+            // 5b. '=' in env key
+            TerminalCreateParams {
+                env: Some(HashMap::from([("A=B".into(), "1".into())])),
+                ..Default::default()
+            },
+            // 5c. NUL in env value
+            TerminalCreateParams {
+                env: Some(HashMap::from([("KEY".into(), "v\0".into())])),
+                ..Default::default()
+            },
+            // 6. only one dimension specified
+            TerminalCreateParams {
+                cols: Some(80),
+                ..Default::default()
+            },
+            TerminalCreateParams {
+                rows: Some(24),
+                ..Default::default()
+            },
+            // 7. out-of-range dimensions
+            TerminalCreateParams {
+                cols: Some(0),
+                rows: Some(24),
+                ..Default::default()
+            },
+        ];
+
+        for (idx, params) in cases.iter().enumerate() {
+            let err = params
+                .validate()
+                .expect_err(&format!("case {idx} should fail validation"));
+            assert_eq!(err.code, "invalid_args", "case {idx} error code mismatch");
+        }
+    }
+}

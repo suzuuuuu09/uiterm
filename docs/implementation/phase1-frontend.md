@@ -156,14 +156,14 @@ Vitest（Vite+ 1.8.0 / Vitest 5.1.1）で単体・統合・Phase 0 回帰テス�
 | --- | --- | --- |
 | TypeScript 型検査 | `pnpm typecheck` | **合格**（0 errors） |
 | Lint | `pnpm lint` | **合格**（0 warnings, 0 errors） |
-| テスト全体 | `pnpm test -- --run` | **合格**（9 files / 35 passed） |
+| テスト全体 | `pnpm test -- --run` | **合格**（9 files / 39 passed） |
 | フロントエンドビルド | `pnpm build` | **合格**（0 warnings） |
 
 テスト内訳：
-- 状態管理: `src/state/__tests__/appStore.test.ts`（5 件）
+- 状態管理: `src/state/__tests__/appStore.test.ts`（7 件）
 - Action Registry: `src/actions/__tests__/registry.test.ts`（3 件）
-- データ検証: `src/validation/__tests__/validation.test.ts`（3 件）
-- エラー処理: `src/errors/__tests__/appError.test.ts`（3 件）
+- データ検証: `src/validation/__tests__/validation.test.ts`（4 件）
+- エラー処理: `src/errors/__tests__/appError.test.ts`（4 件）
 - ログ管理: `src/logging/__tests__/logger.test.ts`（3 件）
 - 国際化: `src/i18n/__tests__/i18n.test.ts`（4 件）
 - モック IPC 統合: `src/ipc/__tests__/ipc.integration.test.ts`（1 件）
@@ -179,7 +179,7 @@ Vitest（Vite+ 1.8.0 / Vitest 5.1.1）で単体・統合・Phase 0 回帰テス�
    - `u64`（`uptimeMs`, `createdMs`, `finishedMs`, `statusMs`, `turn`, `seq`, `live`, `finished`）について、`ts-rs` デフォルトの `bigint` ではなく `#[ts(type = "number")]` とすることで既存の JSON シリアライズ（JavaScript `number`）および `src/ipc/types.ts` と完全互換になる。
    - `CoreEvent` の各バリアントで `data: serde_json::Value` となっている箇所（`Lost`, `Finished`, `Status`, `Turn`, `Title`, `Size`, `Labels`）を Rust 側でも型付き構造体へ昇格させると、`ts-rs` でそのままタグ付きユニオンとして型生成でき、フロントエンド側の手動定義を完全に廃止できる。
 2. **IPC エラーコードの列挙整合**
-   - フロントエンド `src/errors/appError.ts` の `mapIpcCode()` は現在 `unavailable`, `core_disconnected`, `not_found`, `invalid_attach`, `invalid_args`, `unsupported`, `timeout`, `io_error` を個別マッピングしている（それ以外は `IPC_ERROR` へフォールバック）。Rust 側で新しい `IpcError.code` を追加した場合は、`mapIpcCode()` および `src/i18n/locales/{ja,en}.ts` へ対応を追加する。
+   - フロントエンド `src/errors/appError.ts` の `mapIpcCode()` は現在 `unavailable`, `connect_failed`, `herdr_core_not_found`, `core_start_failed`, `core_version_mismatch`, `invalid_core_path`, `spawn_failed`, `core_disconnected`, `not_found`, `invalid_attach`, `invalid_args`, `unsupported`, `untrusted_config`, `timeout`, `core_timeout`, `core_start_timeout`, `config_timeout`, `io_error` を個別マッピングしている（それ以外は `IPC_ERROR` へフォールバック）。Rust 側で新しい `IpcError.code` を追加した場合は、`mapIpcCode()` および `src/i18n/locales/{ja,en}.ts` へ対応を追加する。
 3. **IPC 契約の変更有無**
    - 本作業では既存の Tauri Command 名・引数構造・バイナリフレーム形式（`0x00`/`0x01`/`0x02`）・Raw Body ヘッダ（`x-uiterm-attach-id`, `x-uiterm-input-kind`）を一切変更していないため、Codex 側の既存コマンドとそのまま結合可能である。
 4. **統合後の確認項目**

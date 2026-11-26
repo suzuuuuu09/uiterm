@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import type { StoreApi } from "zustand/vanilla";
+import { AppError } from "../errors/appError.ts";
 import type { AppState } from "../state/appStore.ts";
 import type { TerminalSessionManager } from "../terminal/sessionManager.ts";
 import { TerminalColsSchema, TerminalRowsSchema } from "../validation/ipcSchemas.ts";
@@ -79,11 +80,16 @@ export function registerBuiltinActions(
         if (!host) {
           throw new Error("Terminal viewport host is not mounted");
         }
-        const tabId = `term-${nextTabSeq++}`;
+        const state = deps.store.getState();
+        let tabId = `term-${nextTabSeq++}`;
+        while (state.tabs[tabId] || state.panes[tabId] || deps.sessionManager.get(tabId)) {
+          tabId = `term-${nextTabSeq++}`;
+        }
         const title = args.title ?? tabId;
         const activate = args.activate ?? true;
-        const renderer = deps.store.getState().settings.renderer;
+        const renderer = state.settings.renderer;
 
+        let addedTab = false;
         deps.store.getState().addTerminalTab({
           tabId,
           paneId: tabId,
@@ -92,6 +98,7 @@ export function registerBuiltinActions(
           rows: args.rows ?? 24,
           activate,
         });
+        addedTab = true;
 
         try {
           const session = await deps.sessionManager.createSession(tabId, renderer, host, !activate, {
@@ -100,7 +107,11 @@ export function registerBuiltinActions(
             rows: args.rows,
           });
           if (activate) {
-            deps.sessionManager.setActive(tabId);
+            const selectedPaneId = deps.store.getState().selection.activePaneId;
+            deps.sessionManager.setActive(selectedPaneId);
+            if (selectedPaneId === tabId) {
+              deps.sessionManager.focusSession(tabId);
+            }
           }
           return {
             tabId,
@@ -108,7 +119,12 @@ export function registerBuiltinActions(
             sessionId: session.sessionId,
           };
         } catch (err) {
-          deps.store.getState().removeTab(tabId);
+          if (addedTab) {
+            deps.store.getState().removeTab(tabId);
+            if (activate) {
+              deps.sessionManager.setActive(deps.store.getState().selection.activePaneId);
+            }
+          }
           throw err;
         }
       },
@@ -219,6 +235,9 @@ export function registerBuiltinActions(
         if (!targetId) {
           return { allowed: false, reasonKey: "action.unavailable.noActiveTab" };
         }
+        if (!deps.store.getState().tabs[targetId]) {
+          return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
+        }
         return { allowed: true };
       },
       execute: async (args) => {
@@ -231,6 +250,13 @@ export function registerBuiltinActions(
             await deps.writeClipboard(selection);
           } else if (typeof navigator !== "undefined" && navigator.clipboard) {
             await navigator.clipboard.writeText(selection);
+          } else {
+            throw new AppError({
+              code: "ACTION_EXECUTION_FAILED",
+              messageKey: "error.action.failed",
+              messageParams: { actionId: "terminal.copySelection" },
+              devMessage: "Clipboard API is unavailable",
+            });
           }
         }
         return { copiedLength: selection.length };
@@ -249,7 +275,7 @@ export function registerBuiltinActions(
         if (deps.isBusy?.()) {
           return { allowed: false, reasonKey: "action.unavailable.busy" };
         }
-        if (args && !deps.store.getState().tabs[args.tabId]) {
+        if (!args || !deps.store.getState().tabs[args.tabId]) {
           return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
         }
         return { allowed: true };

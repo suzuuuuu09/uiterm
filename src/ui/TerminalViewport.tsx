@@ -47,10 +47,7 @@ export function TerminalViewport({ onHostReady }: TerminalViewportProps) {
         if (pocStore.getState().diagnosticsEnabled) {
           pocStore
             .getState()
-            .pushLog(
-              "ime",
-              `keydown code="${e.code}" isComposing=${e.isComposing} keyCode=${e.keyCode}`,
-            );
+            .pushLog("ime", `keydown isComposing=${e.isComposing} keyCode=${e.keyCode}`);
         }
       }
     };
@@ -65,12 +62,15 @@ export function TerminalViewport({ onHostReady }: TerminalViewportProps) {
       el.removeEventListener("compositionupdate", onCompUpdate, true);
       el.removeEventListener("compositionend", onCompEnd, true);
       el.removeEventListener("keydown", onKeyDown, true);
+      appStore.getState().setIsComposing(false);
       onHostReady(null);
     };
   }, [onHostReady]);
 
   useEffect(() => {
-    appRuntime.sessionManager.setActive(activePaneId);
+    if (activePaneId === null || appRuntime.sessionManager.get(activePaneId)) {
+      appRuntime.sessionManager.setActive(activePaneId);
+    }
   }, [activePaneId]);
 
   return (

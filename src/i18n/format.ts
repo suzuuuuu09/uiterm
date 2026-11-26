@@ -83,8 +83,9 @@ export function formatRelativeTime(
   let duration = (targetMs - nowMs) / 1000;
 
   for (const division of RELATIVE_TIME_DIVISIONS) {
-    if (Math.abs(duration) < division.amount) {
-      return formatter.format(Math.round(duration), division.unit);
+    const rounded = Math.round(duration);
+    if (Math.abs(rounded) < division.amount) {
+      return formatter.format(rounded, division.unit);
     }
     duration /= division.amount;
   }

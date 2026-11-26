@@ -71,10 +71,12 @@ describe("Mock IPC integration (Runtime + Store + ActionRegistry + SessionManage
       expect(runtime.store.getState().sessions[sessionId]?.state).toBe("live");
 
       // Send Japanese UTF-8 user input; ensure it reaches mock IPC AND is NOT logged in appLogger
-      adapterCallbacks!.onUserInput(encoder.encode("echo こんにちは\r"));
+      const expectedInput = encoder.encode("echo こんにちは\r");
+      adapterCallbacks!.onUserInput(expectedInput);
       await Promise.resolve();
       expect(mock.recordedInputs).toHaveLength(1);
       expect(mock.recordedInputs[0]?.kind).toBe("user");
+      expect(mock.recordedInputs[0]?.bytes).toEqual(expectedInput);
       const allLogsJson = JSON.stringify(runtime.logger.getEntries());
       expect(allLogsJson).not.toContain("こんにちは");
 
@@ -95,6 +97,16 @@ describe("Mock IPC integration (Runtime + Store + ActionRegistry + SessionManage
         title: "Implementing Phase 1",
       });
 
+      // Missed event replaces store.sessions and advances lastSeq
+      const currentSnapshot = (await mock.terminalList(false))[0]!;
+      mock.emitTestEvent({
+        type: "missed",
+        seq: 150,
+        terminals: [{ ...currentSnapshot, title: "recovered-after-missed" }],
+      });
+      expect(runtime.store.getState().coreConnection.lastSeq).toBe(150);
+      expect(runtime.store.getState().sessions[sessionId]?.title).toBe("recovered-after-missed");
+
       // Simulate disconnect event
       mock.emitTestEvent({ type: "disconnected", reason: "mock-disconnect" });
       expect(runtime.store.getState().coreConnection.status).toBe("disconnected");
@@ -108,6 +120,9 @@ describe("Mock IPC integration (Runtime + Store + ActionRegistry + SessionManage
       const close = await runtime.actions.execute("terminal.close", { tabId }, { caller: "gui" });
       expect(close.ok).toBe(true);
       expect(await mock.terminalList(false)).toEqual([]);
+      expect(await mock.terminalList(true)).toEqual([
+        expect.objectContaining({ address: sessionId, state: "finished", reason: "killed" }),
+      ]);
 
       // Partial dimensions (cols only) must still send both cols and rows so Rust validate() accepts it
       const createSpy = vi.spyOn(mock, "terminalCreate");

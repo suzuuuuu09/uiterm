@@ -39,14 +39,18 @@ const REDACTED_KEY_PATTERNS: readonly RegExp[] = [
   /secret/i,
   /token/i,
   /api[-_]?key/i,
+  /private[-_]?key/i,
+  /ssh[-_]?key/i,
   /auth(orization)?/i,
   /cookie/i,
   /credential/i,
   /^input$/i,
-  /terminal[-_]?input/i,
+  /(user|terminal)[-_]?input/i,
+  /input[-_]?text/i,
   /raw[-_]?bytes?/i,
   /ime[-_]?(text|data|composition)/i,
-  /composed[-_]?text/i,
+  /(composed|committed)[-_]?text/i,
+  /composition([-_]?text)?/i,
   /^env$/i,
 ];
 
@@ -63,7 +67,7 @@ function sanitizeValue(value: unknown, depth: number): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "string") return truncateString(value);
   if (typeof value === "number" || typeof value === "boolean") return value;
-  if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
     const byteLength = value.byteLength;
     return `[binary ${byteLength}B redacted]`;
   }
@@ -109,6 +113,13 @@ function sanitizeRecord(
   return out;
 }
 
+function normalizeMaxEntries(limit: number | undefined): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+    return DEFAULT_MAX_LOG_ENTRIES;
+  }
+  return Math.max(1, Math.floor(limit));
+}
+
 export class Logger {
   private minLevel: LogLevel;
   private maxEntries: number;
@@ -119,7 +130,7 @@ export class Logger {
 
   constructor(options: LoggerOptions = {}) {
     this.minLevel = options.minLevel ?? "info";
-    this.maxEntries = Math.max(1, options.maxEntries ?? DEFAULT_MAX_LOG_ENTRIES);
+    this.maxEntries = normalizeMaxEntries(options.maxEntries);
     this.sink = options.sink;
   }
 
@@ -136,7 +147,7 @@ export class Logger {
   }
 
   setMaxEntries(limit: number): void {
-    this.maxEntries = Math.max(1, Math.floor(limit));
+    this.maxEntries = normalizeMaxEntries(limit);
     if (this.entries.length > this.maxEntries) {
       this.entries = this.entries.slice(this.entries.length - this.maxEntries);
       this.notify();
@@ -222,7 +233,19 @@ export class Logger {
   }
 }
 
+const devConsoleSink =
+  typeof import.meta !== "undefined" && import.meta.env?.DEV && import.meta.env?.MODE !== "test"
+    ? (entry: LogEntry) => {
+        if (entry.level === "error") {
+          console.error(`[${entry.scope}] ${entry.message}`, entry.data ?? "");
+        } else if (entry.level === "warn") {
+          console.warn(`[${entry.scope}] ${entry.message}`, entry.data ?? "");
+        }
+      }
+    : undefined;
+
 export const appLogger = new Logger({
   minLevel: "info",
   maxEntries: DEFAULT_MAX_LOG_ENTRIES,
+  sink: devConsoleSink,
 });

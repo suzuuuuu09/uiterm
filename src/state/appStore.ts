@@ -221,6 +221,12 @@ export function createAppStore(
 
       const now = Date.now();
       const paneId = input.paneId ?? input.tabId;
+      if (state.tabs[input.tabId]) {
+        throw new Error(`Tab already exists: ${input.tabId}`);
+      }
+      if (state.panes[paneId]) {
+        throw new Error(`Pane already exists: ${paneId}`);
+      }
       const pane: PaneState = {
         id: paneId,
         tabId: input.tabId,
@@ -244,6 +250,7 @@ export function createAppStore(
 
       set((s) => {
         const ws = s.workspaces[workspaceId]!;
+        const win = shouldActivate ? s.windows[ws.windowId] : undefined;
         const nextActiveTabId = shouldActivate ? tab.id : ws.activeTabId;
         return {
           tabs: { ...s.tabs, [tab.id]: tab },
@@ -256,6 +263,12 @@ export function createAppStore(
               activeTabId: nextActiveTabId,
             },
           },
+          windows: win
+            ? {
+                ...s.windows,
+                [ws.windowId]: { ...win, activeWorkspaceId: workspaceId },
+              }
+            : s.windows,
           selection: shouldActivate
             ? {
                 activeWindowId: ws.windowId,
@@ -379,7 +392,12 @@ export function createAppStore(
           return s;
         }
         const ws = s.workspaces[tab.workspaceId];
+        const win = ws ? s.windows[ws.windowId] : undefined;
         return {
+          windows:
+            ws && win
+              ? { ...s.windows, [ws.windowId]: { ...win, activeWorkspaceId: ws.id } }
+              : s.windows,
           workspaces: ws
             ? { ...s.workspaces, [ws.id]: { ...ws, activeTabId: tab.id } }
             : s.workspaces,
@@ -402,11 +420,16 @@ export function createAppStore(
           return s;
         }
         const ws = s.workspaces[tab.workspaceId];
+        const win = ws ? s.windows[ws.windowId] : undefined;
         return {
           tabs: {
             ...s.tabs,
             [tab.id]: { ...tab, activePaneId: paneId },
           },
+          windows:
+            ws && win
+              ? { ...s.windows, [ws.windowId]: { ...win, activeWorkspaceId: ws.id } }
+              : s.windows,
           workspaces: ws
             ? { ...s.workspaces, [ws.id]: { ...ws, activeTabId: tab.id } }
             : s.workspaces,

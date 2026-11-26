@@ -20,6 +20,12 @@ describe("Logger (levels, bounded retention, privacy redaction)", () => {
 
     logger.setMaxEntries(2);
     expect(logger.getEntries().map((e) => e.message)).toEqual(["msg-4", "msg-5"]);
+
+    // Non-finite limits must fall back to a bounded default instead of disabling eviction
+    const nonFinite = new Logger({ maxEntries: Number.POSITIVE_INFINITY });
+    expect(Number.isFinite(nonFinite.getMaxEntries())).toBe(true);
+    nonFinite.setMaxEntries(Number.NaN);
+    expect(Number.isFinite(nonFinite.getMaxEntries())).toBe(true);
   });
 
   it("redacts credentials, terminal input, IME text, env maps, and binary buffers", () => {
@@ -28,11 +34,17 @@ describe("Logger (levels, bounded retention, privacy redaction)", () => {
       sessionId: "t1",
       password: "super-secret-password",
       apiKey: "sk-12345",
+      privateKey: "-----BEGIN PRIVATE KEY-----",
+      sshKey: "ssh-ed25519 AAAA",
       authorization: "Bearer xyz",
       input: "echo secret",
+      userInput: "ls -la",
       imeData: "機密の日本語テキスト",
+      committedText: "確定テキスト",
+      compositionText: "変換中",
       env: { AWS_SECRET_ACCESS_KEY: "abc" },
       payload: new TextEncoder().encode("raw bytes"),
+      typedView: new Int16Array([1, 2, 3]),
       nested: {
         token: "tok_999",
         safeCount: 42,
@@ -43,11 +55,17 @@ describe("Logger (levels, bounded retention, privacy redaction)", () => {
       sessionId: "t1",
       password: "[REDACTED]",
       apiKey: "[REDACTED]",
+      privateKey: "[REDACTED]",
+      sshKey: "[REDACTED]",
       authorization: "[REDACTED]",
       input: "[REDACTED]",
+      userInput: "[REDACTED]",
       imeData: "[REDACTED]",
+      committedText: "[REDACTED]",
+      compositionText: "[REDACTED]",
       env: "[REDACTED]",
       payload: "[binary 9B redacted]",
+      typedView: "[binary 6B redacted]",
       nested: {
         token: "[REDACTED]",
         safeCount: 42,

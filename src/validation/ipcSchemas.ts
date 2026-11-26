@@ -112,7 +112,7 @@ const TerminationDataSchema = v.object({
   reason: v.optional(v.nullable(v.string())),
   exitCode: v.optional(v.nullable(v.number())),
   exit_code: v.optional(v.nullable(v.number())),
-  signal: v.optional(v.nullable(v.string())),
+  signal: v.optional(v.nullable(v.union([v.string(), v.pipe(v.number(), v.integer())]))),
   finishedMs: v.optional(v.nullable(v.number())),
   finished_ms: v.optional(v.nullable(v.number())),
 });
@@ -156,10 +156,11 @@ export function parseTerminationEventData(data: unknown): ParsedTerminationEvent
   if (!res.success) {
     return { reason: null, exitCode: null, signal: null, finishedMs: null };
   }
+  const rawSignal = res.output.signal;
   return {
     reason: res.output.reason ?? null,
     exitCode: res.output.exitCode ?? res.output.exit_code ?? null,
-    signal: res.output.signal ?? null,
+    signal: rawSignal === null || rawSignal === undefined ? null : String(rawSignal),
     finishedMs: res.output.finishedMs ?? res.output.finished_ms ?? null,
   };
 }
@@ -220,12 +221,13 @@ export function parseExternalInput<TSchema extends v.BaseSchema<unknown, unknown
   }
   const issues = result.issues.map((issue) => ({
     path: issue.path?.map((part) => String(part.key)).join(".") || "$",
-    message: issue.message,
+    type: issue.type,
+    expected: issue.expected ?? null,
   }));
   throw new AppError({
     code: "VALIDATION_FAILED",
     messageKey: "error.validation.failed",
-    devMessage: `${context}: ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`,
+    devMessage: `${context}: ${issues.map((i) => `${i.path}: invalid (${i.type})`).join("; ")}`,
     diagnostics: { context, issues },
   });
 }

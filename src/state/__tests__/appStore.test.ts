@@ -117,6 +117,15 @@ describe("appStore (Zustand Vanilla, React-independent)", () => {
     expect(store.getState().sessions["t1"]?.title).toBe("nvim");
     expect(store.getState().coreConnection.lastSeq).toBe(11);
 
+    // Missed event with equal seq must be ignored
+    store.getState().applyCoreEvent({
+      type: "missed",
+      seq: 11,
+      terminals: [makeTerminalInfo({ address: "t-stale", title: "should-not-apply" })],
+    });
+    expect(store.getState().sessions["t1"]?.title).toBe("nvim");
+    expect(store.getState().sessions["t-stale"]).toBeUndefined();
+
     // Missed event replaces full snapshot and advances seq
     store.getState().applyCoreEvent({
       type: "missed",
@@ -197,6 +206,55 @@ describe("appStore (Zustand Vanilla, React-independent)", () => {
       app: "codex",
       turn: 2,
     });
+
+    // Restart without status clears stale agent state
+    store.getState().applyCoreEvent({
+      type: "restarted",
+      seq: 4,
+      terminal: "t1",
+      data: makeTerminalInfo({ address: "t1", status: null }),
+    });
+    expect(store.getState().agentStates["t1"]).toBeUndefined();
+
+    // Finished clears active agent state
+    store.getState().applyCoreEvent({
+      type: "status",
+      seq: 5,
+      terminal: "t1",
+      data: { status: { state: "working", app: "codex" }, reported: true },
+    });
+    expect(store.getState().agentStates["t1"]?.status).toBe("working");
+    store.getState().applyCoreEvent({
+      type: "finished",
+      seq: 6,
+      terminal: "t1",
+      data: { reason: "exited", exit_code: 0, signal: null },
+    });
+    expect(store.getState().agentStates["t1"]).toBeUndefined();
+  });
+
+  it("keeps window activeWorkspaceId in sync and rejects duplicate tab/pane IDs", () => {
+    const store = createAppStore();
+    store.getState().createWorkspace({ id: "ws-2", name: "Second", activate: false });
+    expect(store.getState().windows[DEFAULT_WINDOW_ID]?.activeWorkspaceId).toBe(
+      DEFAULT_WORKSPACE_ID,
+    );
+
+    store.getState().addTerminalTab({
+      tabId: "tab-ws2",
+      workspaceId: "ws-2",
+      title: "WS2 Shell",
+      activate: true,
+    });
+    expect(store.getState().windows[DEFAULT_WINDOW_ID]?.activeWorkspaceId).toBe("ws-2");
+
+    expect(() =>
+      store.getState().addTerminalTab({
+        tabId: "tab-ws2",
+        workspaceId: "ws-2",
+        title: "Duplicate",
+      }),
+    ).toThrow(/already exists/i);
   });
 
   it("updates UI state and user settings without redundant mutations", () => {

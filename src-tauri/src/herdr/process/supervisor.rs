@@ -68,6 +68,10 @@ impl CoreSupervisor {
         while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(25));
         }
+        if matches!(self.child.try_wait(), Ok(None)) {
+            eprintln!("uiterm: core_supervisor_stop_timeout");
+            let _ = self.child.start_kill();
+        }
     }
 }
 
@@ -92,13 +96,32 @@ pub async fn run_supervisor() -> Result<(), IpcError> {
             let mut byte = [0; 1];
             std::io::Read::read(&mut std::io::stdin(), &mut byte)
         });
-        tokio::select! {
-            _ = &mut gui_exit => {}
-            _ = daemon.child.as_mut().unwrap().wait() => {
-                if daemon.recover().await.is_err() {
-                    eprintln!("uiterm: core_recovery_failed");
+        loop {
+            let child_alive = matches!(daemon.child.as_mut().unwrap().try_wait(), Ok(None));
+            if child_alive {
+                tokio::select! {
+                    _ = &mut gui_exit => break,
+                    _ = daemon.child.as_mut().unwrap().wait() => {
+                        if let Err(err) = daemon.recover().await {
+                            eprintln!("uiterm: core_recovery_failed: [{}] {}", err.code, err.message);
+                            tokio::select! {
+                                _ = &mut gui_exit => break,
+                                _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                            }
+                        }
+                    }
                 }
-                let _ = gui_exit.await;
+            } else {
+                // The tracked child already exited (e.g. a holder adopted the lock or a
+                // prior recovery failed). Poll recovery on a short interval without spinning.
+                tokio::select! {
+                    _ = &mut gui_exit => break,
+                    _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                        if let Err(err) = daemon.recover().await {
+                            eprintln!("uiterm: core_recovery_failed: [{}] {}", err.code, err.message);
+                        }
+                    }
+                }
             }
         }
     }

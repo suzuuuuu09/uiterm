@@ -139,7 +139,7 @@ export function applyCoreEvent(
   }
 
   if (event.type === "missed") {
-    if (event.seq < current.lastSeq) {
+    if (event.seq <= current.lastSeq) {
       return null;
     }
     return applyCoreSnapshot(event.terminals, event.seq, nowMs);
@@ -163,58 +163,83 @@ export function applyCoreEvent(
     case "restarted": {
       const snap = terminalInfoToSnapshot(event.data, nowMs);
       const nextSessions = { ...current.sessions, [event.terminal]: snap };
-      const nextAgentStates = event.data.status
-        ? {
-            ...current.agentStates,
-            [event.terminal]: agentStateFromStatusRecord(
-              event.terminal,
-              event.data.status,
-              event.data.turn,
-              nowMs,
-            ),
-          }
-        : current.agentStates;
+      let nextAgentStates: Readonly<Record<SessionId, AgentState>> = current.agentStates;
+      if (event.data.status) {
+        nextAgentStates = {
+          ...current.agentStates,
+          [event.terminal]: agentStateFromStatusRecord(
+            event.terminal,
+            event.data.status,
+            event.data.turn,
+            nowMs,
+          ),
+        };
+      } else if (event.terminal in current.agentStates) {
+        const cleaned = { ...current.agentStates };
+        delete cleaned[event.terminal];
+        nextAgentStates = cleaned;
+      }
       return { sessions: nextSessions, agentStates: nextAgentStates, lastSeq: nextSeq };
     }
 
     case "finished": {
       const prev = current.sessions[event.terminal];
-      if (!prev) {
+      const hasAgent = event.terminal in current.agentStates;
+      if (!prev && !hasAgent) {
         return { sessions: current.sessions, agentStates: current.agentStates, lastSeq: nextSeq };
       }
       const data = parseTerminationEventData(event.data);
-      const nextSessions = {
-        ...current.sessions,
-        [event.terminal]: {
-          ...prev,
-          state: "finished",
-          reason: data.reason,
-          exitCode: data.exitCode,
-          signal: data.signal,
-          updatedAt: nowMs,
-        },
-      };
-      return { sessions: nextSessions, agentStates: current.agentStates, lastSeq: nextSeq };
+      const nextSessions = prev
+        ? {
+            ...current.sessions,
+            [event.terminal]: {
+              ...prev,
+              state: "finished",
+              reason: data.reason,
+              exitCode: data.exitCode,
+              signal: data.signal,
+              updatedAt: nowMs,
+            },
+          }
+        : current.sessions;
+      const nextAgentStates = hasAgent
+        ? (() => {
+            const cleaned = { ...current.agentStates };
+            delete cleaned[event.terminal];
+            return cleaned;
+          })()
+        : current.agentStates;
+      return { sessions: nextSessions, agentStates: nextAgentStates, lastSeq: nextSeq };
     }
 
     case "lost": {
       const prev = current.sessions[event.terminal];
-      if (!prev) {
+      const hasAgent = event.terminal in current.agentStates;
+      if (!prev && !hasAgent) {
         return { sessions: current.sessions, agentStates: current.agentStates, lastSeq: nextSeq };
       }
       const data = parseTerminationEventData(event.data);
-      const nextSessions = {
-        ...current.sessions,
-        [event.terminal]: {
-          ...prev,
-          state: "lost",
-          reason: data.reason,
-          exitCode: data.exitCode,
-          signal: data.signal,
-          updatedAt: nowMs,
-        },
-      };
-      return { sessions: nextSessions, agentStates: current.agentStates, lastSeq: nextSeq };
+      const nextSessions = prev
+        ? {
+            ...current.sessions,
+            [event.terminal]: {
+              ...prev,
+              state: "lost",
+              reason: data.reason,
+              exitCode: data.exitCode,
+              signal: data.signal,
+              updatedAt: nowMs,
+            },
+          }
+        : current.sessions;
+      const nextAgentStates = hasAgent
+        ? (() => {
+            const cleaned = { ...current.agentStates };
+            delete cleaned[event.terminal];
+            return cleaned;
+          })()
+        : current.agentStates;
+      return { sessions: nextSessions, agentStates: nextAgentStates, lastSeq: nextSeq };
     }
 
     case "removed": {

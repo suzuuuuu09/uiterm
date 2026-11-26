@@ -71,12 +71,44 @@ async fn gui_pipe_eof_cleans_up_after_core_crash_and_leaves_other_instance_runni
     let holder_pid = i32::try_from(status["holder"]["pid"].as_i64().unwrap()).unwrap();
 
     // This PID is the current core reached through the new test instance's private socket.
-    assert_eq!(unsafe { libc::kill(core_pid as i32, libc::SIGKILL) }, 0);
+    assert!(core_pid > 0, "expected positive core PID, got {core_pid}");
+    let core_pid_i32 = i32::try_from(core_pid).unwrap();
+    assert_eq!(unsafe { libc::kill(core_pid_i32, libc::SIGKILL) }, 0);
     let recovered = timeout(Duration::from_secs(8), async {
         loop {
             if let Ok(client) = HerdrClient::connect(&socket, &session).await
                 && let Ok(status) = client.server_status().await
                 && status.pid != core_pid
+            {
+                return (client, status.pid);
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (recovered, second_core_pid) = recovered;
+    assert!(
+        recovered
+            .terminal_list(false)
+            .await
+            .unwrap()
+            .iter()
+            .any(|t| t.pid == Some(shell_pid))
+    );
+
+    // Crash the recovered core a second time to ensure the supervision loop keeps re-arming.
+    assert!(
+        second_core_pid > 0,
+        "expected positive recovered core PID, got {second_core_pid}"
+    );
+    let second_core_pid_i32 = i32::try_from(second_core_pid).unwrap();
+    assert_eq!(unsafe { libc::kill(second_core_pid_i32, libc::SIGKILL) }, 0);
+    let recovered_again = timeout(Duration::from_secs(8), async {
+        loop {
+            if let Ok(client) = HerdrClient::connect(&socket, &session).await
+                && let Ok(status) = client.server_status().await
+                && status.pid != second_core_pid
             {
                 return client;
             }
@@ -86,7 +118,7 @@ async fn gui_pipe_eof_cleans_up_after_core_crash_and_leaves_other_instance_runni
     .await
     .unwrap();
     assert!(
-        recovered
+        recovered_again
             .terminal_list(false)
             .await
             .unwrap()
@@ -104,7 +136,7 @@ async fn gui_pipe_eof_cleans_up_after_core_crash_and_leaves_other_instance_runni
     );
     assert!(!socket.parent().unwrap().exists());
     timeout(Duration::from_secs(3), async {
-        for pid in [core_pid as i32, holder_pid, shell_pid] {
+        for pid in [core_pid_i32, second_core_pid_i32, holder_pid, shell_pid] {
             while unsafe { libc::kill(pid, 0) } == 0 {
                 sleep(Duration::from_millis(25)).await;
             }

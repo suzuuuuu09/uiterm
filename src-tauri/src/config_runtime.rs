@@ -60,9 +60,10 @@ impl ConfigWorker {
             .map(|dir| dir.join("node"))
             .find(|path| path.is_file())
             .ok_or_else(|| {
-                IpcError::new(
+                IpcError::with_hint(
                     "node_spawn_failed",
                     "Node.js was not found in an absolute PATH entry",
+                    Some("Ensure Node.js 24 LTS is available in PATH".into()),
                 )
             })?;
         let mut child = Command::new(node)

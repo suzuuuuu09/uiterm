@@ -57,6 +57,9 @@ describe("ActionRegistry", () => {
     expect(registry.getLabel("custom.echo", "ja")?.title).toBe("サイドバー表示切替");
     expect(registry.getLabel("custom.echo", "en")?.title).toBe("Toggle Sidebar");
 
+    // Omitted args on required-arg action must be rejected by canExecute
+    expect(registry.canExecute("custom.echo").allowed).toBe(false);
+
     // Invalid args rejected before execution
     const invalid = await registry.execute("custom.echo", { count: 0 }, { caller: "cli" });
     expect(invalid.ok).toBe(false);
@@ -106,6 +109,24 @@ describe("ActionRegistry", () => {
       expect(result.error.code).toBe("ACTION_EXECUTION_FAILED");
       expect(result.error.message).toContain("boom");
     }
+
+    // Throwing canExecute must also be normalized into ActionResult
+    registry.register({
+      id: "custom.failCanExecute",
+      owner: "app",
+      titleKey: "action.app.setLocale.title",
+      argsSchema: v.object({}),
+      canExecute: () => {
+        throw new Error("availability boom");
+      },
+      execute: () => ({}),
+    });
+    const availFail = await registry.execute("custom.failCanExecute", {}, { caller: "gui" });
+    expect(availFail.ok).toBe(false);
+    if (!availFail.ok) {
+      expect(availFail.error.code).toBe("ACTION_EXECUTION_FAILED");
+      expect(availFail.error.message).toContain("availability boom");
+    }
   });
 
   it("wires built-in terminal and app actions to appStore and TerminalSessionManager", async () => {
@@ -139,6 +160,10 @@ describe("ActionRegistry", () => {
       expect(runtime.store.getState().panes[tabId]?.sessionId).toBe(sessionId);
 
       // Copy selection
+      expect(
+        runtime.actions.canExecute("terminal.copySelection", { tabId: "non-existent" }).allowed,
+      ).toBe(false);
+      expect(runtime.actions.canExecute("tab.select").allowed).toBe(false);
       const copyRes = await runtime.actions.execute("terminal.copySelection", {}, { caller: "keybind" });
       expect(copyRes).toEqual({ ok: true, value: { copiedLength: 5 } });
       expect(copied).toEqual(["日本語選択"]);

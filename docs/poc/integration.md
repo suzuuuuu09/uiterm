@@ -329,7 +329,7 @@ macOS 15.5 (`arm64`) の Tauri 実ウィンドウ（WKWebView + `wterm` DOM + `l
 | `t = 61.0 s`（出力完了直後） | 436.4 MiB | 484.7 MiB | 23.1% | 327.3 MiB | 95.4 MiB | 24.6 MiB | 23.9 MiB |
 | `t = 66.1 s`（停止 6 秒後） | 441.6 MiB | **351.3 MiB** | 2.9% | **266.8 MiB** | **24.0 MiB** | **24.5 MiB** | **23.9 MiB** |
 
-- **`uiterm`（Rust ホスト）および `herdr-core`（daemon + holder）**: 60 秒連続出力を通して +0.2〜+0.4 MiB の完全フラット（リーク兆候なし）。
+- **`uiterm`（Rust ホスト）および `herdr-core`（daemon + holder）**: 60 秒連続出力を通して +0.2〜+0.5 MiB の完全フラット（リーク兆候なし）。
 - **`WebKit.GPU`**: 負荷中 84〜96 MiB へ上昇するが、出力停止 6 秒後に **24.0 MiB** へ即時復帰。
 - **`WebKit.WebContent`**: 連続出力中に 187.8 MiB → 328.6 MiB まで上昇し、出力停止後に 266.8 MiB まで降下したが、アイドル時（60.7 MiB）より高い水準に留まる。JSC の GC タイミング・DOM 描画バッファの回収挙動を含め、Phase 1〜6 で継続監視・対策を行う。
 

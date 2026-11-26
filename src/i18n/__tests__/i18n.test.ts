@@ -46,6 +46,7 @@ describe("i18n (TypeScript dictionary + Intl API)", () => {
     expect(formatDateTime("ja", now)).toBeTruthy();
     expect(formatTime("en", now)).toMatch(/\d{2}:\d{2}:\d{2}/);
     expect(formatRelativeTime("en", now - 60_000, now)).toContain("minute");
+    expect(formatRelativeTime("en", now + 59_600, now)).toContain("minute");
     expect(formatRelativeTime("ja", now - 60_000, now)).toContain("分前");
   });
 

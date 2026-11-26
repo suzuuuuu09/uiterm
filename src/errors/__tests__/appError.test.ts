@@ -18,6 +18,7 @@ describe("AppError & async error handling", () => {
     expect(err.formatDeveloperSummary()).toContain("[IPC_DISCONNECTED]");
     expect(err.formatDeveloperSummary()).toContain("unix socket EOF");
     expect(err.toDiagnostics().ipcCode).toBe("core_disconnected");
+    expect(err.toDiagnostics().causeMessage).toBe("unix socket EOF");
   });
 
   it("normalizes unknown values and preserves existing AppError instances", () => {
@@ -55,6 +56,22 @@ describe("AppError & async error handling", () => {
       expect(failed.error.code).toBe("IPC_TIMEOUT");
     }
     expect(captured).toHaveLength(1);
+
+    // Observer failures must not turn runSafeAsync into a rejected promise
+    const isolated = await runSafeAsync(
+      async () => {
+        throw new Error("primary failure");
+      },
+      {
+        onError: () => {
+          throw new Error("observer boom");
+        },
+      },
+    );
+    expect(isolated.ok).toBe(false);
+    if (!isolated.ok) {
+      expect(isolated.error.message).toBe("primary failure");
+    }
   });
 
   it("maps Rust backend IPC error codes (core_timeout, herdr_core_not_found, untrusted_config)", () => {
