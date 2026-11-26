@@ -105,7 +105,7 @@ wterm の pnpm パッチ（`patches/@wterm__dom@0.6.0.patch`）と `TerminalView
 
 ## 2. 自動テスト・ビルド検証結果
 
-対象 worktree: `/Users/k25012kk/ghq/github.com/suzuuuuu09/uiterm-phase2`（ブランチ `feat/phase2-terminal`）
+対象 worktree: `uiterm-phase2`（ブランチ `feat/phase2-terminal`）
 
 | 検証項目 | コマンド | 結果 |
 | --- | --- | --- |
@@ -133,7 +133,7 @@ wterm の pnpm パッチ（`patches/@wterm__dom@0.6.0.patch`）と `TerminalView
 | 修正必須 | 再起動の再入が進行中の起動を中断し、切断後にイベント購読が失われたままになる。再入を拒否し、失敗時は再起動対象を保持する。端末生成時に購読を確保し、切断・セッション消失を画面に表示する。 | モック IPC で切断後の再購読、再起動の連打、新セッションの状態反映を検証。 |
 | 修正必須 | クリップボード読み込み中の再起動で、新しいシェルへ貼り付ける競合があった。読み込み前後で同じセッションか照合する。 | 読み込み中に再起動しても新セッションへ送信しないことを検証。 |
 | 修正必須 | DOM のカーソル形状属性は常に存在するため、アプリの既定形状を適用する CSS が一致しなかった。既定は VT の `auto` とし、明示した形状を両描画経路のカーソル取得に反映する。 | 既定・強制・解除のカーソル形状をアダプターで検証。 |
-| 修正推奨 | 自動応答の診断は種別・バイト数に限定し、未使用のセル計測 API と型を削除。 | TypeScript、Lint、既存の送信分離・入力プライバシーの回帰テストを実行。 |
+| 修正推奨 | 自動応答の診断は種別・バイト数に限定した（セル寸法計測の `getCellMetrics` / `CellMetrics` は開発用診断ドロワーのフォント検証表示で使用）。 | TypeScript、Lint、既存の送信分離・入力プライバシーの回帰テストを実行。 |
 
 Action Registry の引数検証を維持し、出力バイトは Zustand を経由しない。Phase 2 でネイティブの権限、CSP、ナビゲーション制限、生成 IPC DTO、依存ロックに差分はない。Rust の権限・入力検証・クレジット・古いアタッチの拒否・監視プロセスの回帰テストが通った。GUI 経由の再起動クリックと core 強制終了後の UI は手動検証に残る。
 
@@ -200,8 +200,9 @@ macOS 実ウィンドウに接続した専用 PTY で `python3 scripts/bench-app
 
 ### 検証用の起動手順
 
+リポジトリルート（`feat/phase2-terminal` のチェックアウト先）で以下を実行する。
+
 ```sh
-cd /Users/k25012kk/ghq/github.com/suzuuuuu09/uiterm-phase2
 qa_home="$(mktemp -d /tmp/uiterm-manual.XXXXXX)"
 nix develop --no-write-lock-file --command env \
   HOME="$qa_home" XDG_CONFIG_HOME="$qa_home/config" XDG_STATE_HOME="$qa_home/state" \

@@ -44,7 +44,7 @@ export interface TerminalAdapter {
   hasSelection?: () => boolean;
   selectAll?: () => Promise<boolean>;
   clearSelection?: () => void;
-  paste?: (text: string) => void;
+  paste(text: string): void;
   applyAppearance?: (patch: Partial<TerminalAppearance> & { macOptionAsMeta?: boolean }) => void;
   getCellMetrics?: () => CellMetrics | null;
   dispose(): void;

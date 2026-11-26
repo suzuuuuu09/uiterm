@@ -3,7 +3,6 @@ import type { TranslationKey } from "./ja.ts";
 export const en: Record<TranslationKey, string> = {
   // Application shell
   "app.title": "uiterm",
-  "app.phaseBadge": "Phase 2 Terminal",
   "app.runtimeTauri": "tauri+herdr-core",
   "app.runtimeMock": "mock",
   "app.localeToggle": "JA",

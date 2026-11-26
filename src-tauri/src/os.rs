@@ -106,7 +106,9 @@ pub fn run_pty_iutf8_init(args: &[std::ffi::OsString]) -> ! {
     };
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let _ = enable_pty_iutf8(libc::STDIN_FILENO);
+    if let Err(err) = enable_pty_iutf8(libc::STDIN_FILENO) {
+        eprintln!("uiterm: failed to enable IUTF8 on stdin: {err}");
+    }
 
     let err = std::process::Command::new(program).args(iter).exec();
     eprintln!(

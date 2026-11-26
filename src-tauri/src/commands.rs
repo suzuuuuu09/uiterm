@@ -132,9 +132,11 @@ fn apply_pty_iutf8_workaround(params: &mut TerminalCreateParams) {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let Ok(exe) = std::env::current_exe() else {
+            eprintln!("uiterm: skipping PTY IUTF8 workaround: current_exe unavailable");
             return;
         };
         let Some(exe) = exe.to_str() else {
+            eprintln!("uiterm: skipping PTY IUTF8 workaround: current_exe path is not valid UTF-8");
             return;
         };
         wrap_params_with_pty_iutf8_init(params, exe);
@@ -149,7 +151,10 @@ fn wrap_params_with_pty_iutf8_init(params: &mut TerminalCreateParams, exe: &str)
 
     if let Some(argv) = params.argv.as_mut() {
         if argv.is_empty()
-            || (argv.len() >= 3 && argv[1] == PTY_IUTF8_INIT_FLAG && argv[2] == "--")
+            || (argv.len() >= 3
+                && argv[0] == exe
+                && argv[1] == PTY_IUTF8_INIT_FLAG
+                && argv[2] == "--")
         {
             return;
         }
@@ -462,6 +467,20 @@ mod tests {
         // Calling a second time must be a no-op.
         wrap_params_with_pty_iutf8_init(&mut argv_params, "/app/uiterm");
         assert_eq!(argv_params.argv.as_ref().unwrap().len(), 5);
+
+        // An unrelated command that happens to pass the same flag must still be wrapped.
+        let mut other_cmd = TerminalCreateParams {
+            argv: Some(vec![
+                "/usr/bin/env".into(),
+                crate::os::PTY_IUTF8_INIT_FLAG.into(),
+                "--".into(),
+                "echo".into(),
+            ]),
+            ..Default::default()
+        };
+        wrap_params_with_pty_iutf8_init(&mut other_cmd, "/app/uiterm");
+        assert_eq!(other_cmd.argv.as_ref().unwrap()[0], "/app/uiterm");
+        assert_eq!(other_cmd.argv.as_ref().unwrap().len(), 7);
 
         let mut line_params = TerminalCreateParams {
             line: Some("echo hi".into()),

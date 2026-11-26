@@ -1,6 +1,10 @@
 import * as v from "valibot";
 import type { Locale } from "../i18n/types.ts";
-import type { CursorBlinkMode, CursorStyle } from "../terminal/appearance.ts";
+import {
+  type CursorBlinkMode,
+  type CursorStyle,
+  DEFAULT_TERMINAL_APPEARANCE,
+} from "../terminal/appearance.ts";
 import {
   DEFAULT_FONT_SIZE,
   DEFAULT_LINE_HEIGHT,
@@ -59,9 +63,9 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   fontSize: DEFAULT_FONT_SIZE,
   lineHeight: DEFAULT_LINE_HEIGHT,
   fontFamily: DEFAULT_FONT_FAMILY,
-  nerdFontFallback: true,
-  cursorStyle: "auto",
-  cursorBlink: "auto",
+  nerdFontFallback: DEFAULT_TERMINAL_APPEARANCE.nerdFontFallback,
+  cursorStyle: DEFAULT_TERMINAL_APPEARANCE.cursorStyle,
+  cursorBlink: DEFAULT_TERMINAL_APPEARANCE.cursorBlink,
   macOptionAsMeta: true,
   suppressAutoReplies: true,
   pauseHiddenRendering: true,

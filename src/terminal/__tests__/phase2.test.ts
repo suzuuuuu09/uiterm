@@ -90,6 +90,12 @@ describe("Phase 2 fonts & Nerd Font fallback", () => {
 
     const deduped = buildTerminalFontStack('"UDEV Gothic 35NF"', { nerdFontFallback: true });
     expect(deduped.match(/UDEV Gothic 35NF/g)?.length).toBe(1);
+
+    // Unclosed trailing quote must not break CSS fallback chain
+    const unclosed = buildTerminalFontStack('"UDEV Gothic 35NF', { nerdFontFallback: true });
+    expect(unclosed.startsWith("UDEV Gothic 35NF,")).toBe(true);
+    expect(unclosed).toContain('"Symbols Nerd Font Mono"');
+    expect(unclosed.endsWith(", monospace")).toBe(true);
   });
 
   it("clamps fontSize and lineHeight within safe bounds", () => {
@@ -214,6 +220,11 @@ describe("Phase 2 keyboard shortcuts, Option-as-Meta, and IME protection", () =>
     expect(matchAppShortcut({ ...baseKey, key: "=", code: "Equal", metaKey: true }, macOpts)?.actionId).toBe(
       "terminal.zoomIn",
     );
+    // JIS keyboard Cmd+= is Shift+Minus (shiftKey: true, key: "=", code: "Minus")
+    expect(
+      matchAppShortcut({ ...baseKey, key: "=", code: "Minus", metaKey: true, shiftKey: true }, macOpts)
+        ?.actionId,
+    ).toBe("terminal.zoomIn");
     expect(matchAppShortcut({ ...baseKey, key: "-", code: "Minus", metaKey: true }, macOpts)?.actionId).toBe(
       "terminal.zoomOut",
     );
@@ -285,51 +296,52 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
     const appliedAppearances: unknown[] = [];
     let selectedAll = false;
     let cleared = false;
-
-    const fakeDoc = { createElement: () => createFakeHost().el };
-    vi.stubGlobal("document", fakeDoc);
-
-    const client = new MockIpcClient();
-    let readClipboard = async () => "貼り付けテスト";
-    const runtime = createAppRuntime({
-      client,
-      readClipboard: () => readClipboard(),
-      adapterFactory: () =>
-        ({
-          backendId: "wterm-ghostty-dom",
-          cols: 100,
-          rows: 30,
-          async mount() {},
-          write() {},
-          resize() {},
-          fit() {},
-          focus() {},
-          setHidden() {},
-          async getSelection() {
-            return "";
-          },
-          hasSelection() {
-            return selectedAll;
-          },
-          async selectAll() {
-            selectedAll = true;
-            return true;
-          },
-          clearSelection() {
-            cleared = true;
-            selectedAll = false;
-          },
-          paste(text: string) {
-            pasted.push(text);
-          },
-          applyAppearance(patch) {
-            appliedAppearances.push(patch);
-          },
-          dispose() {},
-        }) satisfies TerminalAdapter,
-    });
+    let runtime: ReturnType<typeof createAppRuntime> | null = null;
 
     try {
+      const fakeDoc = { createElement: () => createFakeHost().el };
+      vi.stubGlobal("document", fakeDoc);
+
+      const client = new MockIpcClient();
+      let readClipboard = async () => "貼り付けテスト";
+      runtime = createAppRuntime({
+        client,
+        readClipboard: () => readClipboard(),
+        adapterFactory: () =>
+          ({
+            backendId: "wterm-ghostty-dom",
+            cols: 100,
+            rows: 30,
+            async mount() {},
+            write() {},
+            resize() {},
+            fit() {},
+            focus() {},
+            setHidden() {},
+            async getSelection() {
+              return "";
+            },
+            hasSelection() {
+              return selectedAll;
+            },
+            async selectAll() {
+              selectedAll = true;
+              return true;
+            },
+            clearSelection() {
+              cleared = true;
+              selectedAll = false;
+            },
+            paste(text: string) {
+              pasted.push(text);
+            },
+            applyAppearance(patch) {
+              appliedAppearances.push(patch);
+            },
+            dispose() {},
+          }) satisfies TerminalAdapter,
+      });
+
       runtime.setMountRoot(createFakeHost().el);
       const created = await runtime.actions.execute("terminal.create", { activate: true });
       expect(created.ok).toBe(true);
@@ -371,7 +383,18 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
         { caller: "config" },
       );
       expect(setCursor).toEqual({ ok: true, value: { cursorStyle: "bar", cursorBlink: "off" } });
-      expect(appliedAppearances.length).toBeGreaterThanOrEqual(4);
+      expect(appliedAppearances).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ fontSize: DEFAULT_FONT_SIZE + 1 }),
+          expect.objectContaining({ fontSize: DEFAULT_FONT_SIZE }),
+          expect.objectContaining({
+            fontFamily: '"UDEV Gothic 35NF"',
+            fontSize: 16,
+            lineHeight: 1.3,
+          }),
+          expect.objectContaining({ cursorStyle: "bar", cursorBlink: "off" }),
+        ]),
+      );
 
       const resetZoom = await runtime.actions.execute("terminal.resetFontSize", {}, { caller: "keybind" });
       expect(resetZoom).toEqual({ ok: true, value: { fontSize: DEFAULT_FONT_SIZE } });
@@ -406,42 +429,45 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
       const toggled = await runtime.actions.execute("app.toggleDiagnostics", {}, { caller: "keybind" });
       expect(toggled).toEqual({ ok: true, value: { diagnosticsPanelVisible: true } });
     } finally {
-      runtime.dispose();
+      runtime?.dispose();
       vi.unstubAllGlobals();
     }
   });
 
   it("verifies all 3 Phase 2 font patterns (default, Nerd Font, Menlo fallback) via app.setFont", async () => {
-    const fakeDoc = { createElement: () => createFakeHost().el };
-    vi.stubGlobal("document", fakeDoc);
-
-    const { el: hostEl, styles } = createFakeHost();
-    const runtime = createAppRuntime({
-      client: new MockIpcClient(),
-      adapterFactory: () =>
-        ({
-          backendId: "wterm-ghostty-dom",
-          cols: 100,
-          rows: 30,
-          async mount() {
-            applyAppearanceToHost(hostEl, DEFAULT_TERMINAL_APPEARANCE);
-          },
-          write() {},
-          resize() {},
-          fit() {},
-          focus() {},
-          setHidden() {},
-          async getSelection() {
-            return "";
-          },
-          applyAppearance(patch) {
-            applyAppearanceToHost(hostEl, { ...DEFAULT_TERMINAL_APPEARANCE, ...patch });
-          },
-          dispose() {},
-        }) satisfies TerminalAdapter,
-    });
+    let runtime: ReturnType<typeof createAppRuntime> | null = null;
 
     try {
+      const fakeDoc = { createElement: () => createFakeHost().el };
+      vi.stubGlobal("document", fakeDoc);
+
+      const { el: hostEl, styles } = createFakeHost();
+      runtime = createAppRuntime({
+        client: new MockIpcClient(),
+        adapterFactory: () =>
+          ({
+            backendId: "wterm-ghostty-dom",
+            cols: 100,
+            rows: 30,
+            async mount() {
+              applyAppearanceToHost(hostEl, DEFAULT_TERMINAL_APPEARANCE);
+            },
+            write() {},
+            resize() {},
+            fit() {},
+            focus() {},
+            setHidden() {},
+            async getSelection() {
+              return "";
+            },
+            paste() {},
+            applyAppearance(patch) {
+              applyAppearanceToHost(hostEl, { ...DEFAULT_TERMINAL_APPEARANCE, ...patch });
+            },
+            dispose() {},
+          }) satisfies TerminalAdapter,
+      });
+
       runtime.setMountRoot(createFakeHost().el);
       await runtime.actions.execute("terminal.create", { activate: true });
 
@@ -483,7 +509,7 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
       expect(styles.get("--term-font-family")).not.toContain('"Symbols Nerd Font Mono"');
       expect(styles.get("--term-font-family")).toContain('"Hiragino Sans"');
     } finally {
-      runtime.dispose();
+      runtime?.dispose();
       vi.unstubAllGlobals();
     }
   });

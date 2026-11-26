@@ -96,7 +96,7 @@ function splitFontList(fontFamily: string): string[] {
       current += ch;
     }
   }
-  const tail = current.trim();
+  const tail = (quote ? current.replaceAll(quote, "") : current).trim();
   if (tail) parts.push(tail);
   return parts;
 }

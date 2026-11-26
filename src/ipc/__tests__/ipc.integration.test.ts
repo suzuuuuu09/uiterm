@@ -57,6 +57,7 @@ describe("Mock IPC integration (Runtime + Store + ActionRegistry + SessionManage
           async getSelection() {
             return "";
           },
+          paste() {},
           dispose() {},
         };
       },

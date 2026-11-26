@@ -97,7 +97,7 @@ export function matchAppShortcut(
       if (key === "d") {
         return { actionId: "app.toggleDiagnostics", args: {} };
       }
-      if (key === "+" || event.code === "Equal") {
+      if (key === "+" || key === "=" || event.code === "Equal") {
         return { actionId: "terminal.zoomIn", args: {} };
       }
       return null;
@@ -137,6 +137,7 @@ export function matchAppShortcut(
         case "d":
           return { actionId: "app.toggleDiagnostics", args: {} };
         case "+":
+        case "=":
           return { actionId: "terminal.zoomIn", args: {} };
         default:
           return null;

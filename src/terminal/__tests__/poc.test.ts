@@ -132,6 +132,7 @@ function sessionAdapter(
       async getSelection() {
         return "";
       },
+      paste() {},
       dispose,
     };
   };
@@ -453,6 +454,7 @@ describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounde
         async getSelection() {
           return "";
         },
+        paste() {},
         dispose() {
           disposedCount++;
         },

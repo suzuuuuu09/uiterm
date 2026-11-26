@@ -57,11 +57,21 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
   const benchRunning = usePocStore((s) => s.benchRunning);
 
   const [fontInput, setFontInput] = useState(fontFamily);
+  const [fontSizeInput, setFontSizeInput] = useState(String(fontSize));
+  const [lineHeightInput, setLineHeightInput] = useState(String(lineHeight));
   const benchInFlightRef = useRef(false);
 
   useEffect(() => {
     setFontInput(fontFamily);
   }, [fontFamily]);
+
+  useEffect(() => {
+    setFontSizeInput(String(fontSize));
+  }, [fontSize]);
+
+  useEffect(() => {
+    setLineHeightInput(String(lineHeight));
+  }, [lineHeight]);
 
   const cellMetrics = activePaneId ? appRuntime.sessionManager.getCellMetrics(activePaneId) : null;
 
@@ -91,13 +101,19 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
     pocStore.getState().setBenchRunning(true);
     pocStore.getState().clearBenchResults();
     const currentBackend = appStore.getState().settings.renderer;
-    let completed = false;
+    const previousActivePaneId = appStore.getState().selection.activePaneId;
+    const createdBenchIds = new Set<string>();
+
+    const disposeBenchSessions = (ids: Iterable<string>) => {
+      for (const id of ids) {
+        appRuntime.sessionManager.disposeSession(id);
+        createdBenchIds.delete(id);
+      }
+    };
 
     try {
       try {
         for (const count of [1, 5, 10]) {
-          appRuntime.sessionManager.disposeAll();
-          appStore.getState().clearWorkspaceTabs();
           await nextFrame();
           const heapBefore = readHeapMB();
 
@@ -106,8 +122,10 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
           for (let i = 0; i < count; i++) {
             const id = `bench-${count}-${i}`;
             ids.push(id);
+            createdBenchIds.add(id);
             await appRuntime.sessionManager.createSession(id, currentBackend, host, i !== 0);
           }
+          appRuntime.sessionManager.setActive(ids[0]!);
           await nextFrame();
           const mountMs = performance.now() - tMount0;
 
@@ -141,7 +159,7 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
           const heapAfter = readHeapMB();
 
           const tDisp0 = performance.now();
-          appRuntime.sessionManager.disposeAll();
+          disposeBenchSessions(ids);
           await nextFrame();
           const disposeMs = performance.now() - tDisp0;
 
@@ -161,20 +179,17 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
           };
           pocStore.getState().addBenchResult(row);
         }
-        completed = true;
       } catch (err) {
-        for (const count of [1, 5, 10]) {
-          for (let i = 0; i < count; i++) {
-            appRuntime.sessionManager.disposeSession(`bench-${count}-${i}`);
-          }
-        }
+        disposeBenchSessions(Array.from(createdBenchIds));
         pocStore.getState().pushLog("system", `Benchmark aborted: ${String(err)}`);
       } finally {
+        disposeBenchSessions(Array.from(createdBenchIds));
+        const restorePaneId =
+          appStore.getState().selection.activePaneId ?? previousActivePaneId;
+        if (restorePaneId && appRuntime.sessionManager.get(restorePaneId)) {
+          appRuntime.sessionManager.setActive(restorePaneId);
+        }
         pocStore.getState().setBenchRunning(false);
-      }
-
-      if (completed) {
-        await onSpawnTabs(1, true);
       }
     } finally {
       benchInFlightRef.current = false;
@@ -450,11 +465,27 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
                 min={8}
                 max={48}
                 step={0.5}
-                value={fontSize}
+                value={fontSizeInput}
                 onChange={(e) => {
-                  const val = Number(e.target.value);
+                  const raw = e.target.value;
+                  setFontSizeInput(raw);
+                  if (raw.trim() === "") return;
+                  const val = Number(raw);
                   if (Number.isFinite(val) && val >= 8 && val <= 48) {
                     applyFont({ fontSize: val });
+                  }
+                }}
+                onBlur={() => {
+                  const val = Number(fontSizeInput);
+                  if (fontSizeInput.trim() !== "" && Number.isFinite(val) && val >= 8 && val <= 48) {
+                    applyFont({ fontSize: val });
+                  } else {
+                    setFontSizeInput(String(fontSize));
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.currentTarget.blur();
                   }
                 }}
                 className="w-14 rounded border border-zinc-700 bg-zinc-950 px-1 py-0.5 font-mono text-[10px] text-zinc-100"
@@ -467,11 +498,27 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
                 min={1.0}
                 max={2.0}
                 step={0.05}
-                value={lineHeight}
+                value={lineHeightInput}
                 onChange={(e) => {
-                  const val = Number(e.target.value);
+                  const raw = e.target.value;
+                  setLineHeightInput(raw);
+                  if (raw.trim() === "") return;
+                  const val = Number(raw);
                   if (Number.isFinite(val) && val >= 1.0 && val <= 2.0) {
                     applyFont({ lineHeight: val });
+                  }
+                }}
+                onBlur={() => {
+                  const val = Number(lineHeightInput);
+                  if (lineHeightInput.trim() !== "" && Number.isFinite(val) && val >= 1.0 && val <= 2.0) {
+                    applyFont({ lineHeight: val });
+                  } else {
+                    setLineHeightInput(String(lineHeight));
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.currentTarget.blur();
                   }
                 }}
                 className="w-14 rounded border border-zinc-700 bg-zinc-950 px-1 py-0.5 font-mono text-[10px] text-zinc-100"

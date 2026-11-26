@@ -32,6 +32,7 @@ function createStubAdapterFactory(selectionText = "selected text") {
     async getSelection() {
       return selectionText;
     },
+    paste() {},
     dispose() {},
   });
 }

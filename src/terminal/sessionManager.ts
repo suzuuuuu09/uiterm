@@ -644,11 +644,7 @@ export class TerminalSessionManager {
   pasteText(id: string, text: string): boolean {
     const session = this.sessions.get(id);
     if (!session?.stream || session.stream.closed || session.disposed || text.length === 0) return false;
-    if (session.adapter.paste) {
-      session.adapter.paste(text);
-    } else {
-      this.sendInput(session, encoder.encode(text), "user");
-    }
+    session.adapter.paste(text);
     return true;
   }
 

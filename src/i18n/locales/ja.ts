@@ -1,7 +1,6 @@
 export const ja = {
   // Application shell
   "app.title": "uiterm",
-  "app.phaseBadge": "Phase 2 ターミナル",
   "app.runtimeTauri": "tauri+herdr-core",
   "app.runtimeMock": "mock",
   "app.localeToggle": "EN",
