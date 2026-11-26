@@ -1,0 +1,48 @@
+{
+  "name": "uiterm",
+  "version": "0.0.1-poc",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.9.0",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
+    "check": "vp check",
+    "lint": "vp lint",
+    "fmt": "vp fmt",
+    "test": "vp test",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "@gespenst/core": "^0.2.0",
+    "@tauri-apps/api": "^2.12.5",
+    "@wterm/core": "^0.6.0",
+    "@wterm/dom": "^0.6.0",
+    "@wterm/ghostty": "^0.6.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
+    "ghostty-web": "^0.4.0",
+    "lucide-react": "^1.80.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "valibot": "^1.5.0",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@rolldown/plugin-babel": "^0.3.1",
+    "@tailwindcss/vite": "^4.3.5",
+    "@tauri-apps/cli": "^2.12.6",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.9.0",
+    "vite-plus": "^1.8.0"
+  }
+}

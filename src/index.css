@@ -1,0 +1,30 @@
+@import "tailwindcss";
+@import "@wterm/dom/css";
+@import "@gespenst/core/style.css";
+@import "@xterm/xterm/css/xterm.css";
+
+@theme {
+  --font-mono:
+    "JetBrains Mono", "SF Mono", "Menlo", "Hiragino Sans", "Hiragino Kaku Gothic ProN",
+    "Noto Sans Mono CJK JP", "BIZ UDGothic", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Ensure wterm uses Japanese-friendly monospace fallback stack */
+.wterm-host {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.35;
+  --term-bg: #09090b;
+  --term-fg: #f4f4f5;
+  background-color: var(--term-bg);
+  color: var(--term-fg);
+}
