@@ -54,11 +54,14 @@ enum Stream {
 
 type RpcReply = Result<(Value, Option<u32>), IpcError>;
 
+const MAX_CLOSED_CHANNELS: usize = 256;
+
 #[derive(Debug, Default)]
 struct SharedState {
     pending_rpc: HashMap<u64, (oneshot::Sender<RpcReply>, Option<Stream>)>,
     streams: HashMap<u32, (u32, Stream)>,
     early_events: Vec<Frame>,
+    closed_channels: std::collections::VecDeque<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -591,6 +594,11 @@ impl HerdrClient {
         }
         if frame.kind == FRAME_CLOSE {
             state.streams.remove(&channel);
+            state.closed_channels.retain(|&c| c != channel);
+            if state.closed_channels.len() >= MAX_CLOSED_CHANNELS {
+                state.closed_channels.pop_front();
+            }
+            state.closed_channels.push_back(channel);
         }
         frame.channel = channel;
         permit.send(frame);
@@ -685,6 +693,7 @@ fn dispatch_incoming_frame(state: &mut SharedState, frame: Frame) -> Result<(), 
                     if matches!(stream, Stream::Events { .. }) {
                         opened_event_channel = Some(channel);
                     }
+                    state.closed_channels.retain(|&c| c != channel);
                     state.streams.insert(channel, (stream_id, stream));
                     Some(stream_id)
                 } else {
@@ -718,6 +727,10 @@ fn dispatch_incoming_frame(state: &mut SharedState, frame: Frame) -> Result<(), 
     }
 
     let Some((_, stream)) = state.streams.get_mut(&frame.channel) else {
+        // Ignore late DATA frames arriving for channels this client already closed.
+        if frame.kind == FRAME_DATA && state.closed_channels.contains(&frame.channel) {
+            return Ok(());
+        }
         // v0.1.22 opens events unpaused, so a notification can precede its RPC reply.
         if frame.kind == FRAME_DATA
             && state

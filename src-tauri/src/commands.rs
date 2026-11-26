@@ -25,7 +25,7 @@ impl AppState {
     }
 
     pub async fn ensure_client(&self) -> Result<HerdrClient, IpcError> {
-        self.connect(false).await
+        self.connect(true).await
     }
 
     pub async fn connect_fresh(&self) -> Result<HerdrClient, IpcError> {
@@ -382,7 +382,10 @@ pub async fn events_unsubscribe(
 
 #[tauri::command]
 pub async fn config_eval_poc(mut params: ConfigEvalParams) -> Result<ConfigEvalResult, IpcError> {
-    let sample = config_runtime::resolve_worker_script().with_file_name("sample.config.ts");
+    let sample = config_runtime::resolve_worker_script()
+        .with_file_name("sample.config.ts")
+        .canonicalize()
+        .map_err(|err| IpcError::new("io_error", format!("failed to resolve sample config: {err}")))?;
     if std::path::Path::new(&params.config_path)
         .canonicalize()
         .ok()

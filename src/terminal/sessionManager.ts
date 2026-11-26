@@ -553,6 +553,7 @@ export class TerminalSessionManager {
         }
       }
       await this.client.coreReconnect();
+      this.stopEventStream();
       await this.startEventStream();
       if (!session.disposed && await this.attach(session)) {
         pocStore.getState().pushLog("system", `[${id}] resynced (attachId=${session.attachId})`);

@@ -579,11 +579,12 @@ export function App() {
           <label className="flex items-center gap-1.5 text-zinc-300">
             <Switch.Root
               checked={pauseHiddenRendering}
+              disabled={benchRunning}
               onCheckedChange={(v) => {
                 pocStore.getState().setPauseHiddenRendering(v);
                 sessionManager.applyHiddenPausePolicy(v, pocStore.getState().activeTabId);
               }}
-              className="relative inline-flex h-4 w-7 items-center rounded-full bg-zinc-700 data-[checked]:bg-emerald-600"
+              className="relative inline-flex h-4 w-7 items-center rounded-full bg-zinc-700 disabled:opacity-50 data-[checked]:bg-emerald-600"
             >
               <Switch.Thumb className="block h-3 w-3 translate-x-0.5 rounded-full bg-white transition-transform data-[checked]:translate-x-3.5" />
             </Switch.Root>

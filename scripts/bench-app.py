@@ -216,6 +216,13 @@ def measure(args):
             if Path(row["binary"]).name in WEBKIT and child not in apps
         } if args.webkit_delta else set()
         selected = process_ids(rows, roots | webkit)
+        if args.stage == "post-close" and ids_seen:
+            survivors = {
+                child for child, row in rows.items()
+                if (child, row["started"], row["binary"]) in ids_seen
+            }
+            if survivors:
+                selected |= process_ids(rows, survivors)
         ids_seen.update(identities(rows, selected))
         elapsed = time.monotonic() - started
         try:
