@@ -452,9 +452,9 @@ export function registerBuiltinActions(
             rows: pane?.rows,
           },
         );
-        if (deps.store.getState().selection.activePaneId === paneId) {
-          deps.sessionManager.setActive(paneId);
-        }
+        // Reconcile visibility and focus with the current active pane in case
+        // the user switched tabs while the restarted session was being created.
+        deps.sessionManager.setActive(deps.store.getState().selection.activePaneId);
         return { tabId: targetId, paneId, sessionId: session.sessionId };
       },
     }),

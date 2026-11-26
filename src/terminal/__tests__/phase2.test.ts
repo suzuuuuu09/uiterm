@@ -250,6 +250,17 @@ describe("Phase 2 keyboard shortcuts, Option-as-Meta, and IME protection", () =>
     ]) {
       expect(matchAppShortcut(ptyEvent, macOpts)).toBeNull();
     }
+
+    // Non-Latin layout on Linux falls back to physical Key* code when event.key is non-ASCII
+    const linuxOpts = { isMac: false, isComposing: false, hasSelection: true };
+    expect(
+      matchAppShortcut({ ...baseKey, key: "Е", code: "KeyT", ctrlKey: true, shiftKey: true }, linuxOpts)
+        ?.actionId,
+    ).toBe("terminal.create");
+    expect(
+      matchAppShortcut({ ...baseKey, key: "С", code: "KeyC", ctrlKey: true, shiftKey: true }, linuxOpts)
+        ?.actionId,
+    ).toBe("terminal.copySelection");
   });
 
   it("translates macOS Option+<key> to ESC+<ascii> Meta sequences for fish/Neovim/Codex", () => {
@@ -508,6 +519,87 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
       expect(styles.get("--term-font-family")?.startsWith('"Menlo",')).toBe(true);
       expect(styles.get("--term-font-family")).not.toContain('"Symbols Nerd Font Mono"');
       expect(styles.get("--term-font-family")).toContain('"Hiragino Sans"');
+    } finally {
+      runtime?.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reconciles settings changed during mount, hides restarted pane after tab switch, and preserves focus on non-focusing setActive", async () => {
+    let runtime: ReturnType<typeof createAppRuntime> | null = null;
+    try {
+      const fakeDoc = { createElement: () => createFakeHost().el };
+      vi.stubGlobal("document", fakeDoc);
+
+      const appliedByCall: Array<Record<string, unknown>> = [];
+      let focusCount = 0;
+      let releaseSecondMount!: () => void;
+      let mountIndex = 0;
+
+      runtime = createAppRuntime({
+        client: new MockIpcClient(),
+        adapterFactory: () => {
+          const idx = mountIndex++;
+          return {
+            backendId: "wterm-ghostty-dom",
+            cols: 80,
+            rows: 24,
+            async mount() {
+              if (idx === 1) {
+                await new Promise<void>((resolve) => {
+                  releaseSecondMount = resolve;
+                });
+              }
+            },
+            write() {},
+            resize() {},
+            fit() {},
+            focus() {
+              focusCount++;
+            },
+            setHidden() {},
+            async getSelection() {
+              return "";
+            },
+            paste() {},
+            applyAppearance(patch) {
+              appliedByCall.push(patch as Record<string, unknown>);
+            },
+            dispose() {},
+          } satisfies TerminalAdapter;
+        },
+      });
+
+      runtime.setMountRoot(createFakeHost().el);
+      const tab1 = await runtime.actions.execute("terminal.create", { activate: true });
+      expect(tab1.ok).toBe(true);
+      if (!tab1.ok) return;
+
+      // Start creating tab2 (paused in mount), update font size while mount is in flight
+      const tab2Promise = runtime.actions.execute("terminal.create", { activate: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await runtime.actions.execute("app.setFont", { fontSize: 18 }, { caller: "gui" });
+      releaseSecondMount();
+      const tab2 = await tab2Promise;
+      expect(tab2.ok).toBe(true);
+      if (!tab2.ok) return;
+      expect(appliedByCall.some((patch) => patch.fontSize === 18)).toBe(true);
+
+      // Non-focusing setActive (used by benchmarks) must not steal focus
+      const focusBefore = focusCount;
+      runtime.sessionManager.setActive(tab1.value.paneId, { focus: false });
+      expect(focusCount).toBe(focusBefore);
+
+      // Restart tab1 while switching selection to tab2 -> tab1 container must end up hidden
+      await runtime.actions.execute("tab.select", { tabId: tab1.value.tabId });
+      const restartPromise = runtime.actions.execute("terminal.restart", {
+        tabId: tab1.value.tabId,
+      });
+      await runtime.actions.execute("tab.select", { tabId: tab2.value.tabId });
+      const restarted = await restartPromise;
+      expect(restarted.ok).toBe(true);
+      expect(runtime.sessionManager.get(tab1.value.paneId)?.container.style.display).toBe("none");
+      expect(runtime.sessionManager.get(tab2.value.paneId)?.container.style.display).toBe("block");
     } finally {
       runtime?.dispose();
       vi.unstubAllGlobals();

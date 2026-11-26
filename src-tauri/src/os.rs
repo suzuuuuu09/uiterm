@@ -118,9 +118,30 @@ pub fn run_pty_iutf8_init(args: &[std::ffi::OsString]) -> ! {
     std::process::exit(127);
 }
 
-/// Strips the internal `[<exe>, "--uiterm-pty-init", "--", ...]` prefix from reported argv.
+/// Returns true if `program` refers to the current executable or a `uiterm` binary.
+fn is_uiterm_wrapper_exe(program: &str, current_exe: Option<&str>) -> bool {
+    if current_exe.is_some_and(|exe| program == exe) {
+        return true;
+    }
+    std::path::Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "uiterm" || name == "uiterm.exe")
+}
+
+/// Strips the internal `[<exe>, "--uiterm-pty-init", "--", ...]` prefix from reported argv
+/// only when `argv[0]` identifies the uiterm executable.
 pub(crate) fn strip_pty_iutf8_wrapper(argv: Vec<String>) -> Vec<String> {
-    if argv.len() >= 4 && argv[1] == PTY_IUTF8_INIT_FLAG && argv[2] == "--" {
+    let current_exe = std::env::current_exe().ok();
+    strip_pty_iutf8_wrapper_for_exe(argv, current_exe.as_deref().and_then(|p| p.to_str()))
+}
+
+fn strip_pty_iutf8_wrapper_for_exe(argv: Vec<String>, current_exe: Option<&str>) -> Vec<String> {
+    if argv.len() >= 4
+        && is_uiterm_wrapper_exe(&argv[0], current_exe)
+        && argv[1] == PTY_IUTF8_INIT_FLAG
+        && argv[2] == "--"
+    {
         argv[3..].to_vec()
     } else {
         argv
@@ -133,20 +154,35 @@ mod tests {
 
     #[test]
     fn strip_pty_iutf8_wrapper_recovers_original_argv() {
+        let exe = "/Applications/uiterm.app/Contents/MacOS/uiterm";
         let wrapped = vec![
-            "/Applications/uiterm.app/Contents/MacOS/uiterm".to_string(),
+            exe.to_string(),
             PTY_IUTF8_INIT_FLAG.to_string(),
             "--".to_string(),
             "/bin/fish".to_string(),
             "-l".to_string(),
         ];
         assert_eq!(
-            strip_pty_iutf8_wrapper(wrapped),
+            strip_pty_iutf8_wrapper_for_exe(wrapped, Some(exe)),
             vec!["/bin/fish".to_string(), "-l".to_string()]
         );
 
+        let unrelated = vec![
+            "/bin/echo".to_string(),
+            PTY_IUTF8_INIT_FLAG.to_string(),
+            "--".to_string(),
+            "hello".to_string(),
+        ];
+        assert_eq!(
+            strip_pty_iutf8_wrapper_for_exe(unrelated.clone(), Some(exe)),
+            unrelated
+        );
+
         let plain = vec!["/bin/sh".to_string(), "-c".to_string(), "echo hi".to_string()];
-        assert_eq!(strip_pty_iutf8_wrapper(plain.clone()), plain);
+        assert_eq!(
+            strip_pty_iutf8_wrapper_for_exe(plain.clone(), Some(exe)),
+            plain
+        );
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]

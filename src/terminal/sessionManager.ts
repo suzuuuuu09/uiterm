@@ -563,6 +563,9 @@ export class TerminalSessionManager {
       };
       sessionRef = session;
       this.sessions.set(id, session);
+      // Re-apply current settings immediately on registration so font/zoom/cursor
+      // updates made while awaiting `adapter.mount()` are not missed.
+      this.applySettingsToSession(session, this.store.getState().settings);
 
       if (initialPaused) {
         adapter.setHidden(true);
@@ -613,10 +616,13 @@ export class TerminalSessionManager {
       .catch((err) => this.reportError(`terminalFocus:${session.id}`, err));
   }
 
-  setActive(activeId: string | null): void {
+  setActive(activeId: string | null, options: { focus?: boolean } = {}): void {
+    const takeFocus = options.focus ?? true;
     const pauseHidden = this.store.getState().settings.pauseHiddenRendering;
     const prevActiveId = this.activeId;
-    this.activeId = activeId;
+    if (takeFocus) {
+      this.activeId = activeId;
+    }
 
     for (const [id, session] of this.sessions) {
       const isActive = id === activeId;
@@ -625,11 +631,13 @@ export class TerminalSessionManager {
         session.container.style.display = nextDisplay;
       }
       session.adapter.setHidden(pauseHidden && !isActive);
-      if (id === prevActiveId && !isActive) session.adapter.clearSelection?.();
-      this.syncFocus(session);
-      if (isActive && this.windowFocused && prevActiveId !== activeId) {
-        session.adapter.fit();
-        session.adapter.focus();
+      if (takeFocus) {
+        if (id === prevActiveId && !isActive) session.adapter.clearSelection?.();
+        this.syncFocus(session);
+        if (isActive && this.windowFocused && prevActiveId !== activeId) {
+          session.adapter.fit();
+          session.adapter.focus();
+        }
       }
     }
   }
@@ -673,18 +681,22 @@ export class TerminalSessionManager {
     return session.adapter.getCellMetrics?.() ?? null;
   }
 
+  private applySettingsToSession(session: ManagedSession, settings: UserSettings): void {
+    if (session.disposed) return;
+    session.adapter.applyAppearance?.({
+      fontFamily: settings.fontFamily,
+      fontSize: settings.fontSize,
+      lineHeight: settings.lineHeight,
+      nerdFontFallback: settings.nerdFontFallback,
+      cursorStyle: settings.cursorStyle,
+      cursorBlink: settings.cursorBlink,
+      macOptionAsMeta: settings.macOptionAsMeta,
+    });
+  }
+
   applySettingsToAll(settings: UserSettings): void {
     for (const session of this.sessions.values()) {
-      if (session.disposed) continue;
-      session.adapter.applyAppearance?.({
-        fontFamily: settings.fontFamily,
-        fontSize: settings.fontSize,
-        lineHeight: settings.lineHeight,
-        nerdFontFallback: settings.nerdFontFallback,
-        cursorStyle: settings.cursorStyle,
-        cursorBlink: settings.cursorBlink,
-        macOptionAsMeta: settings.macOptionAsMeta,
-      });
+      this.applySettingsToSession(session, settings);
     }
   }
 

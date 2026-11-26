@@ -21,7 +21,7 @@ Phase 0・Phase 1 で構築した Tauri 2 + `herdr-core` v0.1.22 + `@wterm/dom` 
 | リサイズ・セル計測 | `src/terminal/wtermAdapter.ts`, `src/index.css` | `ResizeObserver` による自動リサイズに加え、`document.fonts.ready` 完了時の再フィットおよびフォント変更時の即時 `fit()` を実装。バックエンド起点リサイズループ防止ガードは Phase 0/1 のまま維持。 |
 | フォーカス管理 | `src/App.tsx`, `src/terminal/sessionManager.ts` | タブ切替時の `terminalFocus` IPC に加え、OS ウィンドウの `focus` / `blur` イベントを `sessionManager.setWindowFocused()` へ接続し、herdr-core の FOCUS フレームに PTY 通知を統一。タブ切替とウィンドウのアクティブ状態から通知し、wterm による同一通知の送信を抑止。 |
 | カラーパレット・前景色/背景色 | `src/terminal/appearance.ts`, `src/terminal/wtermAdapter.ts`, `src/index.css` | `#09090b` 背景・`#f4f4f5` 前景・通常色（0–7）と明色（8–15）を明確に区別した 16 色 ANSI パレット（`DEFAULT_TERMINAL_THEME`）を定義。CSS カスタムプロパティ（`--term-fg`, `--term-bg`, `--term-cursor`, `--term-selection-bg`, `--term-color-0..15`）と `WTerm.setThemeColors()` を同期。 |
-| カーソル形状・点滅 | `src/terminal/appearance.ts`, `src/actions/builtin.ts`, `src/index.css` | `cursorStyle`（`auto | block | bar | underline`）と `cursorBlink`（`auto | on | off`）の内部設定と `app.setCursor` アクションを追加。`auto` では VT が報告する形状を使う。明示的な形状指定は DOM / WebGL が読むカーソルに反映する。 |
+| カーソル形状・点滅 | `src/terminal/appearance.ts`, `src/actions/builtin.ts`, `src/index.css` | `cursorStyle`（`auto \| block \| bar \| underline`）と `cursorBlink`（`auto \| on \| off`）の内部設定と `app.setCursor` アクションを追加。`auto` では VT が報告する形状を使う。明示的な形状指定は DOM / WebGL が読むカーソルに反映する。 |
 
 ### 1.2 フォント・Nerd Font
 
@@ -256,6 +256,7 @@ Neovim で次の自動コマンドを登録し、別アプリへ切り替えて�
    - [ ] `nvim --clean` で挿入モード、日本語変換、`Esc`、リサイズ、`:q!` を試すこと。フォーカスは後述の自動コマンドで重複を確認する。
    - [ ] Codex CLI で日本語プロンプト入力・変換確定・取消・出力描画が正常動作すること。
 6. **macism と Neovim の再測定（既知の調査事項・修正後ビルド実機検証では遅延再現せず）**
+   - ※ 本項目は通常の Neovim 設定（`~/.config/nvim/` 等）を読み込む必要があるため、上の隔離 `HOME` 起動手順ではなく通常の環境変数（`HOME` / `XDG_CONFIG_HOME` を上書きせず `./src-tauri/target/release/bundle/macos/uiterm.app/Contents/MacOS/uiterm` を起動）で実施する。
    - [ ] Ghostty 単体、Ghostty + Herdr、uiterm の前景タブで同じ入力方式を選び、`/usr/bin/time -p /opt/homebrew/bin/macism` を各3回実行する。表示された入力方式 ID と実時間を記録する。macSKK ASCII と標準日本語入力で繰り返す。
    - [ ] 同じタブの `/bin/sh` で次を各3回実行し、通常設定での Neovim 起動時間を比較する。Neovim は画面が表示されてから `:q` で終了する。
 

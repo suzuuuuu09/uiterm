@@ -73,6 +73,18 @@ export function isImeComposingEvent(
  * - Leaves `Cmd+V` / `Ctrl+Shift+V` to native paste flow when appropriate so
  *   WKWebView delivers `clipboardData` directly to `@wterm/dom`'s bracketed paste handler.
  */
+function resolveShortcutKey(event: Pick<KeyboardEventLike, "key" | "code">): string {
+  const lowered = event.key.toLowerCase();
+  if (/^[a-z0-9=+-]$/.test(lowered)) {
+    return lowered;
+  }
+  const codeMatch = /^Key([A-Z])$/.exec(event.code);
+  if (codeMatch) {
+    return codeMatch[1]!.toLowerCase();
+  }
+  return lowered;
+}
+
 export function matchAppShortcut(
   event: KeyboardEventLike,
   options: MatchAppShortcutOptions,
@@ -81,7 +93,7 @@ export function matchAppShortcut(
     return null;
   }
 
-  const key = event.key.toLowerCase();
+  const key = resolveShortcutKey(event);
 
   if (options.isMac) {
     // macOS application shortcuts use Command (`metaKey`) without Control or Option.

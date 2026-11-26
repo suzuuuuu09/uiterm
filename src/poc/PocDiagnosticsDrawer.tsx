@@ -125,7 +125,7 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
             createdBenchIds.add(id);
             await appRuntime.sessionManager.createSession(id, currentBackend, host, i !== 0);
           }
-          appRuntime.sessionManager.setActive(ids[0]!);
+          appRuntime.sessionManager.setActive(ids[0]!, { focus: false });
           await nextFrame();
           const mountMs = performance.now() - tMount0;
 
@@ -146,7 +146,7 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
             for (let i = 0; i < 10; i++) {
               const targetId = ids[i % count]!;
               const tSw0 = performance.now();
-              appRuntime.sessionManager.setActive(targetId);
+              appRuntime.sessionManager.setActive(targetId, { focus: false });
               await nextFrame();
               switchTimes.push(performance.now() - tSw0);
             }
