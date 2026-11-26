@@ -127,6 +127,12 @@ impl HerdrClient {
             .read_line(&mut resp_line)
             .await
             .map_err(|e| IpcError::new("io_error", format!("hello read failed: {e}")))?;
+        if resp_line.is_empty() {
+            return Err(IpcError::new(
+                "core_disconnected",
+                "herdr-core closed socket during hello handshake",
+            ));
+        }
         if !resp_line.ends_with('\n') {
             return Err(IpcError::new(
                 "protocol_error",

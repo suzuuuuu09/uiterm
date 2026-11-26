@@ -126,27 +126,26 @@ export class TerminalSessionManager {
     pocStore.getState().pushLog("system", `IPC error (${context}): ${formatIpcError(err)}`);
   }
 
-  private scheduleStatsFlush(): void {
-    if (this.statsFlushTimer !== null) return;
-    this.statsFlushTimer = setTimeout(() => {
-      this.statsFlushTimer = null;
-      if (this.pendingBytesDelta > 0 || this.pendingRepliesDelta > 0) {
-        const b = this.pendingBytesDelta;
-        const r = this.pendingRepliesDelta;
-        this.pendingBytesDelta = 0;
-        this.pendingRepliesDelta = 0;
-        pocStore.getState().addStats(b, r);
-      }
-    }, STATS_FLUSH_INTERVAL_MS);
-  }
-
-  private cancelStatsFlush(): void {
+  private flushStatsNow(): void {
     if (this.statsFlushTimer !== null) {
       clearTimeout(this.statsFlushTimer);
       this.statsFlushTimer = null;
     }
-    this.pendingBytesDelta = 0;
-    this.pendingRepliesDelta = 0;
+    if (this.pendingBytesDelta > 0 || this.pendingRepliesDelta > 0) {
+      const b = this.pendingBytesDelta;
+      const r = this.pendingRepliesDelta;
+      this.pendingBytesDelta = 0;
+      this.pendingRepliesDelta = 0;
+      pocStore.getState().addStats(b, r);
+    }
+  }
+
+  private scheduleStatsFlush(): void {
+    if (this.statsFlushTimer !== null) return;
+    this.statsFlushTimer = setTimeout(() => {
+      this.statsFlushTimer = null;
+      this.flushStatsNow();
+    }, STATS_FLUSH_INTERVAL_MS);
   }
 
   async startEventStream(): Promise<void> {
@@ -518,13 +517,11 @@ export class TerminalSessionManager {
         session.container.style.display = nextDisplay;
       }
       session.adapter.setHidden(pauseHidden && !isActive);
-      if (session.focused !== isActive) {
+      if (session.focused !== isActive && session.attachId > 0) {
         session.focused = isActive;
-        if (session.attachId > 0) {
-          void this.client
-            .terminalFocus(session.attachId, isActive)
-            .catch((err) => this.reportIpcError(`terminalFocus:${id}`, err));
-        }
+        void this.client
+          .terminalFocus(session.attachId, isActive)
+          .catch((err) => this.reportIpcError(`terminalFocus:${id}`, err));
       }
       if (isActive && prevActiveId !== activeId) {
         session.adapter.fit();
@@ -646,7 +643,7 @@ export class TerminalSessionManager {
   }
 
   disposeAll(): void {
-    this.cancelStatsFlush();
+    this.flushStatsNow();
     this.activeId = null;
     for (const id of new Set([...this.creating.keys(), ...this.sessions.keys()])) {
       this.disposeSession(id);

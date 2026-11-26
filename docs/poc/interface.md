@@ -38,7 +38,7 @@ export interface IpcError {
 | コマンド名 | 引数 | 戻り値 | 説明 |
 | --- | --- | --- | --- |
 | `core_status` | なし | `CoreStatus` | 起動中 `herdr-core` のバージョン・PID・稼働時間・対応機能（`automaticInputSupported`, `resizeNotificationsSupported`）を返す。 |
-| `core_reconnect` | なし | `CoreStatus` | 稼働中の接続を再利用する。切断済みの場合、同じ隔離コアに対して Framed Mode ハンドシェイクをやり直す。 |
+| `core_reconnect` | なし | `CoreStatus` | 稼働中の接続を再利用する。コアが稼働したまま接続が切断された場合、同じ隔離コアに再接続して Framed Mode ハンドシェイクをやり直す。コア停止時はエラーを返し、自動再起動は行わない。 |
 
 ### 2.2 ターミナル管理
 

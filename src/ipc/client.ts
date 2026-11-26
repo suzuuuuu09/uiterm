@@ -106,9 +106,13 @@ export class TauriIpcClient implements UitermBackendClient {
     }>();
     channel.onmessage = ({ subscriptionId, events, bytes }) => {
       try {
-        for (const event of events) onEvent(event);
-      } catch (err) {
-        console.error("Core event handler failed", err);
+        for (const event of events) {
+          try {
+            onEvent(event);
+          } catch (err) {
+            console.error("Core event handler failed", err);
+          }
+        }
       } finally {
         if (bytes > 0) {
           void invoke("events_ack", { subscriptionId, bytes }).catch((err) => {

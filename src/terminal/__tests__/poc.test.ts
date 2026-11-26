@@ -355,7 +355,7 @@ describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounde
     pocStore.getState().setDiagnosticsEnabled(true);
     pocStore.getState().pushLog("input", "x".repeat(500));
     expect(pocStore.getState().logs.length).toBe(1);
-    expect(pocStore.getState().logs[0]!.detail.length).toBeLessThanOrEqual(163);
+    expect(pocStore.getState().logs[0]!.detail.length).toBeLessThanOrEqual(160);
 
     pocStore.getState().setDiagnosticsEnabled(false);
     pocStore.getState().pushLog("ime", "should-be-skipped");

@@ -122,7 +122,7 @@ export const pocStore = createStore<PocState>((set) => ({
       }
       const bounded =
         detail.length > MAX_LOG_DETAIL_CHARS
-          ? `${detail.slice(0, MAX_LOG_DETAIL_CHARS)}...`
+          ? `${detail.slice(0, MAX_LOG_DETAIL_CHARS - 3)}...`
           : detail;
       const next: DiagnosticEvent = { id: nextLogId++, time: nowTime(), kind, detail: bounded };
       const merged = [...s.logs, next];

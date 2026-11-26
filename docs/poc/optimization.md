@@ -33,7 +33,7 @@ description: "uiterm Phase 0 最終工程における実装整理・軽量化・
   - [src/terminal/createAdapter.ts](../../src/terminal/createAdapter.ts): `WTermGhosttyAdapter` のみ生成するよう整理
   - [src/index.css](../../src/index.css): `@gespenst/core/style.css`・`@xterm/xterm/css/xterm.css` の不要インポートを削除
   - [src/i18n/dict.ts](../../src/i18n/dict.ts)・[src/App.tsx](../../src/App.tsx): 削除済み描画エンジンの選択肢・辞書キーを削除
-  - [vite.config.ts](../../vite.config.ts): `optimizeDeps.exclude` を `["@wterm/ghostty"]` に整理、`build.target: "es2023"` を明示
+  - [vite.config.ts](../../vite.config.ts): `optimizeDeps.exclude` を `["@wterm/ghostty"]` に整理
   - [scripts/bench-terminals.mjs](../../scripts/bench-terminals.mjs): `@wterm/ghostty` 単体（`scrollbackLines` 5,000 vs 2,000 比較）向けに更新
 - **保持したもの**:
   - 過去の比較検証記録（[docs/poc/frontend.md](./frontend.md)・[docs/poc/integration.md](./integration.md)）
@@ -108,13 +108,13 @@ Tauri 2（macOS）の RSS（整理前 237.75 MiB）は、大きく以下の 2 �
 **採用設定（[src-tauri/Cargo.toml](../../src-tauri/Cargo.toml)）**:
 - `[profile.release]` に **構成 B**（`opt-level = "s"`, `lto = true`, `codegen-units = 1`, `strip = true`, `panic = "abort"`）を適用。
 - `[lib]` の `crate-type` をデスクトップ専用の `["rlib"]` へ整理（モバイル用の未使用 `staticlib` / `cdylib` を削減）。
-- Rust バックエンドは Unix Socket / IPC 中継が主体の I/O バウンド処理であり、`opt-level = "s"` による体感性能低下は実質ゼロ。
+- Rust バックエンドは Unix Socket / IPC 中継が主体の I/O バウンド処理と想定しており、`opt-level = "s"` による体感性能への影響は未計測のため、統合後の性能測定で確認する。
 
 ### 3.2 配布容量（`herdr-core` を含む実質的な配布容量）
 
 | 対象 | 最適化前 | 最適化後 | 備考 |
 | --- | ---: | ---: | --- |
-| `uiterm.app`（macOS バンドル） | 13.73 MiB | **4.20 MiB** (-69.4%) | 内訳: `uiterm` 3.6 MiB + `poc_bench` 672 KiB + `Info.plist`/アイコン |
+| `uiterm.app`（macOS バンドル） | 13.73 MiB | **4.20 MiB** (-69.4%) | 内訳: `uiterm` 約 3.2 MiB（§3.1 のバイナリ 3.19 MiB）+ `poc_bench` 672 KiB + `Info.plist`/アイコン |
 | `herdr-core` v0.1.22（macOS arm64） | 6.30 MiB | 6.30 MiB | 必須バックエンドバイナリ（Linux x86_64 tarball は 3.30 MB） |
 | **実質合計配布容量（`uiterm.app` + `herdr-core`）** | **20.03 MiB** | **10.50 MiB** (-47.6%) | Ghostty 67 MiB の約 1/6、Herdr 82 MiB（59+23）の約 1/8 |
 

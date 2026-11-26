@@ -235,7 +235,7 @@ Rustにはrustfmt・Clippyを利用する。
 - 日本語IME・全角文字の処理
 - 複数ターミナルの描画性能
 - TypeScript設定ランタイムの実行コスト
-- NixOSにおけるビルドと動作
+- NixOSにおけるビルドと動作（Phase 0 では Flake 評価・依存整合などの静的検証までとし、実機確認は MVP 完成条件とする）
 - Vite+とTauri・Nixの連携
 
 ## 将来的な検討事項

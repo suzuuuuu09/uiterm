@@ -93,6 +93,15 @@ async function benchWtermGhostty(scrollbackLines) {
   };
 
   try {
+    // Warm up one-time WASM module load/compile so the first scrollback pass isn't biased.
+    const warmup = await GhosttyCore.load({
+      wasmPath: "file:///ghostty-vt.wasm",
+      scrollbackLines,
+    });
+    warmup.init(120, 40);
+    warmup.dispose();
+    forceGc();
+
     const results = [];
     for (const count of [1, 5, 10]) {
       forceGc();

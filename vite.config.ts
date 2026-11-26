@@ -19,9 +19,6 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
-  build: {
-    target: "es2023",
-  },
   optimizeDeps: {
     exclude: ["@wterm/ghostty"],
   },

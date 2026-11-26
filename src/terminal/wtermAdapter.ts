@@ -13,7 +13,8 @@ const encoder = new TextEncoder();
 /**
  * Default frontend scrollback buffer size.
  * herdr-core maintains authoritative backend history; keeping frontend scrollback
- * at 2,000 lines reduces per-terminal WASM peak memory by ~60% vs 5,000 lines.
+ * at 2,000 lines reduces per-terminal WASM peak memory by ~44% vs 5,000 lines
+ * (10-terminal RSS +89.6 MB -> +49.8 MB).
  */
 export const DEFAULT_SCROLLBACK_LINES = 2000;
 

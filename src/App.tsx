@@ -182,12 +182,13 @@ function DiagnosticLogPanel() {
 function TabBar({ onCloseTab }: { onCloseTab: (id: string) => void }) {
   const tabs = usePocStore((s) => s.tabs);
   const activeTabId = usePocStore((s) => s.activeTabId);
+  const benchRunning = usePocStore((s) => s.benchRunning);
 
   return (
     <Tabs.Root
       value={activeTabId ?? ""}
       onValueChange={(value) => {
-        if (typeof value === "string" && value) {
+        if (typeof value === "string" && value && !benchRunning) {
           pocStore.getState().setActiveTabId(value);
         }
       }}
@@ -198,15 +199,17 @@ function TabBar({ onCloseTab }: { onCloseTab: (id: string) => void }) {
           <div key={tab.id} className="flex items-center">
             <Tabs.Tab
               value={tab.id}
-              className="rounded-l px-2.5 py-1 text-zinc-400 hover:bg-zinc-800 data-[selected]:bg-zinc-800 data-[selected]:text-emerald-300"
+              disabled={benchRunning}
+              className="rounded-l px-2.5 py-1 text-zinc-400 hover:bg-zinc-800 disabled:opacity-50 data-[selected]:bg-zinc-800 data-[selected]:text-emerald-300"
             >
               {tab.title} ({tab.cols}x{tab.rows})
             </Tabs.Tab>
             <button
               type="button"
+              disabled={benchRunning}
               aria-label={`Close ${tab.title}`}
               onClick={() => onCloseTab(tab.id)}
-              className="rounded-r px-1 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+              className="rounded-r px-1 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
             >
               <X className="h-3 w-3" />
             </button>
@@ -429,9 +432,10 @@ export function App() {
           <span className="text-zinc-400">{t(locale, "backend")}:</span>
           <select
             data-testid="backend-select"
+            disabled={benchRunning}
             value={backendId}
             onChange={(e) => void handleBackendChange(e.target.value as TerminalBackendId)}
-            className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-zinc-100"
+            className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-zinc-100 disabled:opacity-50"
           >
             {BACKENDS.map((b) => (
               <option key={b.id} value={b.id}>
@@ -444,37 +448,42 @@ export function App() {
         <div className="flex items-center gap-1 border-l border-zinc-800 pl-2">
           <button
             type="button"
+            disabled={benchRunning}
             onClick={() => void spawnTabs(1, false)}
-            className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700"
+            className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700 disabled:opacity-50"
           >
             <Plus className="h-3.5 w-3.5" />
             {t(locale, "addTab")}
           </button>
           <button
             type="button"
+            disabled={benchRunning}
             onClick={() => void spawnTabs(1, true)}
-            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700"
+            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700 disabled:opacity-50"
           >
             {t(locale, "spawn1")}
           </button>
           <button
             type="button"
+            disabled={benchRunning}
             onClick={() => void spawnTabs(5, true)}
-            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700"
+            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700 disabled:opacity-50"
           >
             {t(locale, "spawn5")}
           </button>
           <button
             type="button"
+            disabled={benchRunning}
             onClick={() => void spawnTabs(10, true)}
-            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700"
+            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700 disabled:opacity-50"
           >
             {t(locale, "spawn10")}
           </button>
           <button
             type="button"
+            disabled={benchRunning}
             onClick={handleCloseAll}
-            className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 text-red-300 hover:bg-zinc-700"
+            className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 text-red-300 hover:bg-zinc-700 disabled:opacity-50"
           >
             <Trash2 className="h-3.5 w-3.5" />
             {t(locale, "closeAll")}

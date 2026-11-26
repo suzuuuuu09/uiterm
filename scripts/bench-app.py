@@ -105,7 +105,10 @@ def socket_roots(socket):
     socket = str(socket.resolve())
     holder = socket.removesuffix(".sock") + ".holder"
     command = ["/usr/sbin/lsof", "-nP", "-U", "-Fpn"]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return set()
     found = set()
     for line in result.stdout.splitlines():
         if line.startswith("p"):

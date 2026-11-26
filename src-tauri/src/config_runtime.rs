@@ -82,7 +82,13 @@ impl ConfigWorker {
 
     pub async fn call(&mut self, method: &str, params: Value) -> Result<Value, IpcError> {
         match tokio::time::timeout(Duration::from_secs(10), self.exchange(method, params)).await {
-            Ok(result) => result,
+            Ok(Ok(val)) => Ok(val),
+            Ok(Err(err)) => {
+                if err.code != "config_error" {
+                    let _ = self.child.start_kill();
+                }
+                Err(err)
+            }
             Err(_) => {
                 let _ = self.child.start_kill();
                 Err(IpcError::new(
@@ -94,6 +100,7 @@ impl ConfigWorker {
     }
 
     async fn exchange(&mut self, method: &str, params: Value) -> Result<Value, IpcError> {
+        const MAX_WORKER_REPLY_BYTES: u64 = 1024 * 1024;
         let id = self.next_id;
         self.next_id += 1;
 
@@ -118,7 +125,7 @@ impl ConfigWorker {
 
         let mut resp_line = String::new();
         let n = (&mut self.stdout)
-            .take(1024 * 1024)
+            .take(MAX_WORKER_REPLY_BYTES)
             .read_line(&mut resp_line)
             .await
             .map_err(|e| IpcError::new("io_error", format!("worker read failed: {e}")))?;
@@ -128,13 +135,21 @@ impl ConfigWorker {
                 "TypeScript config worker exited unexpectedly",
             ));
         }
+        if !resp_line.ends_with('\n') {
+            let detail = if n as u64 >= MAX_WORKER_REPLY_BYTES {
+                format!("worker reply exceeded {MAX_WORKER_REPLY_BYTES} byte limit")
+            } else {
+                "incomplete worker reply".to_string()
+            };
+            return Err(IpcError::new("protocol_error", detail));
+        }
 
         let resp: Value = serde_json::from_str(&resp_line)
             .map_err(|e| IpcError::new("protocol_error", format!("invalid worker JSON: {e}")))?;
-        if !resp_line.ends_with('\n') || resp["id"].as_u64() != Some(id) {
+        if resp["id"].as_u64() != Some(id) {
             return Err(IpcError::new(
                 "protocol_error",
-                "incomplete or mismatched worker reply",
+                "mismatched worker reply id",
             ));
         }
         if let Some(err) = resp.get("error") {
