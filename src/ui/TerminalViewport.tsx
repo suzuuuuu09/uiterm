@@ -52,7 +52,9 @@ export function TerminalViewport({ onHostReady }: TerminalViewportProps) {
       }
     };
 
-    const onBlur = () => {
+    const onBlur = (e: FocusEvent) => {
+      const doc = el.ownerDocument;
+      if (e.relatedTarget === null && !doc.hasFocus() && doc.activeElement === e.target) return;
       appStore.getState().setIsComposing(false);
     };
 

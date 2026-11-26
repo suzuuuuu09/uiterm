@@ -1,6 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    #[cfg(unix)]
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new(uiterm_lib::os::PTY_IUTF8_INIT_FLAG))
+    {
+        let rest: Vec<std::ffi::OsString> = std::env::args_os().skip(2).collect();
+        uiterm_lib::os::run_pty_iutf8_init(&rest);
+    }
     if std::env::args_os().nth(1).as_deref()
         == Some(std::ffi::OsStr::new("--uiterm-core-supervisor"))
     {

@@ -37,20 +37,51 @@ Phase 0・Phase 1 で構築した Tauri 2 + `herdr-core` v0.1.22 + `@wterm/dom` 
   - `GhosttyCore` WASM に対する回帰テスト（`src/terminal/__tests__/unicode.test.mjs`）に BMP PUA（`\uE0B0`, `\uE718`, `\uF015`）および Supplementary PUA-A（`\u{F024B}`）を追加し、ASCII・全角・半角カナ・曖昧幅・結合文字・ZWJ 絵文字と合わせてセル位置・カラム進行が正確であることを確認した。
   - `@wterm/dom` の `.term-row > span` は `overflow: visible` を保持しており、1 セル幅をわずかに超える Nerd Font アイコンも後続セルの位置を崩さず描画できる。
 
-### 1.3 日本語 IME と `herdr-core` PTY `IUTF8` 残存課題の調査
+### 1.3 日本語 IME のキー入力保護
 
 - **IME 品質維持**:
   - `TerminalViewport.tsx` の `ui.isComposing` 追跡とプライバシー不変条件（`e.data` 非記録）を維持。
   - `src/terminal/keyboard.ts` の `isImeComposingEvent()` が `storeIsComposing || event.isComposing || event.keyCode === 229 || event.key === "Process"` を検査し、変換中のアプリショートカットおよび macOS Option-as-Meta の誤作動を防ぐ。Option-as-Meta の実際のリスナーにもストアの変換状態を渡す。
-- **`herdr-core` v0.1.22 PTY `IUTF8` 調査結果**:
-  - `src-tauri/tests/herdr_integration.rs` の `pty_preserves_japanese_bytes_with_canonical_utf8_erase` で再確認した通り、固定版 `herdr-core` v0.1.22 は Unix `openpty` 呼び出し時に初期 `termios` を指定しないため、macOS の新規 PTY は `-iutf8` で起動する。
-  - `herdr-core --help` および `herdr-core run --help` を確認し、v0.1.22 の CLI / RPC に `termios` や `IUTF8` を指定するオプションが存在しないことを確認した。
-  - **影響範囲の切り分け**:
-    - `fish`、`zsh`（zle）、`bash`（readline）、`nvim`、および TUI アプリは非カノニカル（raw）モードで動作し、UTF-8 文字単位の削除をユーザー空間で行うため、`-iutf8` の直接影響を受けない。
-    - 影響を受けるのは、`cat`・`read`・readline 非使用の対話スクリプト等の**カノニカルモード（`icanon`）**で Backspace（`0x7f`）を押した場合であり、カーネル行規律が 1 文字（3 バイト）ではなく末尾 1 バイトだけを削除して UTF-8 が破損する。
-  - **方針**: 制約に従い上流への無断 Issue/PR 投稿や独自フォークへの切り替えは行わず、シェル起動 `argv` をラッパーで書き換えるハックも避ける（ログインシェル解決やカスタム `argv` の契約を壊すため）。真の修正先である上流 `herdr-core` の PTY 初期化（`IUTF8` 付与）の課題として引き続き追跡し、ユーザー向け回避策（カノニカル入力が必要な場合の `stty iutf8`）を明記する。
 
-### 1.4 キーボード操作と Action Registry 接続
+### 1.4 macOS 実機で見つかった3件
+
+#### カノニカル入力での日本語破損
+
+固定版 `herdr-core` v0.1.22 の `spawn_pty`（`crates/herdr-core/src/platform/unix.rs:712-753`）は `openpty` に初期 termios を渡さず、取得した slave にも `IUTF8` を設定しない。macOS（Darwin の `TTYDEF_IFLAG`）および Linux（`tty_std_termios`）の双方で既定の初期 termios に `IUTF8` は含まれないため、新規 PTY は `-iutf8` で生成され、カノニカルモード（`cat` / `read` 等）で日本語文字を Backspace すると 1 バイトだけ消えて UTF-8 が破損する。
+
+`flake.nix` で `herdr-core` 自体をソースビルドしてパッチする案は、Zig 0.16 および `vendor/ghostty` サブモジュールのビルドを要求し `nix develop` / CI の軽量性・保守性を損なうため見送り、uiterm 側に最小限の暫定修正を実装した。
+
+- **実装**: `src-tauri/src/os.rs`（`PTY_IUTF8_INIT_FLAG`, `enable_pty_iutf8`, `run_pty_iutf8_init`, `strip_pty_iutf8_wrapper`）、`src-tauri/src/main.rs`、`src-tauri/src/commands.rs`（`apply_pty_iutf8_workaround`）、`src-tauri/src/herdr/types.rs`
+- **動作**: `terminal_create` 時に macOS / Linux の双方でコマンドを `[uiterm, "--uiterm-pty-init", "--", ...argv]`（`line` 指定時は `/bin/sh -c <line>`）でラップする。`main.rs` は Tokio / Tauri を起動せず即座に `tcgetattr(STDIN_FILENO)` → `c_iflag |= libc::IUTF8` → `tcsetattr(STDIN_FILENO, TCSANOW, &termios)` を実行し、`exec` で対象プロセスへ置換する。プロセス増・PID/PGID 変化・`stty` 依存はなく、`TerminalInfo.argv` からは内部ラッパーを除去して透過性を維持する。
+- **上流移行性**: 上流の `herdr-core` が `spawn_pty` で `IUTF8` を設定する版へ移行する際は、`apply_pty_iutf8_workaround` と `--uiterm-pty-init` 分岐を削除するだけで撤去できる。
+- **検証**: 単体テスト（`openpty` での `IUTF8` 有効化と既存 `c_iflag` 保持、`argv`/`line` の冪等ラップと除去）、実 `herdr-core` v0.1.22 結合テスト（`pty_iutf8_init_enables_utf8_erase_on_fresh_herdr_pty` にて `stty iutf8` なしで `あいうえお` + DEL×5 + `かきくけこ` → `かきくけこ`、`A日本` + DEL + `B` → `A日B` を検証）、およびリリースビルド `.app` の新規 PTY での実動作確認に合格した。
+
+#### macSKK の未確定表示
+
+WebKit はウィンドウが非アクティブになると、その textarea が DOM のフォーカス対象である間にも要素へ blur を送る。macOS の WKWebView で別ウィンドウへ移る試験でも、textarea の blur は `hasFocus() === false`、`activeElement === textarea`、`relatedTarget === null` を返し、その後に window の blur が届いた。復帰時は window、textarea の順に focus が届いた。wterm 0.6.0 は blur で textarea の値と変換状態を消す。合成イベントで再現し、修正前は表示保持のアサーションが失敗した。macSKK 2.23.0 の `deactivateServer` は候補パネルを閉じ、`commitComposition` は別のコールバックで状態を確定する。Space で候補が再表示されたという報告は macSKK 側に入力状態が残る場合と整合する。 [WebKit のフォーカス通知](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/page/FocusController.cpp#L456)・[macSKK 2.23.0 の InputController](https://github.com/mtgto/macSKK/blob/2.23.0/macSKK/InputController.swift)
+
+wterm の pnpm パッチ（`patches/@wterm__dom@0.6.0.patch`）と `TerminalViewport.tsx` の既存修正をレビューし、DOM のフォーカス先が同じ textarea のままのウィンドウ blur を判別して変換状態を保持する設計が妥当であることを確認した。継続中の変換は既存の textarea に保持し、`compositionend` と実際の要素間フォーカス移動は従来の終了経路で処理する。herdr-core に対するウィンドウのフォーカス通知は IPC の FOCUS フレームで送り、wterm の VT フォーカス報告は従来どおり無効。
+
+合成イベントの回帰テスト（`src/terminal/__tests__/unicode.test.mjs`）に、ウィンドウ復帰後の未確定表示と Enter 抑止・確定の重複送信防止・バックグラウンドでの取消・実際の要素 blur に加え、未確定文字列の Backspace 削除・Escape 取消時の PTY 非送信・250ms 以内の同一文字列連続確定（`"あ"` → `"あ"`）の回帰検証を追加した。macSKK と macOS 標準日本語入力の実打鍵確認は下の手順で実施が必要。
+
+#### macism の待機時間
+
+実機の `/opt/homebrew/bin/macism --version` は v3.1.1。引数なしの実装は `TISCreateInputSourceList(nil, false)` で列挙し、`TISCopyCurrentKeyboardInputSource()` で現在の入力方式を取得する。入力方式切替時の一時ウィンドウと 150 ms の待機は引数なしの経路には入らない。ユーザーの実 Neovim 設定（`~/.config/nvim/`）を確認したところ、`keaising/im-select.nvim`（`set_default_events = { "VimEnter", "FocusGained", "InsertLeave", "CmdlineLeave" }`, `async_switch_im = false`）と `lua/config/autocmd.lua` の `FocusGained` 自動コマンドが `macism` を同期呼び出ししている。 [macism v3.1.1 の入口](https://github.com/laishulu/macism/blob/v3.1.1/macism.swift)・[入力方式の取得実装](https://github.com/laishulu/macism/blob/v3.1.1/InputSourceManager.swift#L56)
+
+ユーザーの実 Neovim 設定（隔離ではない通常の `HOME` / `XDG_CONFIG_HOME` / `XDG_STATE_HOME`）を用い、ローカル PTY・単体 `herdr-core`・`uiterm.app` リリースビルド（背景・前景 `FRONT=uiterm`・`nix develop` 経由・`macSKK` ひらがなからの切替を含む）で初回および 2〜4 回目を測定した。
+
+| 条件 | 入力方式 | macism 実時間（ms、1〜4 回目） | 実 Neovim 設定 `NVIM STARTED`（ms、1〜4 回目） |
+| --- | --- | --- | --- |
+| ローカル PTY（`fish -l`） | macSKK ASCII | 68.2 / 59.5 / 55.9 / 54.3 | 294.2 / 203.1 / 247.2 / 203.1 |
+| 単体 `herdr-core`（`fish -l`） | macSKK ASCII | 53.9 / 40.9 / 34.7 / 33.9 | 81.1 / 62.3 / 59.4 / 64.3 |
+| `uiterm.app` リリース（背景） | macSKK ASCII | 48.8 / 42.4 / 40.1 / 38.0 | 68.1 / 63.5 / 68.9 / 62.7 |
+| `uiterm.app` リリース（前景 `FRONT=uiterm`） | macSKK ASCII | 44.1 / 43.4 / 38.5 | 98.5 / 67.3 / 71.2 |
+| `uiterm.app`（`nix develop` 経由） | macSKK ASCII → ひらがな切替 | 38.1 / 39.0 / 40.7 | 119.0 / 92.5（ひらがな→ASCII 切替含む） |
+| `uiterm.app` 対話起動（`:q!` 終了） | macSKK ASCII | — | 112.6（`VimEnter autocommands`: 35.7） |
+
+ユーザー報告値（Ghostty `102.458 ms` / `macism 29.29〜57.05 ms` に対し、uiterm `2699.883 ms` / `macism 1680〜2490 ms`）の 1.7〜2.7 秒遅延は、ユーザー実設定を用いた上記すべての条件でも再現しなかった。そのため遅延発生時の `macism` プロセススタックは未採取であり、原因は未特定（未解決）のままとする。実機で遅延が再現した際に下記チェックリスト §6 の `sample` 手順でスタックを採取し、`TISCreateInputSourceList` / `TISCopyCurrentKeyboardInputSource` / WindowServer IPC のどこで待機しているかを特定する必要がある。
+
+### 1.5 キーボード操作と Action Registry 接続
 
 - **実装**: `src/terminal/keyboard.ts`, `src/App.tsx`, `src/terminal/wtermAdapter.ts`
 - **アプリ操作と端末入力の分離**:
@@ -61,7 +92,7 @@ Phase 0・Phase 1 で構築した Tauri 2 + `herdr-core` v0.1.22 + `@wterm/dom` 
 - **macOS Option-as-Meta 対応**:
   - macOS では `Option+b` / `Option+f` / `Option+d` / `Option+.` 押下時に `event.key` が合成文字（`∫`, `ƒ`, `∂`, `≥`）になるため、`translateMacOptionKey()` が物理 `event.code` から `ESC + <ascii>`（`\x1bb`, `\x1bf`, `\x1bd`, `\x1b.`, `\x1b\x7f` 等）へ変換して PTY へ送出する（`macOptionAsMeta: true` 既定・IME 変換中および Kitty keyboard protocol 有効時は無効）。
 
-### 1.5 通常利用向け UI と PoC 診断 UI の分離
+### 1.6 通常利用向け UI と PoC 診断 UI の分離
 
 - **通常利用向け UI（`src/App.tsx`）**:
   - ターミナルを中心としたフルブリード画面（`.wterm.wterm-host` の角丸・ドロップシャドウを除去し最小パディングへ調整）。
@@ -80,11 +111,12 @@ Phase 0・Phase 1 で構築した Tauri 2 + `herdr-core` v0.1.22 + `@wterm/dom` 
 | --- | --- | --- |
 | TypeScript 型検査 | `pnpm typecheck` | **合格**（0 errors） |
 | Lint | `pnpm lint` | **合格** |
-| Vitest（単体・統合・回帰） | `pnpm test -- --run` | **合格**（11 ファイル、51 件。Phase 0/1 の既存回帰を含む） |
-| Rust テスト | `cargo test --locked --manifest-path src-tauri/Cargo.toml` | **合格**（unit 12 + `herdr_integration` 5 + `supervisor` 3 = 20 passed） |
+| Vitest（単体・統合・回帰） | `pnpm test -- --run` | **合格**（11 ファイル、55 件。Phase 0/1 の既存回帰および IME 連続確定・未確定削除を含む） |
+| Rust テスト | `cargo test --locked --manifest-path src-tauri/Cargo.toml` | **合格**（unit 15 + `herdr_integration` 6 + `supervisor` 3 = 24 passed、`IUTF8` 初期化回帰を含む） |
 | Clippy | `cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` | **合格**（0 warnings） |
 | CLI 互換性（隔離 PTY） | `cargo test --locked --manifest-path src-tauri/Cargo.toml installed_cli_compatibility_in_isolated_pty -- --ignored` | **合格**（`fish` / `nvim` / `codex --version`） |
 | リリースビルド | `nix develop --no-write-lock-file --command pnpm tauri build --bundles app` | **合格**（`uiterm.app` 3.66 MiB / Vite+ 警告 0 件） |
+| Phase 0 描画・計測スモーク | `node --expose-gc scripts/bench-terminals.mjs`、`python3 scripts/bench-app.py self-test` | **合格**（1 / 5 / 10 端末の 10,000 行出力と破棄） |
 | Nix Flake 静的評価 | `nix flake check --no-build --all-systems --no-write-lock-file` | **合格**（`aarch64-darwin` / `aarch64-linux` / `x86_64-linux`） |
 
 | macOS 実ウィンドウ | リリース .app を隔離 HOME / XDG で起動 | CoreGraphics でウィンドウ表示を検出。各試行で専用 core・holder・fish の起動と終了を観測。 |
@@ -196,7 +228,10 @@ Neovim で次の自動コマンドを登録し、別アプリへ切り替えて�
    - [ ] 各パターンで ASCII 40 桁と全角 20 文字の右端が揃い、半角カナ・曖昧幅・絵文字/ZWJ・結合文字（NFD 濁点等）が崩れないこと。
    - [ ] 各パターンで Nerd Font アイコン（Powerline・Git・Devicons 等）の表示位置と後続セルの整列、および Neovim のレイアウトが崩れないこと。
    - [ ] フォント切替直後に「セル寸法（`charWidth x rowHeight px`）」と `stty size` が再計算され、描画ずれが起きないこと。
-4. **日本語 IME（macOS 標準 IME）**
+4. **日本語 IME（macSKK と macOS 標準日本語入力）**
+   - [ ] macSKK で `Jibun` を入力し、未確定の「じぶん」が表示された状態で Cmd+Tab で別アプリへ移動する。Cmd+Tab で戻り、Space の前に未確定表示が見えるか確認する。Space → 確定 Enter → 通常 Enter の順で押し、`cat` の出力が「自分」1行になることを確認する。
+   - [ ] 同じ手順で復帰したら Esc で取消し、未確定表示が消えることを確認する。別アプリへ往復しても復活せず、通常 Enter で空行だけが送られることを確認する。標準日本語入力でも確定・取消・復帰を試し、OS が終了した変換は復元されないことを確認する。
+   - [ ] 新規 PTY で `stty -a` に `iutf8`（`-iutf8` ではない）が既定で有効であることを確認し、`stty iutf8` を手動実行せずに `stty -echo; cat; stty echo` で「あいうえお」→ Backspace 5回 →「かきくけこ」→ Enter を試し、「かきくけこ」だけが出力されることを確認する（Ctrl+D で終了）。
    - [ ] `stty -echo; cat; stty echo` 実行中に `にほんごにゅうりょく` を変換し、確定 Enter で行が送信されず、次の通常 Enter 1 回で 1 行だけ確定出力されること（Ctrl+D で終了）。
    - [ ] 画面中央・右端・最下行で未確定文字列と変換候補ウィンドウの位置がカーソルに追従すること。
    - [ ] 変換中に `Cmd+T` / `Cmd+Shift+W` / `Cmd+C` / `Option+b` / `Backspace` / `Esc` / 矢印を押してもアプリショートカット誤作動や PTY 誤送信が起きないこと。
@@ -206,7 +241,18 @@ Neovim で次の自動コマンドを登録し、別アプリへ切り替えて�
    - [ ] `Option+b` / `Option+f` / `Option+d` / `Option+Backspace` が fish で単語移動・削除として動作すること（`∫` や `ƒ` が入力されないこと）。
    - [ ] `nvim --clean` で挿入モード、日本語変換、`Esc`、リサイズ、`:q!` を試すこと。フォーカスは後述の自動コマンドで重複を確認する。
    - [ ] Codex CLI で日本語プロンプト入力・変換確定・取消・出力描画が正常動作すること。
-6. **長時間利用・終了時クリーンアップ**
+6. **macism と Neovim の再測定**
+   - [ ] Ghostty 単体、Ghostty + Herdr、uiterm の前景タブで同じ入力方式を選び、`/usr/bin/time -p /opt/homebrew/bin/macism` を各3回実行する。表示された入力方式 ID と実時間を記録する。macSKK ASCII と標準日本語入力で繰り返す。
+   - [ ] 同じタブの `/bin/sh` で次を各3回実行し、通常設定での Neovim 起動時間を比較する。Neovim は画面が表示されてから `:q` で終了する。
+
+     ```sh
+     log=$(mktemp /tmp/uiterm-nvim.XXXXXX)
+     nvim --startuptime "$log"
+     grep -E 'VimEnter autocommands|NVIM STARTED' "$log"
+     ```
+
+   - [ ] 遅延時は同じタブの `/bin/sh` で `/opt/homebrew/bin/macism & p=$!; sleep 0.12; if kill -0 "$p" 2>/dev/null; then /usr/bin/sample "$p" 1 1 -file "$(mktemp /tmp/uiterm-macism.XXXXXX)"; fi; wait "$p"` を実行する。採取されたスタックを使い、TIS の列挙・現在値取得・前景切替のどこで待つかを切り分ける。
+7. **長時間利用・終了時クリーンアップ**
    - [ ] 大量出力（`python3 scripts/bench-app.py workload --mib 5` 等）後も描画・入力応答が維持され、スクロールバック上限（2,000 行）内で動作すること。
    - [ ] `Cmd+T` で負荷用タブを開き、大量出力後に `Cmd+Shift+W` で閉じる。元のタブを残した状態で、Activity Monitor の関連 WebContent のメモリを閉じる直前と 60 秒後で記録する。
    - [ ] アプリ終了後、今回起動した `uiterm`・監視プロセス・`herdr-core`・`holder`・シェルが残存せず、既存の Herdr セッションに影響がないこと。
@@ -215,12 +261,13 @@ Neovim で次の自動コマンドを登録し、別アプリへ切り替えて�
 
 ## 5. 残存課題・後続 Phase への申し送り
 
+Phase 2 は未完了。`IUTF8` は uiterm 側の暫定修正（`--uiterm-pty-init`）を実装し、結合テストおよびリリースビルド `.app` の新規 PTY でカノニカル UTF-8 消去が破損しないことを確認した。macSKK/標準 IME の実打鍵確認、および報告された `macism` / Neovim 起動遅延の原因特定（遅延再現時のスタック採取）が残る。
+
 | 優先度 | 項目 | 詳細 |
 | --- | --- | --- |
-| 高（手動検証） | Phase 2 UI での macOS 実ウィンドウ対話確認 | 上記チェックリスト（Nerd Font 目視、macOS IME 対話、fish/Neovim/Codex 対話、Option-as-Meta 実打鍵）は独立 QA では未実施。 |
-| 中（上流依存） | `herdr-core` PTY 初期 `IUTF8` 未設定 | `herdr-core` v0.1.22 は macOS PTY を `-iutf8` で作成する。fish/nvim 等の raw モードには影響しないが、カノニカルモード（`cat` / `read` 等）のマルチバイト Backspace で末尾 1 バイトのみ消える。上流対応または回避方針を継続追跡する。 |
+| 高（手動検証） | Phase 2 UI での macOS 実ウィンドウ対話確認 | 上記チェックリスト（Nerd Font 目視、macSKK / 標準日本語 IME の実打鍵・アプリ切替復帰、fish/Neovim/Codex 対話、Option-as-Meta 実打鍵）は人間の実打鍵確認が必要。 |
+| 高（未解決） | `macism` / Neovim 起動遅延（約 2.7 秒）の原因特定 | ユーザー実 Neovim 設定を用いた自動比較では再現せず（`macism` 38–49 ms、`NVIM STARTED` 63–119 ms）。実機で再現した際に `sample` でスタックを採取する必要がある。 |
+| 低（上流追従） | `herdr-core` PTY 初期 `IUTF8` の上流修正取り込み | uiterm 側で `--uiterm-pty-init` により暫定修正済み（macOS/Linux 双方対応）。上流 `herdr-core` が `openpty` 後に `IUTF8` を設定する版へ更新した段階で暫定ラッパーを削除する。 |
 | 保留（Phase 4） | フォント・テーマ・キーバインドのユーザー設定 UI / TS 設定接続 | Phase 2 では内部 API（`app.setFont`, `app.setCursor`, `TerminalTheme`, `macOptionAsMeta`）までを整備した。永続化・TypeScript 設定ファイル・キーバインドカスタマイズは Phase 4 で接続する。 |
 | 保留（Phase 6） | アイドル CPU の試行間変動と長時間（30 分 soak）WKWebView メモリ推移および Ghostty/Herdr 同一条件比較 | 30 分の連続出力・タブ破棄後の WKWebView 内メモリ回収・他端末との同一条件比較は Phase 6 で実施する。 |
 | 保留（Phase 6） | NixOS / Hyprland（Wayland + WebKitGTK + Fcitx5）実機検証 | Nix Flake の Linux 静的評価のみ完了。実機ビルド・Wayland・Fcitx5 動作は Phase 6（MVP 完成条件）として保留。 |
-
-ネイティブ ACL の拡張、追加のエミュレーターや依存の導入、PTY 起動ラッパーによる回避は対応不要と判断した。現行の IPC と描画経路で Phase 2 の確認を続ける。

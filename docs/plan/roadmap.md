@@ -37,7 +37,7 @@ description: "uitermの開発ロードマップをまとめる"
 
 実装・検証の詳細は [docs/implementation/phase1-backend.md](../implementation/phase1-backend.md)・[docs/implementation/phase1-frontend.md](../implementation/phase1-frontend.md) を参照。macOS arm64 での統合レビュー・検証を完了し、Phase 2 へ移行可能。NixOS / Hyprland の実機検証（ビルド・GTK/WebKitGTK・Wayland・シグナル終了・Fcitx5）は引き続き保留とし、[MVP の完成条件](./mvp.md#完成条件)（Phase 6）として維持する。
 
-## Phase 2 — ターミナル（独立 QA 済み・macOS 手動検証待ち）
+## Phase 2 — ターミナル（未完了・macOS 実機課題あり）
 
 基本的なターミナルとして利用できる状態にする。
 
@@ -49,6 +49,10 @@ description: "uitermの開発ロードマップをまとめる"
 - [x] フォント・カラー・カーソルの内部設定（システムフォント、行間、ANSI パレット、形状・点滅。グリフとセルの目視確認は下記）
 - [ ] Nerd Font・文字幅・日本語 IME（Ghostty の PUA・日本語・絵文字・結合文字のセルと IME イベント回帰は確認済み。macOS で候補位置、確定 Enter、Option 競合、グリフを手動確認する）
 - [ ] fish・Neovim・Codex の対話互換性（隔離 PTY の fish・Neovim と `codex --version` は確認済み。WKWebView での対話と実打鍵を確認する）
+
+- [x] カノニカル入力での UTF-8 消去（uiterm 側 `--uiterm-pty-init` で macOS/Linux の新規 PTY に `IUTF8` を設定する暫定修正と回帰テスト・リリース `.app` 検証完了。上流修正後に撤去予定）
+- [ ] macSKK・標準日本語入力の実打鍵確認（blur 処理修正・連続確定/未確定削除の回帰テスト追加済み。実機での対話確認待ち）
+- [ ] macism による Neovim 起動遅延（ユーザー実 Neovim 設定での自動比較では再現せず原因未特定。実機再現時のスタック採取待ち）
 
 実機チェックリスト、性能測定、IUTF8 の回避策は [Phase 2 実装・検証レポート](../implementation/phase2-terminal.md) を参照。NixOS / Hyprland 実機と 30 分の連続利用時のメモリ測定は Phase 6 に残す。
 

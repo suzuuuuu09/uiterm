@@ -1,2 +1,4 @@
 minimumReleaseAgeExclude:
   - lucide-react@1.80.0
+patchedDependencies:
+  '@wterm/dom@0.6.0': patches/@wterm__dom@0.6.0.patch

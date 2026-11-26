@@ -181,7 +181,7 @@ impl From<HerdrTerminalRecord> for TerminalInfo {
         Self {
             address: r.address,
             name: r.name,
-            argv: r.argv,
+            argv: crate::os::strip_pty_iutf8_wrapper(r.argv),
             cwd: r.cwd,
             state: r.state,
             cols: r.cols,

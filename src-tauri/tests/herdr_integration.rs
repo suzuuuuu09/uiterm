@@ -492,6 +492,91 @@ async fn pty_preserves_japanese_bytes_with_canonical_utf8_erase() {
 }
 
 #[tokio::test]
+async fn pty_iutf8_init_enables_utf8_erase_on_fresh_herdr_pty() {
+    let cfg = HerdrLaunchConfig::isolated("iutf8-init").unwrap();
+    let mut daemon = HerdrDaemon::start(cfg).await.unwrap();
+    let client = HerdrClient::connect(daemon.socket_path(), &daemon.config().session)
+        .await
+        .unwrap();
+    let uiterm_bin = env!("CARGO_BIN_EXE_uiterm");
+
+    for (input, expected_hex) in [
+        // Reported repro: "あいうえお" + 5x Backspace (DEL) + "かきくけこ" -> valid UTF-8 "かきくけこ"
+        (
+            "あいうえお\u{7f}\u{7f}\u{7f}\u{7f}\u{7f}かきくけこ\n",
+            " e3 81 8b e3 81 8d e3 81 8f e3 81 91 e3 81 93",
+        ),
+        // Mixed ASCII + Kanji: "A日本" + DEL + "B" -> "A日B"
+        ("A日本\u{7f}B\n", " 41 e6 97 a5 42"),
+    ] {
+        let term = client
+            .terminal_create(TerminalCreateParams {
+                argv: Some(vec![
+                    uiterm_bin.into(),
+                    uiterm_lib::os::PTY_IUTF8_INIT_FLAG.into(),
+                    "--".into(),
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    // Deliberately do NOT run `stty iutf8`; rely on `--uiterm-pty-init`.
+                    "stty -a; stty icanon -echo erase '^?' || exit; printf 'PTY_READY\\n'; IFS= read -r line; printf '%s' \"$line\" | od -An -tx1".into(),
+                ]),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            term.argv.first().map(String::as_str),
+            Some("/bin/sh"),
+            "TerminalInfo.argv must strip the internal PTY init wrapper: {:?}",
+            term.argv
+        );
+        let mut attached = client
+            .terminal_attach(TerminalAttachParams {
+                session_id: term.address,
+                cols: 120,
+                rows: 40,
+                history: None,
+                observe: None,
+                resize_notifications: None,
+                display: None,
+            })
+            .await
+            .unwrap();
+        let id = attached.result.attach_id;
+        let ready = collect_until(
+            &mut attached.rx,
+            &client,
+            id,
+            "PTY_READY",
+            Duration::from_secs(3),
+        )
+        .await;
+        assert!(ready.contains("PTY_READY"), "{ready:?}");
+        assert!(
+            !ready.contains("-iutf8") && ready.contains("iutf8"),
+            "fresh PTY must have iutf8 enabled without stty iutf8: {ready:?}"
+        );
+        client
+            .terminal_write(id, input.as_bytes().to_vec(), false)
+            .await
+            .unwrap();
+        let output = collect_until(
+            &mut attached.rx,
+            &client,
+            id,
+            expected_hex,
+            Duration::from_secs(3),
+        )
+        .await;
+        assert!(
+            output.contains(expected_hex),
+            "wanted {expected_hex:?}, got {output:?}"
+        );
+    }
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
 #[ignore = "requires local fish, nvim and codex executables"]
 async fn installed_cli_compatibility_in_isolated_pty() {
     let cfg = HerdrLaunchConfig::isolated("cli").unwrap();

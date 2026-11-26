@@ -32,6 +32,7 @@ pub(crate) async fn terminal_create(
 ) -> Result<TerminalInfo, IpcError> {
     params.validate()?;
     apply_default_shell_and_env(&mut params);
+    apply_pty_iutf8_workaround(&mut params);
     let client = state.ensure_client().await?;
     client.terminal_create(params).await
 }
@@ -119,6 +120,54 @@ fn apply_default_shell_and_env(params: &mut TerminalCreateParams) {
                 .to_owned()
             });
         env_map.insert("LANG".to_string(), fallback_lang);
+    }
+}
+
+/// Temporary workaround for `herdr-core` v0.1.22 opening new Unix PTYs without `IUTF8`.
+///
+/// Wraps the launched command with `uiterm --uiterm-pty-init -- <argv...>`, which enables
+/// `IUTF8` on stdin via `tcsetattr` and immediately `exec`s the target process in-place.
+/// Remove once upstream `herdr-core` sets `IUTF8` natively on new PTYs.
+fn apply_pty_iutf8_workaround(params: &mut TerminalCreateParams) {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let Some(exe) = exe.to_str() else {
+            return;
+        };
+        wrap_params_with_pty_iutf8_init(params, exe);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let _ = params;
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn wrap_params_with_pty_iutf8_init(params: &mut TerminalCreateParams, exe: &str) {
+    use crate::os::PTY_IUTF8_INIT_FLAG;
+
+    if let Some(argv) = params.argv.as_mut() {
+        if argv.is_empty()
+            || (argv.len() >= 3 && argv[1] == PTY_IUTF8_INIT_FLAG && argv[2] == "--")
+        {
+            return;
+        }
+        let mut wrapped = Vec::with_capacity(argv.len() + 3);
+        wrapped.push(exe.to_owned());
+        wrapped.push(PTY_IUTF8_INIT_FLAG.to_owned());
+        wrapped.push("--".to_owned());
+        wrapped.append(argv);
+        *argv = wrapped;
+    } else if let Some(line) = params.line.take() {
+        params.argv = Some(vec![
+            exe.to_owned(),
+            PTY_IUTF8_INIT_FLAG.to_owned(),
+            "--".to_owned(),
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            line,
+        ]);
     }
 }
 
@@ -387,6 +436,51 @@ mod tests {
                 .is_some_and(|v| !v.starts_with("/tmp/uiterm.")),
             "XDG_STATE_HOME must point to user's state dir, got {:?}",
             env.get("XDG_STATE_HOME")
+        );
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn pty_iutf8_workaround_wraps_argv_and_line_idempotently() {
+        let mut argv_params = TerminalCreateParams {
+            argv: Some(vec!["/bin/fish".into(), "-l".into()]),
+            ..Default::default()
+        };
+        wrap_params_with_pty_iutf8_init(&mut argv_params, "/app/uiterm");
+        assert_eq!(
+            argv_params.argv.as_deref(),
+            Some(
+                &[
+                    "/app/uiterm".to_string(),
+                    crate::os::PTY_IUTF8_INIT_FLAG.to_string(),
+                    "--".to_string(),
+                    "/bin/fish".to_string(),
+                    "-l".to_string(),
+                ][..]
+            )
+        );
+        // Calling a second time must be a no-op.
+        wrap_params_with_pty_iutf8_init(&mut argv_params, "/app/uiterm");
+        assert_eq!(argv_params.argv.as_ref().unwrap().len(), 5);
+
+        let mut line_params = TerminalCreateParams {
+            line: Some("echo hi".into()),
+            ..Default::default()
+        };
+        wrap_params_with_pty_iutf8_init(&mut line_params, "/app/uiterm");
+        assert!(line_params.line.is_none());
+        assert_eq!(
+            line_params.argv.as_deref(),
+            Some(
+                &[
+                    "/app/uiterm".to_string(),
+                    crate::os::PTY_IUTF8_INIT_FLAG.to_string(),
+                    "--".to_string(),
+                    "/bin/sh".to_string(),
+                    "-c".to_string(),
+                    "echo hi".to_string(),
+                ][..]
+            )
         );
     }
 }
