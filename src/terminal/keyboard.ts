@@ -62,17 +62,6 @@ export function isImeComposingEvent(
   );
 }
 
-/**
- * Matches application-level keyboard shortcuts that should dispatch through
- * `ActionRegistry` rather than reaching the terminal PTY.
- *
- * Guarantees:
- * - Never matches during IME composition.
- * - Never hijacks terminal control sequences (`Ctrl+C`, `Ctrl+D`, `Ctrl+Z`, `Ctrl+A`,
- *   `Ctrl+E`, `Ctrl+R`, `Ctrl+W`, `Ctrl+[`, `Escape`, `Tab`, `Alt/Option+keys`).
- * - Leaves `Cmd+V` / `Ctrl+Shift+V` to native paste flow when appropriate so
- *   WKWebView delivers `clipboardData` directly to `@wterm/dom`'s bracketed paste handler.
- */
 function resolveShortcutKey(event: Pick<KeyboardEventLike, "key" | "code">): string {
   const lowered = event.key.toLowerCase();
   if (/^[a-z0-9=+-]$/.test(lowered)) {
@@ -85,6 +74,17 @@ function resolveShortcutKey(event: Pick<KeyboardEventLike, "key" | "code">): str
   return lowered;
 }
 
+/**
+ * Matches application-level keyboard shortcuts that should dispatch through
+ * `ActionRegistry` rather than reaching the terminal PTY.
+ *
+ * Guarantees:
+ * - Never matches during IME composition.
+ * - Never hijacks terminal control sequences (`Ctrl+C`, `Ctrl+D`, `Ctrl+Z`, `Ctrl+A`,
+ *   `Ctrl+E`, `Ctrl+R`, `Ctrl+W`, `Ctrl+[`, `Escape`, `Tab`, `Alt/Option+keys`).
+ * - Leaves `Cmd+V` / `Ctrl+Shift+V` to native paste flow when appropriate so
+ *   WKWebView delivers `clipboardData` directly to `@wterm/dom`'s bracketed paste handler.
+ */
 export function matchAppShortcut(
   event: KeyboardEventLike,
   options: MatchAppShortcutOptions,

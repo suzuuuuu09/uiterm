@@ -531,7 +531,7 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
       const fakeDoc = { createElement: () => createFakeHost().el };
       vi.stubGlobal("document", fakeDoc);
 
-      const appliedByCall: Array<Record<string, unknown>> = [];
+      const appliedByAdapter = new Map<number, Array<Record<string, unknown>>>();
       let focusCount = 0;
       let releaseSecondMount!: () => void;
       let mountIndex = 0;
@@ -563,7 +563,9 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
             },
             paste() {},
             applyAppearance(patch) {
-              appliedByCall.push(patch as Record<string, unknown>);
+              const list = appliedByAdapter.get(idx) ?? [];
+              list.push(patch as Record<string, unknown>);
+              appliedByAdapter.set(idx, list);
             },
             dispose() {},
           } satisfies TerminalAdapter;
@@ -583,7 +585,7 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
       const tab2 = await tab2Promise;
       expect(tab2.ok).toBe(true);
       if (!tab2.ok) return;
-      expect(appliedByCall.some((patch) => patch.fontSize === 18)).toBe(true);
+      expect(appliedByAdapter.get(1)?.some((patch) => patch.fontSize === 18)).toBe(true);
 
       // Non-focusing setActive (used by benchmarks) must not steal focus
       const focusBefore = focusCount;

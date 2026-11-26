@@ -454,7 +454,12 @@ export function registerBuiltinActions(
         );
         // Reconcile visibility and focus with the current active pane in case
         // the user switched tabs while the restarted session was being created.
-        deps.sessionManager.setActive(deps.store.getState().selection.activePaneId);
+        const activePaneId = deps.store.getState().selection.activePaneId;
+        if (activePaneId === null || deps.sessionManager.get(activePaneId)) {
+          deps.sessionManager.setActive(activePaneId);
+        } else if (activePaneId !== paneId) {
+          deps.sessionManager.hideSession(paneId);
+        }
         return { tabId: targetId, paneId, sessionId: session.sessionId };
       },
     }),
