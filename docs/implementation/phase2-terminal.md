@@ -54,7 +54,7 @@ Phase 0・Phase 1 で構築した Tauri 2 + `herdr-core` v0.1.22 + `@wterm/dom` 
 - **実装**: `src-tauri/src/os.rs`（`PTY_IUTF8_INIT_FLAG`, `enable_pty_iutf8`, `run_pty_iutf8_init`, `strip_pty_iutf8_wrapper`）、`src-tauri/src/main.rs`、`src-tauri/src/commands.rs`（`apply_pty_iutf8_workaround`）、`src-tauri/src/herdr/types.rs`
 - **動作**: `terminal_create` 時に macOS / Linux の双方でコマンドを `[uiterm, "--uiterm-pty-init", "--", ...argv]`（`line` 指定時は `/bin/sh -c <line>`）でラップする。`main.rs` は Tokio / Tauri を起動せず即座に `tcgetattr(STDIN_FILENO)` → `c_iflag |= libc::IUTF8` → `tcsetattr(STDIN_FILENO, TCSANOW, &termios)` を実行し、`exec` で対象プロセスへ置換する。プロセス増・PID/PGID 変化・`stty` 依存はなく、`TerminalInfo.argv` からは内部ラッパーを除去して透過性を維持する。
 - **上流移行性**: 上流の `herdr-core` が `spawn_pty` で `IUTF8` を設定する版へ移行する際は、`apply_pty_iutf8_workaround` と `--uiterm-pty-init` 分岐を削除するだけで撤去できる。
-- **検証**: 単体テスト（`openpty` での `IUTF8` 有効化と既存 `c_iflag` 保持、`argv`/`line` の冪等ラップと除去）、実 `herdr-core` v0.1.22 結合テスト（`pty_iutf8_init_enables_utf8_erase_on_fresh_herdr_pty` にて `stty iutf8` なしで `あいうえお` + DEL×5 + `かきくけこ` → `かきくけこ`、`A日本` + DEL + `B` → `A日B` を検証）、およびリリースビルド `.app` の新規 PTY での実動作確認に合格した。
+- **検証**: 単体テスト（`openpty` での `IUTF8` 有効化と既存 `c_iflag` 保持、`argv`/`line` の冪等ラップと除去）、実 `herdr-core` v0.1.22 結合テスト（`pty_iutf8_init_enables_utf8_erase_on_fresh_herdr_pty` にて `stty iutf8` なしで `あいうえお` + DEL×5 + `かきくけこ` → `かきくけこ`、`A日本` + DEL + `B` → `A日B` を検証）、リリースビルド `.app` の新規 PTY での実動作確認、およびユーザーによる修正後リリースビルドの実機検証で修正確認済み。
 
 #### macSKK の未確定表示
 
@@ -62,7 +62,7 @@ WebKit はウィンドウが非アクティブになると、その textarea が
 
 wterm の pnpm パッチ（`patches/@wterm__dom@0.6.0.patch`）と `TerminalViewport.tsx` の既存修正をレビューし、DOM のフォーカス先が同じ textarea のままのウィンドウ blur を判別して変換状態を保持する設計が妥当であることを確認した。継続中の変換は既存の textarea に保持し、`compositionend` と実際の要素間フォーカス移動は従来の終了経路で処理する。herdr-core に対するウィンドウのフォーカス通知は IPC の FOCUS フレームで送り、wterm の VT フォーカス報告は従来どおり無効。
 
-合成イベントの回帰テスト（`src/terminal/__tests__/unicode.test.mjs`）に、ウィンドウ復帰後の未確定表示と Enter 抑止・確定の重複送信防止・バックグラウンドでの取消・実際の要素 blur に加え、未確定文字列の Backspace 削除・Escape 取消時の PTY 非送信・250ms 以内の同一文字列連続確定（`"あ"` → `"あ"`）の回帰検証を追加した。macSKK と macOS 標準日本語入力の実打鍵確認は下の手順で実施が必要。
+合成イベントの回帰テスト（`src/terminal/__tests__/unicode.test.mjs`）に、ウィンドウ復帰後の未確定表示と Enter 抑止・確定の重複送信防止・バックグラウンドでの取消・実際の要素 blur に加え、未確定文字列の Backspace 削除・Escape 取消時の PTY 非送信・250ms 以内の同一文字列連続確定（`"あ"` → `"あ"`）の回帰検証を追加した。ユーザーによる修正後 macOS リリースビルドの実機検証で、macSKK のフォーカス復帰時の未確定文字表示が正常であることを確認済み。Esc 取消・確定フローおよび macOS 標準日本語入力の実打鍵確認は下の手順で引き続き実施が必要。
 
 #### macism の待機時間
 
@@ -79,7 +79,7 @@ wterm の pnpm パッチ（`patches/@wterm__dom@0.6.0.patch`）と `TerminalView
 | `uiterm.app`（`nix develop` 経由） | macSKK ASCII → ひらがな切替 | 38.1 / 39.0 / 40.7 | 119.0 / 92.5（ひらがな→ASCII 切替含む） |
 | `uiterm.app` 対話起動（`:q!` 終了） | macSKK ASCII | — | 112.6（`VimEnter autocommands`: 35.7） |
 
-ユーザー報告値（Ghostty `102.458 ms` / `macism 29.29〜57.05 ms` に対し、uiterm `2699.883 ms` / `macism 1680〜2490 ms`）の 1.7〜2.7 秒遅延は、ユーザー実設定を用いた上記すべての条件でも再現しなかった。そのため遅延発生時の `macism` プロセススタックは未採取であり、原因は未特定（未解決）のままとする。実機で遅延が再現した際に下記チェックリスト §6 の `sample` 手順でスタックを採取し、`TISCreateInputSourceList` / `TISCopyCurrentKeyboardInputSource` / WindowServer IPC のどこで待機しているかを特定する必要がある。
+ユーザー報告値（Ghostty `102.458 ms` / `macism 29.29〜57.05 ms` に対し、uiterm `2699.883 ms` / `macism 1680〜2490 ms`）の 1.7〜2.7 秒遅延は、ユーザー実設定を用いた上記すべての自動測定条件でも、修正後 macOS リリースビルドでのユーザー実機検証でも再現しなかった。ただし遅延発生時の `macism` プロセススタックは未採取であり根本原因は未特定のため、恒久的な解決済みとは扱わず既知の調査事項として記録を維持する。今後実機で遅延が再発した際に下記チェックリスト §6 の `sample` 手順でスタックを採取し、`TISCreateInputSourceList` / `TISCopyCurrentKeyboardInputSource` / WindowServer IPC のどこで待機しているかを特定する必要がある。
 
 ### 1.5 キーボード操作と Action Registry 接続
 
@@ -187,6 +187,17 @@ macOS 実ウィンドウに接続した専用 PTY で `python3 scripts/bench-app
 
 自動テストでは確認できない視覚・対話操作について、以下の手順で検証する。
 
+### ユーザーによる実機検証結果（修正後 macOS リリースビルド）
+
+修正後の macOS リリースビルドに対し、ユーザーによる実機検証で以下が確認された。
+
+| 確認項目 | 結果 | 扱い・備考 |
+| --- | --- | --- |
+| Nerd Font 表示 | **正常** | 実機で正常表示を確認済み。3 パターン網羅の文字幅・セル寸法再計算は下表で継続管理。 |
+| `IUTF8` による日本語文字化け | **修正確認済み** | uiterm 側 `--uiterm-pty-init` による暫定対応で実機修正を確認済み。上流 `herdr-core` 修正後に撤去予定。 |
+| macSKK のフォーカス復帰時の未確定文字表示 | **正常** | ウィンドウ非アクティブ→復帰時に未確定文字が保持・表示されることを確認済み。Esc 取消・確定フロー・標準日本語入力は未検証のまま維持。 |
+| `macism`・Neovim の起動遅延 | **再現せず** | 自動測定・実機検証とも再現せず。ただし根本原因未特定のため**恒久的な解決済みとは扱わず、既知の調査事項**として記録を維持する。 |
+
 ### 検証用の起動手順
 
 ```sh
@@ -225,13 +236,15 @@ Neovim で次の自動コマンドを登録し、別アプリへ切り替えて�
      | デフォルト | 「デフォルト」ボタン（`ui-monospace, "SF Mono", "Menlo", "JetBrains Mono"`） | 初期状態での表示・PUA/日本語フォールバック |
      | 普段 Ghostty で使用しているフォント | 例: `"UDEV Gothic 35NF"` や `"UDEV Gothic NF"` 等を入力して「適用」（サイズ `12.5` 等も調整可） | Nerd Font・日常利用時の表示、セル寸法・行間再計算 |
      | Menlo | 「Menlo」ボタン（`Nerd Font フォールバック` ON / OFF の両方を切替） | Nerd Font 非対応プライマリフォント時の PUA フォールバック・日本語フォールバック |
-   - [ ] 各パターンで ASCII 40 桁と全角 20 文字の右端が揃い、半角カナ・曖昧幅・絵文字/ZWJ・結合文字（NFD 濁点等）が崩れないこと。
+   - [x] Nerd Font アイコンの表示が正常であること（ユーザーによる修正後 macOS リリースビルド実機検証で確認済み）。
+   - [ ] 各パターン（デフォルト / 普段使用フォント / Menlo）で ASCII 40 桁と全角 20 文字の右端が揃い、半角カナ・曖昧幅・絵文字/ZWJ・結合文字（NFD 濁点等）が崩れないこと。
    - [ ] 各パターンで Nerd Font アイコン（Powerline・Git・Devicons 等）の表示位置と後続セルの整列、および Neovim のレイアウトが崩れないこと。
    - [ ] フォント切替直後に「セル寸法（`charWidth x rowHeight px`）」と `stty size` が再計算され、描画ずれが起きないこと。
 4. **日本語 IME（macSKK と macOS 標準日本語入力）**
-   - [ ] macSKK で `Jibun` を入力し、未確定の「じぶん」が表示された状態で Cmd+Tab で別アプリへ移動する。Cmd+Tab で戻り、Space の前に未確定表示が見えるか確認する。Space → 確定 Enter → 通常 Enter の順で押し、`cat` の出力が「自分」1行になることを確認する。
+   - [x] macSKK で未確定文字を表示した状態で別アプリへ移動・復帰した際、未確定文字表示が維持されること（ユーザーによる修正後 macOS リリースビルド実機検証で確認済み）。
+   - [ ] macSKK で `Jibun` を入力し、Cmd+Tab 往復後に Space → 確定 Enter → 通常 Enter の順で押し、`cat` の出力が「自分」1行になることを確認する。
    - [ ] 同じ手順で復帰したら Esc で取消し、未確定表示が消えることを確認する。別アプリへ往復しても復活せず、通常 Enter で空行だけが送られることを確認する。標準日本語入力でも確定・取消・復帰を試し、OS が終了した変換は復元されないことを確認する。
-   - [ ] 新規 PTY で `stty -a` に `iutf8`（`-iutf8` ではない）が既定で有効であることを確認し、`stty iutf8` を手動実行せずに `stty -echo; cat; stty echo` で「あいうえお」→ Backspace 5回 →「かきくけこ」→ Enter を試し、「かきくけこ」だけが出力されることを確認する（Ctrl+D で終了）。
+   - [x] 新規 PTY で `stty -a` に `iutf8`（`-iutf8` ではない）が既定で有効であることを確認し、`stty iutf8` を手動実行せずにカノニカルモードでの日本語削除が文字化けしないことを確認する（自動結合テスト・リリース `.app` 検証に加え、ユーザーによる実機検証で修正確認済み）。
    - [ ] `stty -echo; cat; stty echo` 実行中に `にほんごにゅうりょく` を変換し、確定 Enter で行が送信されず、次の通常 Enter 1 回で 1 行だけ確定出力されること（Ctrl+D で終了）。
    - [ ] 画面中央・右端・最下行で未確定文字列と変換候補ウィンドウの位置がカーソルに追従すること。
    - [ ] 変換中に `Cmd+T` / `Cmd+Shift+W` / `Cmd+C` / `Option+b` / `Backspace` / `Esc` / 矢印を押してもアプリショートカット誤作動や PTY 誤送信が起きないこと。
@@ -241,7 +254,7 @@ Neovim で次の自動コマンドを登録し、別アプリへ切り替えて�
    - [ ] `Option+b` / `Option+f` / `Option+d` / `Option+Backspace` が fish で単語移動・削除として動作すること（`∫` や `ƒ` が入力されないこと）。
    - [ ] `nvim --clean` で挿入モード、日本語変換、`Esc`、リサイズ、`:q!` を試すこと。フォーカスは後述の自動コマンドで重複を確認する。
    - [ ] Codex CLI で日本語プロンプト入力・変換確定・取消・出力描画が正常動作すること。
-6. **macism と Neovim の再測定**
+6. **macism と Neovim の再測定（既知の調査事項・修正後ビルド実機検証では遅延再現せず）**
    - [ ] Ghostty 単体、Ghostty + Herdr、uiterm の前景タブで同じ入力方式を選び、`/usr/bin/time -p /opt/homebrew/bin/macism` を各3回実行する。表示された入力方式 ID と実時間を記録する。macSKK ASCII と標準日本語入力で繰り返す。
    - [ ] 同じタブの `/bin/sh` で次を各3回実行し、通常設定での Neovim 起動時間を比較する。Neovim は画面が表示されてから `:q` で終了する。
 
@@ -261,13 +274,15 @@ Neovim で次の自動コマンドを登録し、別アプリへ切り替えて�
 
 ## 5. 残存課題・後続 Phase への申し送り
 
-Phase 2 は未完了。`IUTF8` は uiterm 側の暫定修正（`--uiterm-pty-init`）を実装し、結合テストおよびリリースビルド `.app` の新規 PTY でカノニカル UTF-8 消去が破損しないことを確認した。macSKK/標準 IME の実打鍵確認、および報告された `macism` / Neovim 起動遅延の原因特定（遅延再現時のスタック採取）が残る。
+**Phase 2 完了可否判断：未完了（Phase 3 へは未移行）**
+
+ユーザーによる修正後 macOS リリースビルドの実機検証により、Nerd Font 表示の正常性、`IUTF8` 暫定修正（`--uiterm-pty-init`）による日本語文字化け解消、および macSKK のフォーカス復帰時の未確定文字表示の正常性を確認し、`macism`・Neovim の起動遅延も再現しなかった。一方で、上記チェックリスト §4 の残存手動検証項目（通常利用 UI、コピー＆ペースト・ブラケットペースト、ドラッグリサイズ・ズーム、フォント 3 パターン文字幅、macOS 標準日本語入力・確定/取消フロー・候補位置、fish/Neovim/Codex 対話・Option-as-Meta 実打鍵、タブ閉鎖後メモリ・終了後プロセス確認）が未検証であり、`macism` 遅延は根本原因未特定のため既知の調査事項として残存している。未検証項目を成功扱いしない方針に基づき、Phase 2 は未完了のまま維持する。
 
 | 優先度 | 項目 | 詳細 |
 | --- | --- | --- |
-| 高（手動検証） | Phase 2 UI での macOS 実ウィンドウ対話確認 | 上記チェックリスト（Nerd Font 目視、macSKK / 標準日本語 IME の実打鍵・アプリ切替復帰、fish/Neovim/Codex 対話、Option-as-Meta 実打鍵）は人間の実打鍵確認が必要。 |
-| 高（未解決） | `macism` / Neovim 起動遅延（約 2.7 秒）の原因特定 | ユーザー実 Neovim 設定を用いた自動比較では再現せず（`macism` 38–49 ms、`NVIM STARTED` 63–119 ms）。実機で再現した際に `sample` でスタックを採取する必要がある。 |
-| 低（上流追従） | `herdr-core` PTY 初期 `IUTF8` の上流修正取り込み | uiterm 側で `--uiterm-pty-init` により暫定修正済み（macOS/Linux 双方対応）。上流 `herdr-core` が `openpty` 後に `IUTF8` を設定する版へ更新した段階で暫定ラッパーを削除する。 |
+| 高（残存手動検証） | Phase 2 UI での macOS 実ウィンドウ対話確認（未検証項目） | Nerd Font 表示、`IUTF8` 文字化け修正、macSKK フォーカス復帰時未確定表示は確認済み。残る通常 UI、コピペ、リサイズ・ズーム、フォント 3 パターン文字幅、標準日本語入力・確定/取消・候補位置、fish/Neovim/Codex 対話、Option-as-Meta 実打鍵、終了後プロセス残存確認が未検証。 |
+| 中（既知の調査事項） | `macism` / Neovim 起動遅延（過去報告値 約 2.7 秒）の根本原因特定 | 自動比較（`macism` 38–49 ms、`NVIM STARTED` 63–119 ms）および修正後リリースビルドでのユーザー実機検証とも再現せず。ただし根本原因未特定のため恒久解決済みとは扱わず、今後再発した際に `sample` でスタックを採取して原因を切り分ける。 |
+| 低（暫定対応・上流追従） | `herdr-core` PTY 初期 `IUTF8` の上流修正取り込み | uiterm 側で `--uiterm-pty-init` により暫定修正済み（macOS/Linux 双方対応、ユーザー実機検証で確認済み）。上流 `herdr-core` が `openpty` 後に `IUTF8` を設定する版へ更新した段階で暫定ラッパーを削除する。 |
 | 保留（Phase 4） | フォント・テーマ・キーバインドのユーザー設定 UI / TS 設定接続 | Phase 2 では内部 API（`app.setFont`, `app.setCursor`, `TerminalTheme`, `macOptionAsMeta`）までを整備した。永続化・TypeScript 設定ファイル・キーバインドカスタマイズは Phase 4 で接続する。 |
 | 保留（Phase 6） | アイドル CPU の試行間変動と長時間（30 分 soak）WKWebView メモリ推移および Ghostty/Herdr 同一条件比較 | 30 分の連続出力・タブ破棄後の WKWebView 内メモリ回収・他端末との同一条件比較は Phase 6 で実施する。 |
 | 保留（Phase 6） | NixOS / Hyprland（Wayland + WebKitGTK + Fcitx5）実機検証 | Nix Flake の Linux 静的評価のみ完了。実機ビルド・Wayland・Fcitx5 動作は Phase 6（MVP 完成条件）として保留。 |
