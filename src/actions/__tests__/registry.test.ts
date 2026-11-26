@@ -57,8 +57,11 @@ describe("ActionRegistry", () => {
     expect(registry.getLabel("custom.echo", "ja")?.title).toBe("サイドバー表示切替");
     expect(registry.getLabel("custom.echo", "en")?.title).toBe("Toggle Sidebar");
 
-    // Omitted args on required-arg action must be rejected by canExecute
-    expect(registry.canExecute("custom.echo").allowed).toBe(false);
+    // Omitted args on required-arg action must be rejected by schema validation, not availability
+    expect(registry.canExecute("custom.echo")).toMatchObject({
+      allowed: false,
+      reasonKey: "error.action.invalidArgs",
+    });
 
     // Invalid args rejected before execution
     const invalid = await registry.execute("custom.echo", { count: 0 }, { caller: "cli" });
@@ -164,6 +167,7 @@ describe("ActionRegistry", () => {
         runtime.actions.canExecute("terminal.copySelection", { tabId: "non-existent" }).allowed,
       ).toBe(false);
       expect(runtime.actions.canExecute("tab.select").allowed).toBe(false);
+      expect(runtime.actions.canExecute("tab.select", { tabId: "toString" }).allowed).toBe(false);
       const copyRes = await runtime.actions.execute("terminal.copySelection", {}, { caller: "keybind" });
       expect(copyRes).toEqual({ ok: true, value: { copiedLength: 5 } });
       expect(copied).toEqual(["日本語選択"]);

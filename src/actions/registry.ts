@@ -2,6 +2,7 @@ import * as v from "valibot";
 import { AppError, normalizeError } from "../errors/appError.ts";
 import { type Locale, t } from "../i18n/index.ts";
 import { appLogger, type Logger } from "../logging/logger.ts";
+import { formatValidationIssues } from "../validation/ipcSchemas.ts";
 import type {
   ActionArgsOf,
   ActionAvailability,
@@ -90,7 +91,7 @@ export class ActionRegistry {
       };
     }
 
-    const parsed = v.safeParse(def.argsSchema, args ?? {});
+    const parsed = v.safeParse(def.argsSchema, args === undefined ? {} : args);
     if (!parsed.success) {
       return {
         allowed: false,
@@ -131,17 +132,14 @@ export class ActionRegistry {
       return { ok: false, error };
     }
 
-    const parsed = v.safeParse(def.argsSchema, args ?? {});
+    const parsed = v.safeParse(def.argsSchema, args === undefined ? {} : args);
     if (!parsed.success) {
-      const issues = parsed.issues.map((issue) => ({
-        path: issue.path?.map((part) => String(part.key)).join(".") || "$",
-        message: issue.message,
-      }));
+      const issues = formatValidationIssues(parsed.issues);
       const error = new AppError({
         code: "ACTION_INVALID_ARGS",
         messageKey: "error.action.invalidArgs",
         messageParams: { actionId: id },
-        devMessage: `Invalid arguments for action ${id}: ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`,
+        devMessage: `Invalid arguments for action ${id}: ${issues.map((i) => `${i.path}: invalid (${i.type})`).join("; ")}`,
         diagnostics: { actionId: id, caller, issues },
       });
       this.logger.logError("actions", error);

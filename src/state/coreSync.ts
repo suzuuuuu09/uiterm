@@ -198,6 +198,7 @@ export function applyCoreEvent(
               reason: data.reason,
               exitCode: data.exitCode,
               signal: data.signal,
+              foreground: null,
               updatedAt: nowMs,
             },
           }
@@ -228,6 +229,7 @@ export function applyCoreEvent(
               reason: data.reason,
               exitCode: data.exitCode,
               signal: data.signal,
+              foreground: null,
               updatedAt: nowMs,
             },
           }

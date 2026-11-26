@@ -500,7 +500,7 @@ export class TerminalSessionManager {
       });
       creation.signal.throwIfAborted();
 
-      const initialPaused = hidden && settings.pauseHiddenRendering;
+      const initialPaused = hidden && this.store.getState().settings.pauseHiddenRendering;
       adapter = this.adapterFactory(
         backendId,
         {
@@ -635,6 +635,25 @@ export class TerminalSessionManager {
     return true;
   }
 
+  hideSession(id: string): void {
+    const session = this.sessions.get(id);
+    if (!session || session.disposed) return;
+    const pauseHidden = this.store.getState().settings.pauseHiddenRendering;
+    session.container.style.display = "none";
+    session.adapter.setHidden(pauseHidden);
+    if (session.focused && session.attachId > 0) {
+      session.focused = false;
+      void this.client
+        .terminalFocus(session.attachId, false)
+        .catch((err) => this.reportError(`terminalFocus:${id}`, err));
+    } else {
+      session.focused = false;
+    }
+    if (this.activeId === id) {
+      this.activeId = null;
+    }
+  }
+
   applyHiddenPausePolicy(pauseHidden: boolean, activeId: string | null): void {
     for (const [id, session] of this.sessions) {
       session.adapter.setHidden(pauseHidden && id !== activeId);
@@ -672,6 +691,7 @@ export class TerminalSessionManager {
     } catch (err) {
       const appErr = this.reportError(`resyncSession:${id}`, err);
       this.store.getState().setCoreConnection({ status: "disconnected", lastError: appErr });
+      throw appErr;
     } finally {
       session.resyncing = false;
     }

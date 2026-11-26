@@ -33,7 +33,10 @@ impl AppState {
             let mut started = CoreSupervisor::start().await?;
             if self.exiting.load(Ordering::Acquire) {
                 drop(connection);
-                let _ = tokio::task::spawn_blocking(move || started.stop_blocking()).await;
+                if let Err(err) = tokio::task::spawn_blocking(move || started.stop_blocking()).await
+                {
+                    eprintln!("uiterm: core_supervisor_stop_failed: {err}");
+                }
                 return Err(IpcError::new(
                     "core_disconnected",
                     "uiterm is shutting down",
@@ -46,8 +49,11 @@ impl AppState {
         if self.exiting.load(Ordering::Acquire) {
             let supervisor = connection.supervisor.take();
             drop(connection);
-            if let Some(mut supervisor) = supervisor {
-                let _ = tokio::task::spawn_blocking(move || supervisor.stop_blocking()).await;
+            if let Some(mut supervisor) = supervisor
+                && let Err(err) =
+                    tokio::task::spawn_blocking(move || supervisor.stop_blocking()).await
+            {
+                eprintln!("uiterm: core_supervisor_stop_failed: {err}");
             }
             return Err(IpcError::new(
                 "core_disconnected",

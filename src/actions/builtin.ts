@@ -59,6 +59,8 @@ export function registerBuiltinActions(
   const resolveTabId = (explicitTabId?: string): string | null =>
     explicitTabId ?? deps.store.getState().selection.activeTabId;
 
+  const hasOwnTab = (tabId: string): boolean => Object.hasOwn(deps.store.getState().tabs, tabId);
+
   unregisters.push(
     registry.register({
       id: "terminal.create",
@@ -82,7 +84,11 @@ export function registerBuiltinActions(
         }
         const state = deps.store.getState();
         let tabId = `term-${nextTabSeq++}`;
-        while (state.tabs[tabId] || state.panes[tabId] || deps.sessionManager.get(tabId)) {
+        while (
+          Object.hasOwn(state.tabs, tabId) ||
+          Object.hasOwn(state.panes, tabId) ||
+          deps.sessionManager.get(tabId)
+        ) {
           tabId = `term-${nextTabSeq++}`;
         }
         const title = args.title ?? tabId;
@@ -106,16 +112,14 @@ export function registerBuiltinActions(
             cols: args.cols,
             rows: args.rows,
           });
-          if (activate) {
-            const selectedPaneId = deps.store.getState().selection.activePaneId;
-            if (selectedPaneId === null || deps.sessionManager.get(selectedPaneId)) {
-              deps.sessionManager.setActive(selectedPaneId);
-              if (selectedPaneId === tabId) {
-                deps.sessionManager.focusSession(tabId);
-              }
-            } else {
-              session.container.style.display = "none";
-            }
+          const selectedPaneId = deps.store.getState().selection.activePaneId;
+          if (selectedPaneId === tabId) {
+            deps.sessionManager.setActive(tabId);
+            deps.sessionManager.focusSession(tabId);
+          } else if (selectedPaneId === null || deps.sessionManager.get(selectedPaneId)) {
+            deps.sessionManager.setActive(selectedPaneId);
+          } else {
+            deps.sessionManager.hideSession(tabId);
           }
           return {
             tabId,
@@ -150,7 +154,7 @@ export function registerBuiltinActions(
         if (!targetId) {
           return { allowed: false, reasonKey: "action.unavailable.noActiveTab" };
         }
-        if (!deps.store.getState().tabs[targetId]) {
+        if (!hasOwnTab(targetId)) {
           return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
         }
         return { allowed: true };
@@ -185,7 +189,7 @@ export function registerBuiltinActions(
         if (!targetId) {
           return { allowed: false, reasonKey: "action.unavailable.noActiveTab" };
         }
-        if (!deps.store.getState().tabs[targetId]) {
+        if (!hasOwnTab(targetId)) {
           return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
         }
         return { allowed: true };
@@ -213,7 +217,7 @@ export function registerBuiltinActions(
         if (!targetId) {
           return { allowed: false, reasonKey: "action.unavailable.noActiveTab" };
         }
-        if (!deps.store.getState().tabs[targetId]) {
+        if (!hasOwnTab(targetId)) {
           return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
         }
         return { allowed: true };
@@ -239,7 +243,7 @@ export function registerBuiltinActions(
         if (!targetId) {
           return { allowed: false, reasonKey: "action.unavailable.noActiveTab" };
         }
-        if (!deps.store.getState().tabs[targetId]) {
+        if (!hasOwnTab(targetId)) {
           return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
         }
         return { allowed: true };
@@ -279,7 +283,7 @@ export function registerBuiltinActions(
         if (deps.isBusy?.()) {
           return { allowed: false, reasonKey: "action.unavailable.busy" };
         }
-        if (!args || !deps.store.getState().tabs[args.tabId]) {
+        if (!args || !hasOwnTab(args.tabId)) {
           return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
         }
         return { allowed: true };

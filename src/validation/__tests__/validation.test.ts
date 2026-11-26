@@ -131,5 +131,19 @@ describe("Valibot validation schemas", () => {
       expect(appErr.message).not.toContain("TOP_SECRET_VALUE");
       expect(JSON.stringify(appErr.diagnostics)).not.toContain("TOP_SECRET_VALUE");
     }
+    try {
+      parseExternalInput(
+        TerminalCreateParamsSchema,
+        { env: { SECRET_API_KEY_NAME: 123 } },
+        "terminal.create",
+      );
+      expect.unreachable("should throw AppError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(AppError);
+      const appErr = err as AppError;
+      expect(appErr.message).toContain("env.[key]");
+      expect(appErr.message).not.toContain("SECRET_API_KEY_NAME");
+      expect(JSON.stringify(appErr.diagnostics)).not.toContain("SECRET_API_KEY_NAME");
+    }
   });
 });

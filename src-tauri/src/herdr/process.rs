@@ -169,7 +169,13 @@ impl HerdrDaemon {
             .is_err()
         {
             self.spawn_core()?;
-            self.wait_for_socket(true).await?;
+            if let Err(err) = self.wait_for_socket(true).await {
+                if let Some(child) = &mut self.child {
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                }
+                return Err(err);
+            }
         }
         Ok(())
     }

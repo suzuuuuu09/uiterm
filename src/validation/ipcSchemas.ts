@@ -224,6 +224,33 @@ export function validateResizePayload(input: unknown): ResizePayload {
   return v.parse(ResizePayloadSchema, input);
 }
 
+const RECORD_FIELD_KEYS = new Set(["env", "labels"]);
+
+export function formatValidationIssues(
+  rawIssues: readonly v.BaseIssue<unknown>[],
+): readonly { readonly path: string; readonly type: string; readonly expected: string | null }[] {
+  return rawIssues.map((issue) => {
+    const segments: string[] = [];
+    for (const part of issue.path ?? []) {
+      const prev = segments[segments.length - 1];
+      if (
+        part.type === "map" ||
+        part.type === "set" ||
+        (prev !== undefined && RECORD_FIELD_KEYS.has(prev))
+      ) {
+        segments.push("[key]");
+      } else {
+        segments.push(String(part.key));
+      }
+    }
+    return {
+      path: segments.join(".") || "$",
+      type: issue.type,
+      expected: issue.expected ?? null,
+    };
+  });
+}
+
 /**
  * Parses an unknown value against a Valibot schema and throws a structured `AppError`
  * (`code: "VALIDATION_FAILED"`) on failure instead of leaking raw Valibot errors.
@@ -237,11 +264,7 @@ export function parseExternalInput<TSchema extends v.BaseSchema<unknown, unknown
   if (result.success) {
     return result.output;
   }
-  const issues = result.issues.map((issue) => ({
-    path: issue.path?.map((part) => String(part.key)).join(".") || "$",
-    type: issue.type,
-    expected: issue.expected ?? null,
-  }));
+  const issues = formatValidationIssues(result.issues);
   throw new AppError({
     code: "VALIDATION_FAILED",
     messageKey: "error.validation.failed",
