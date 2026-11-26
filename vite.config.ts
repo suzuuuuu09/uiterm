@@ -20,7 +20,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ["@wterm/ghostty", "@wterm/core", "@gespenst/core", "ghostty-web"],
+    exclude: ["@wterm/ghostty"],
   },
   assetsInclude: ["**/*.wasm"],
 });

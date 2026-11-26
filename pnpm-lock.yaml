@@ -169,33 +169,15 @@ importers:
       '@base-ui/react':
         specifier: ^1.9.0
         version: 1.9.0(@types/react@19.3.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@gespenst/core':
-        specifier: ^0.2.0
-        version: 0.2.0
       '@tauri-apps/api':
         specifier: ^2.12.5
         version: 2.12.5
-      '@wterm/core':
-        specifier: ^0.6.0
-        version: 0.6.0
       '@wterm/dom':
         specifier: ^0.6.0
         version: 0.6.0
       '@wterm/ghostty':
         specifier: ^0.6.0
         version: 0.6.0
-      '@xterm/addon-fit':
-        specifier: ^0.11.0
-        version: 0.11.0
-      '@xterm/addon-webgl':
-        specifier: ^0.19.0
-        version: 0.19.0
-      '@xterm/xterm':
-        specifier: ^6.0.0
-        version: 6.0.0
-      ghostty-web:
-        specifier: ^0.4.0
-        version: 0.4.0
       lucide-react:
         specifier: ^1.80.0
         version: 1.80.0(@types/react@19.3.1)(react@19.3.1)
@@ -372,10 +354,6 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
-
-  '@gespenst/core@0.2.0':
-    resolution: {integrity: sha512-jya8ug60fdzv3n7vzrFT0zVIa7ftsqLtHlJri5F41+kqxHDTQJWo3QOjS9VMtVcFQ2xAdSyGfj4AaYmz3PyuGg==}
-    engines: {node: ^20.19.0 || >=22.12.0}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -1223,15 +1201,6 @@ packages:
   '@wterm/ghostty@0.6.0':
     resolution: {integrity: sha512-BmRMvea3/qYJY5C+CsjrGtd0dOYy3gyT26Bajiy/xOqyv6WILTKxPSEniLWz/mPBPoMWZpmzOS0QIQK15zHhUA==}
 
-  '@xterm/addon-fit@0.11.0':
-    resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
-
-  '@xterm/addon-webgl@0.19.0':
-    resolution: {integrity: sha512-b3fMOsyLVuCeNJWxolACEUED0vm7qC0cy4wRvf3oURSzDTYVQiGPhTnhWZwIHdvC48Y+oLhvYXnY4XDXPoJo6A==}
-
-  '@xterm/xterm@6.0.0':
-    resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
-
   '@yuku-core/binding-android-arm64@0.19.0':
     resolution: {integrity: sha512-wdL2XmTiZixAOaHk9Z0JJZ8u9Qm8d333Zjpc6gaxXFX+UR5BlsfxZ7a2+2Rm71pamppsPYGUGFq2oVLbh6DISw==}
     cpu: [arm64]
@@ -1410,9 +1379,6 @@ packages:
   gensync@1.0.0-beta.2:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
     engines: {node: '>=6.9.0'}
-
-  ghostty-web@0.4.0:
-    resolution: {integrity: sha512-0puDBik2qapbD/QQBW9o5ZHfXnZBqZWx/ctBiVtKZ6ZLds4NYb+wZuw1cRLXZk9zYovIQ908z3rvFhexAvc5Hg==}
 
   graceful-fs@4.2.12:
     resolution: {integrity: sha512-iuyGF2E4oafQfPsRrG2wtY2ILupMhvtdrhzrxB+0VcjsPpSPttpfYdjnGFGsTi5MaJFjI1jOKHPQ6UTbTj9TAw==}
@@ -2009,8 +1975,6 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@gespenst/core@0.2.0': {}
-
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
@@ -2535,12 +2499,6 @@ snapshots:
     dependencies:
       '@wterm/core': 0.6.0
 
-  '@xterm/addon-fit@0.11.0': {}
-
-  '@xterm/addon-webgl@0.19.0': {}
-
-  '@xterm/xterm@6.0.0': {}
-
   '@yuku-core/binding-android-arm64@0.19.0':
     optional: true
 
@@ -2652,8 +2610,6 @@ snapshots:
     optional: true
 
   gensync@1.0.0-beta.2: {}
-
-  ghostty-web@0.4.0: {}
 
   graceful-fs@4.2.12: {}
 

@@ -39,7 +39,7 @@ fn rss_kb_for_pids(pids: &[u32]) -> u64 {
 }
 
 async fn wait_for_text(
-    rx: &mut tokio::sync::mpsc::UnboundedReceiver<OutputStreamFrame>,
+    rx: &mut tokio::sync::mpsc::Receiver<OutputStreamFrame>,
     client: &HerdrClient,
     attach_id: u32,
     needle: &str,

@@ -32,9 +32,7 @@ const ja = {
   noBenchYet: "「性能測定」を押すと1/5/10端末・大量出力・切替・破棄を計測します。",
   backendWtermDom: "wterm + libghostty (DOM)",
   backendWtermWebgl: "wterm + libghostty (WebGL)",
-  backendGespenst: "gespenst (libghostty)",
-  backendGhosttyWeb: "ghostty-web (Canvas2D)",
-  backendXterm: "xterm.js v6",
+  diagnosticsLog: "診断ログ記録",
 } as const;
 
 export type DictKey = keyof typeof ja;
@@ -71,9 +69,7 @@ const en: Record<DictKey, string> = {
   noBenchYet: "Click Benchmark to measure 1/5/10 terminals, burst throughput, switching, and disposal.",
   backendWtermDom: "wterm + libghostty (DOM)",
   backendWtermWebgl: "wterm + libghostty (WebGL)",
-  backendGespenst: "gespenst (libghostty)",
-  backendGhosttyWeb: "ghostty-web (Canvas2D)",
-  backendXterm: "xterm.js v6",
+  diagnosticsLog: "Log Diagnostics",
 };
 
 const dictionaries: Record<Locale, Record<DictKey, string>> = { ja, en };

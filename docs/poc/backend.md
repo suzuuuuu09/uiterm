@@ -4,6 +4,8 @@ description: "uiterm Phase 0 バックエンド・開発基盤 技術検証レ�
 
 # uiterm Phase 0 バックエンド・開発基盤 技術検証レポート
 
+> 検証時点の記録。統合後の判定、測定条件の差、および修正後の IPC 仕様は [独立検証レポート](./validation.md) を参照。
+
 本ドキュメントは、uiterm Phase 0 におけるバックエンド（`herdr-core` / Tauri 2 IPC / 外部 Node.js TypeScript 設定ランタイム）および開発基盤（Nix Flakes / pnpm / Vite+）の実実装・実測検証結果をまとめたものである。
 
 IPC 通信仕様については [docs/poc/interface.md](./interface.md) を参照。

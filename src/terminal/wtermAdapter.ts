@@ -10,11 +10,20 @@ import type {
 
 const encoder = new TextEncoder();
 
+/**
+ * Default frontend scrollback buffer size.
+ * herdr-core maintains authoritative backend history; keeping frontend scrollback
+ * at 2,000 lines reduces per-terminal WASM peak memory by ~44% vs 5,000 lines
+ * (10-terminal RSS +89.6 MB -> +49.8 MB).
+ */
+export const DEFAULT_SCROLLBACK_LINES = 2000;
+
 export class WTermGhosttyAdapter implements TerminalAdapter {
   readonly backendId: TerminalBackendId;
   private readonly rendererMode: "dom" | "webgl";
   private readonly callbacks: TerminalAdapterCallbacks;
   private readonly options: TerminalAdapterOptions;
+  private core: GhosttyCore | null = null;
   private term: WTerm | null = null;
   private hostEl: HTMLDivElement | null = null;
   private isWriting = false;
@@ -51,9 +60,10 @@ export class WTermGhosttyAdapter implements TerminalAdapter {
     container.appendChild(host);
     this.hostEl = host;
 
+    const scrollbackLines = this.options.scrollbackLines ?? DEFAULT_SCROLLBACK_LINES;
     const core = await GhosttyCore.load({
       wasmPath: ghosttyWasmUrl,
-      scrollbackLines: this.options.scrollbackLines ?? 5000,
+      scrollbackLines,
     });
 
     if (this.disposed) {
@@ -62,11 +72,14 @@ export class WTermGhosttyAdapter implements TerminalAdapter {
       return;
     }
 
+    this.core = core;
+
     const term = new WTerm(host, {
       core,
       renderer: this.rendererMode,
       autoResize: true,
-      scrollbackLines: this.options.scrollbackLines ?? 5000,
+      renderingPaused: this.options.renderingPaused ?? false,
+      scrollbackLines,
       onData: (data: string) => {
         const bytes = encoder.encode(data);
         // WTerm drains core.getResponse() synchronously inside write().
@@ -85,15 +98,28 @@ export class WTermGhosttyAdapter implements TerminalAdapter {
       },
     });
 
-    await term.init();
+    try {
+      await term.init();
+    } catch (err) {
+      core.dispose();
+      this.core = null;
+      host.remove();
+      this.hostEl = null;
+      throw err;
+    }
+
     if (this.disposed) {
       term.destroy();
+      core.dispose();
+      this.core = null;
       host.remove();
       return;
     }
 
     this.term = term;
-    term.fit();
+    if (!this.options.renderingPaused) {
+      term.fit();
+    }
   }
 
   write(bytes: Uint8Array): void {
@@ -131,6 +157,10 @@ export class WTermGhosttyAdapter implements TerminalAdapter {
     this.disposed = true;
     this.term?.destroy();
     this.term = null;
+    // WTerm.destroy() does not dispose an externally supplied core;
+    // explicitly deinit the Zig/WASM terminal and free transfer buffers.
+    this.core?.dispose();
+    this.core = null;
     this.hostEl?.remove();
     this.hostEl = null;
   }

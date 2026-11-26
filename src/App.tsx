@@ -14,7 +14,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 import { type DictKey, t } from "./i18n/dict.ts";
 import { type BenchmarkRow, pocStore, type TabMeta, usePocStore } from "./store/pocStore.ts";
 import { sessionManager } from "./terminal/sessionManager.ts";
@@ -24,9 +24,6 @@ import type { TerminalBackendId } from "./transport/schemas.ts";
 const BACKENDS: readonly { id: TerminalBackendId; labelKey: DictKey }[] = [
   { id: "wterm-ghostty-dom", labelKey: "backendWtermDom" },
   { id: "wterm-ghostty-webgl", labelKey: "backendWtermWebgl" },
-  { id: "gespenst", labelKey: "backendGespenst" },
-  { id: "ghostty-web", labelKey: "backendGhosttyWeb" },
-  { id: "xterm", labelKey: "backendXterm" },
 ];
 
 let nextTabCounter = 1;
@@ -41,22 +38,198 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-export function App() {
+/** Isolated status summary so high-frequency stats/IME updates never re-render App or Toolbar. */
+function StatusSummary() {
   const locale = usePocStore((s) => s.locale);
-  const backendId = usePocStore((s) => s.backendId);
   const tabs = usePocStore((s) => s.tabs);
   const activeTabId = usePocStore((s) => s.activeTabId);
-  const suppressAutoReplies = usePocStore((s) => s.suppressAutoReplies);
-  const pauseHiddenRendering = usePocStore((s) => s.pauseHiddenRendering);
   const isComposing = usePocStore((s) => s.isComposing);
   const totalBytesReceived = usePocStore((s) => s.totalBytesReceived);
   const totalRepliesBlocked = usePocStore((s) => s.totalRepliesBlocked);
-  const logs = usePocStore((s) => s.logs);
-  const benchRunning = usePocStore((s) => s.benchRunning);
+
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+
+  return (
+    <div className="grid grid-cols-2 gap-1 border-b border-zinc-800 p-2 font-mono text-[11px]">
+      <div>
+        {t(locale, "totalTabs")}: <span className="text-zinc-100">{tabs.length}</span>
+      </div>
+      <div>
+        {t(locale, "colsRows")}:{" "}
+        <span className="text-zinc-100">
+          {activeTab ? `${activeTab.cols}x${activeTab.rows}` : "-"}
+        </span>
+      </div>
+      <div>
+        {t(locale, "bytesReceived")}:{" "}
+        <span className="text-zinc-100">{(totalBytesReceived / 1024).toFixed(1)} KB</span>
+      </div>
+      <div>
+        {t(locale, "repliesBlocked")}:{" "}
+        <span className="text-amber-300">{totalRepliesBlocked}</span>
+      </div>
+      <div className="col-span-2">
+        <span
+          className={
+            isComposing
+              ? "rounded bg-sky-900/80 px-1.5 py-0.5 text-sky-200"
+              : "rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-400"
+          }
+        >
+          {isComposing ? t(locale, "imeComposing") : t(locale, "imeIdle")}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Isolated benchmark results table. */
+function BenchmarkPanel() {
+  const locale = usePocStore((s) => s.locale);
   const benchResults = usePocStore((s) => s.benchResults);
+
+  return (
+    <div className="border-b border-zinc-800 p-2">
+      <div className="mb-1 font-semibold text-zinc-300">{t(locale, "runBench")}</div>
+      {benchResults.length === 0 ? (
+        <p className="text-[11px] text-zinc-500">{t(locale, "noBenchYet")}</p>
+      ) : (
+        <table className="w-full font-mono text-[10px]">
+          <thead>
+            <tr className="border-b border-zinc-800 text-left text-zinc-400">
+              <th>N</th>
+              <th>Mount</th>
+              <th>10k</th>
+              <th>Hid</th>
+              <th>Sw</th>
+              <th>Disp</th>
+            </tr>
+          </thead>
+          <tbody>
+            {benchResults.map((r) => (
+              <tr key={`${r.backendId}-${r.count}`} className="border-b border-zinc-800/50">
+                <td>{r.count}</td>
+                <td>{r.mountMs}ms</td>
+                <td>{r.burst10kMs}ms</td>
+                <td>{r.hiddenBurstMs}ms</td>
+                <td>{r.switchAvgMs}ms</td>
+                <td>{r.disposeMs}ms</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/** Isolated diagnostic log panel so per-keystroke IME/input logs never re-render App. */
+function DiagnosticLogPanel() {
+  const locale = usePocStore((s) => s.locale);
+  const logs = usePocStore((s) => s.logs);
+  const diagnosticsEnabled = usePocStore((s) => s.diagnosticsEnabled);
+
+  return (
+    <>
+      <div className="flex items-center justify-between border-b border-zinc-800 px-2 py-1">
+        <span className="font-semibold text-zinc-300">{t(locale, "imePanel")}</span>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1 text-[10px] text-zinc-400">
+            <Switch.Root
+              checked={diagnosticsEnabled}
+              onCheckedChange={(v) => pocStore.getState().setDiagnosticsEnabled(v)}
+              className="relative inline-flex h-3.5 w-6 items-center rounded-full bg-zinc-700 data-[checked]:bg-emerald-600"
+            >
+              <Switch.Thumb className="block h-2.5 w-2.5 translate-x-0.5 rounded-full bg-white transition-transform data-[checked]:translate-x-3" />
+            </Switch.Root>
+            <span>{t(locale, "diagnosticsLog")}</span>
+          </label>
+          <button
+            type="button"
+            onClick={() => pocStore.getState().clearLogs()}
+            className="text-[11px] text-zinc-400 hover:text-zinc-200"
+          >
+            {t(locale, "clearLog")}
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed">
+        {logs.map((entry) => (
+          <div key={entry.id} className="truncate">
+            <span className="text-zinc-500">{entry.time}</span>{" "}
+            <span
+              className={
+                entry.kind === "auto-reply"
+                  ? "text-amber-300"
+                  : entry.kind === "ime"
+                    ? "text-sky-300"
+                    : entry.kind === "input"
+                      ? "text-emerald-300"
+                      : "text-zinc-400"
+              }
+            >
+              [{entry.kind}]
+            </span>{" "}
+            <span className="text-zinc-200">{entry.detail}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** Isolated tab strip so tab/size updates do not re-render toolbar or log panel. */
+function TabBar({ onCloseTab }: { onCloseTab: (id: string) => void }) {
+  const tabs = usePocStore((s) => s.tabs);
+  const activeTabId = usePocStore((s) => s.activeTabId);
+  const benchRunning = usePocStore((s) => s.benchRunning);
+
+  return (
+    <Tabs.Root
+      value={activeTabId ?? ""}
+      onValueChange={(value) => {
+        if (typeof value === "string" && value && !benchRunning) {
+          pocStore.getState().setActiveTabId(value);
+        }
+      }}
+      className="border-b border-zinc-800 bg-zinc-900/60"
+    >
+      <Tabs.List className="flex items-center gap-1 overflow-x-auto px-2 py-1">
+        {tabs.map((tab) => (
+          <div key={tab.id} className="flex items-center">
+            <Tabs.Tab
+              value={tab.id}
+              disabled={benchRunning}
+              className="rounded-l px-2.5 py-1 text-zinc-400 hover:bg-zinc-800 disabled:opacity-50 data-[selected]:bg-zinc-800 data-[selected]:text-emerald-300"
+            >
+              {tab.title} ({tab.cols}x{tab.rows})
+            </Tabs.Tab>
+            <button
+              type="button"
+              disabled={benchRunning}
+              aria-label={`Close ${tab.title}`}
+              onClick={() => onCloseTab(tab.id)}
+              className="rounded-r px-1 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
+      </Tabs.List>
+    </Tabs.Root>
+  );
+}
+
+export function App() {
+  const locale = usePocStore((s) => s.locale);
+  const backendId = usePocStore((s) => s.backendId);
+  const suppressAutoReplies = usePocStore((s) => s.suppressAutoReplies);
+  const pauseHiddenRendering = usePocStore((s) => s.pauseHiddenRendering);
+  const benchRunning = usePocStore((s) => s.benchRunning);
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   const initializedRef = useRef(false);
+  const tabGenerationRef = useRef(0);
 
   const spawnTabs = useCallback(async (count: number, replace = false) => {
     const host = hostRef.current;
@@ -64,20 +237,22 @@ export function App() {
     const state = pocStore.getState();
 
     if (replace) {
+      tabGenerationRef.current++;
       sessionManager.disposeAll();
       state.setTabs([], null);
       state.resetStats();
     }
 
-    const existing = replace ? [] : [...pocStore.getState().tabs];
+    const generation = tabGenerationRef.current;
     const created: TabMeta[] = [];
 
     for (let i = 0; i < count; i++) {
       const id = `term-${nextTabCounter++}`;
       const tab: TabMeta = { id, title: id, cols: 80, rows: 24 };
-      const isFirst = existing.length === 0 && i === 0;
+      const isFirst = pocStore.getState().tabs.length === 0 && i === 0;
       try {
         await sessionManager.createSession(id, pocStore.getState().backendId, host, !isFirst);
+        if (generation !== tabGenerationRef.current) return;
         created.push(tab);
       } catch {
         // Error is already recorded in diagnostic log by sessionManager.
@@ -85,18 +260,30 @@ export function App() {
       }
     }
 
-    const allTabs = [...existing, ...created];
+    if (generation !== tabGenerationRef.current) return;
+    const current = pocStore.getState();
+    const allTabs = [...current.tabs, ...created];
     const nextActive = replace
       ? (created[0]?.id ?? null)
-      : (created[created.length - 1]?.id ?? state.activeTabId);
-    pocStore.getState().setTabs(allTabs, nextActive);
+      : (created[created.length - 1]?.id ?? current.activeTabId);
+    current.setTabs(allTabs, nextActive);
     sessionManager.setActive(nextActive);
   }, []);
 
   const handleHostReady = useCallback(
     (el: HTMLDivElement | null) => {
       hostRef.current = el;
-      if (el && !initializedRef.current) {
+      if (!el) {
+        // React StrictMode reattaches the same host before the microtask runs.
+        queueMicrotask(() => {
+          if (!hostRef.current) {
+            tabGenerationRef.current++;
+            initializedRef.current = false;
+            sessionManager.stopEventStream();
+            sessionManager.disposeAll();
+          }
+        });
+      } else if (!initializedRef.current) {
         initializedRef.current = true;
         void sessionManager.startEventStream();
         void spawnTabs(1, true);
@@ -104,12 +291,6 @@ export function App() {
     },
     [spawnTabs],
   );
-
-  useEffect(() => {
-    return () => {
-      sessionManager.disposeAll();
-    };
-  }, []);
 
   const handleBackendChange = async (nextBackend: TerminalBackendId) => {
     pocStore.getState().setBackendId(nextBackend);
@@ -128,6 +309,7 @@ export function App() {
   };
 
   const handleCloseAll = () => {
+    tabGenerationRef.current++;
     sessionManager.disposeAll();
     pocStore.getState().setTabs([], null);
     pocStore.getState().resetStats();
@@ -141,6 +323,7 @@ export function App() {
   const handleRunBenchmark = async () => {
     const host = hostRef.current;
     if (!host || pocStore.getState().benchRunning) return;
+    tabGenerationRef.current++;
     pocStore.getState().setBenchRunning(true);
     pocStore.getState().clearBenchResults();
     const currentBackend = pocStore.getState().backendId;
@@ -217,12 +400,15 @@ export function App() {
       }
       // Restore 1 active terminal after benchmark
       await spawnTabs(1, true);
+    } catch (err) {
+      for (const count of [1, 5, 10]) {
+        for (let i = 0; i < count; i++) sessionManager.disposeSession(`bench-${count}-${i}`);
+      }
+      pocStore.getState().pushLog("system", `Benchmark aborted: ${String(err)}`);
     } finally {
       pocStore.getState().setBenchRunning(false);
     }
   };
-
-  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
 
   return (
     <div className="flex h-screen w-screen flex-col bg-zinc-950 text-xs text-zinc-100">
@@ -246,9 +432,10 @@ export function App() {
           <span className="text-zinc-400">{t(locale, "backend")}:</span>
           <select
             data-testid="backend-select"
+            disabled={benchRunning}
             value={backendId}
             onChange={(e) => void handleBackendChange(e.target.value as TerminalBackendId)}
-            className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-zinc-100"
+            className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-zinc-100 disabled:opacity-50"
           >
             {BACKENDS.map((b) => (
               <option key={b.id} value={b.id}>
@@ -261,37 +448,42 @@ export function App() {
         <div className="flex items-center gap-1 border-l border-zinc-800 pl-2">
           <button
             type="button"
+            disabled={benchRunning}
             onClick={() => void spawnTabs(1, false)}
-            className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700"
+            className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700 disabled:opacity-50"
           >
             <Plus className="h-3.5 w-3.5" />
             {t(locale, "addTab")}
           </button>
           <button
             type="button"
+            disabled={benchRunning}
             onClick={() => void spawnTabs(1, true)}
-            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700"
+            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700 disabled:opacity-50"
           >
             {t(locale, "spawn1")}
           </button>
           <button
             type="button"
+            disabled={benchRunning}
             onClick={() => void spawnTabs(5, true)}
-            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700"
+            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700 disabled:opacity-50"
           >
             {t(locale, "spawn5")}
           </button>
           <button
             type="button"
+            disabled={benchRunning}
             onClick={() => void spawnTabs(10, true)}
-            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700"
+            className="rounded bg-zinc-800 px-2 py-1 hover:bg-zinc-700 disabled:opacity-50"
           >
             {t(locale, "spawn10")}
           </button>
           <button
             type="button"
+            disabled={benchRunning}
             onClick={handleCloseAll}
-            className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 text-red-300 hover:bg-zinc-700"
+            className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 text-red-300 hover:bg-zinc-700 disabled:opacity-50"
           >
             <Trash2 className="h-3.5 w-3.5" />
             {t(locale, "closeAll")}
@@ -387,11 +579,12 @@ export function App() {
           <label className="flex items-center gap-1.5 text-zinc-300">
             <Switch.Root
               checked={pauseHiddenRendering}
+              disabled={benchRunning}
               onCheckedChange={(v) => {
                 pocStore.getState().setPauseHiddenRendering(v);
                 sessionManager.applyHiddenPausePolicy(v, pocStore.getState().activeTabId);
               }}
-              className="relative inline-flex h-4 w-7 items-center rounded-full bg-zinc-700 data-[checked]:bg-emerald-600"
+              className="relative inline-flex h-4 w-7 items-center rounded-full bg-zinc-700 disabled:opacity-50 data-[checked]:bg-emerald-600"
             >
               <Switch.Thumb className="block h-3 w-3 translate-x-0.5 rounded-full bg-white transition-transform data-[checked]:translate-x-3.5" />
             </Switch.Root>
@@ -425,139 +618,16 @@ export function App() {
       </header>
 
       {/* Base UI Tabs for Terminal Switching */}
-      <Tabs.Root
-        value={activeTabId ?? ""}
-        onValueChange={(value) => {
-          if (typeof value === "string" && value) {
-            pocStore.getState().setActiveTabId(value);
-          }
-        }}
-        className="border-b border-zinc-800 bg-zinc-900/60"
-      >
-        <Tabs.List className="flex items-center gap-1 overflow-x-auto px-2 py-1">
-          {tabs.map((tab) => (
-            <div key={tab.id} className="flex items-center">
-              <Tabs.Tab
-                value={tab.id}
-                className="rounded-l px-2.5 py-1 text-zinc-400 hover:bg-zinc-800 data-[selected]:bg-zinc-800 data-[selected]:text-emerald-300"
-              >
-                {tab.title} ({tab.cols}x{tab.rows})
-              </Tabs.Tab>
-              <button
-                type="button"
-                aria-label={`Close ${tab.title}`}
-                onClick={() => handleCloseTab(tab.id)}
-                className="rounded-r px-1 py-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-        </Tabs.List>
-      </Tabs.Root>
+      <TabBar onCloseTab={handleCloseTab} />
 
       {/* Main Split: Terminal Viewport + Diagnostic / Benchmark Sidebar */}
       <div className="flex min-h-0 flex-1">
         <TerminalViewport onHostReady={handleHostReady} />
 
         <aside className="flex w-80 flex-col border-l border-zinc-800 bg-zinc-900/70">
-          {/* Status Summary */}
-          <div className="grid grid-cols-2 gap-1 border-b border-zinc-800 p-2 font-mono text-[11px]">
-            <div>
-              {t(locale, "totalTabs")}: <span className="text-zinc-100">{tabs.length}</span>
-            </div>
-            <div>
-              {t(locale, "colsRows")}:{" "}
-              <span className="text-zinc-100">
-                {activeTab ? `${activeTab.cols}x${activeTab.rows}` : "-"}
-              </span>
-            </div>
-            <div>
-              {t(locale, "bytesReceived")}:{" "}
-              <span className="text-zinc-100">{(totalBytesReceived / 1024).toFixed(1)} KB</span>
-            </div>
-            <div>
-              {t(locale, "repliesBlocked")}:{" "}
-              <span className="text-amber-300">{totalRepliesBlocked}</span>
-            </div>
-            <div className="col-span-2">
-              <span
-                className={
-                  isComposing
-                    ? "rounded bg-sky-900/80 px-1.5 py-0.5 text-sky-200"
-                    : "rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-400"
-                }
-              >
-                {isComposing ? t(locale, "imeComposing") : t(locale, "imeIdle")}
-              </span>
-            </div>
-          </div>
-
-          {/* Benchmark Results */}
-          <div className="border-b border-zinc-800 p-2">
-            <div className="mb-1 font-semibold text-zinc-300">{t(locale, "runBench")}</div>
-            {benchResults.length === 0 ? (
-              <p className="text-[11px] text-zinc-500">{t(locale, "noBenchYet")}</p>
-            ) : (
-              <table className="w-full font-mono text-[10px]">
-                <thead>
-                  <tr className="border-b border-zinc-800 text-left text-zinc-400">
-                    <th>N</th>
-                    <th>Mount</th>
-                    <th>10k</th>
-                    <th>Hid</th>
-                    <th>Sw</th>
-                    <th>Disp</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {benchResults.map((r) => (
-                    <tr key={`${r.backendId}-${r.count}`} className="border-b border-zinc-800/50">
-                      <td>{r.count}</td>
-                      <td>{r.mountMs}ms</td>
-                      <td>{r.burst10kMs}ms</td>
-                      <td>{r.hiddenBurstMs}ms</td>
-                      <td>{r.switchAvgMs}ms</td>
-                      <td>{r.disposeMs}ms</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {/* IME & Auto-Reply Diagnostic Log */}
-          <div className="flex items-center justify-between border-b border-zinc-800 px-2 py-1">
-            <span className="font-semibold text-zinc-300">{t(locale, "imePanel")}</span>
-            <button
-              type="button"
-              onClick={() => pocStore.getState().clearLogs()}
-              className="text-[11px] text-zinc-400 hover:text-zinc-200"
-            >
-              {t(locale, "clearLog")}
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed">
-            {logs.map((entry) => (
-              <div key={entry.id} className="truncate">
-                <span className="text-zinc-500">{entry.time}</span>{" "}
-                <span
-                  className={
-                    entry.kind === "auto-reply"
-                      ? "text-amber-300"
-                      : entry.kind === "ime"
-                        ? "text-sky-300"
-                        : entry.kind === "input"
-                          ? "text-emerald-300"
-                          : "text-zinc-400"
-                  }
-                >
-                  [{entry.kind}]
-                </span>{" "}
-                <span className="text-zinc-200">{entry.detail}</span>
-              </div>
-            ))}
-          </div>
+          <StatusSummary />
+          <BenchmarkPanel />
+          <DiagnosticLogPanel />
         </aside>
       </div>
     </div>

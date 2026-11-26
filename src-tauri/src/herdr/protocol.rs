@@ -86,12 +86,12 @@ impl Frame {
     }
 
     pub fn parse_resize(&self) -> Option<(u16, u16)> {
-        if self.kind != FRAME_RESIZE || self.payload.len() < 4 {
+        if self.kind != FRAME_RESIZE || self.payload.len() != 4 {
             return None;
         }
         let cols = u16::from_le_bytes([self.payload[0], self.payload[1]]);
         let rows = u16::from_le_bytes([self.payload[2], self.payload[3]]);
-        Some((cols, rows))
+        (cols > 0 && rows > 0).then_some((cols, rows))
     }
 
     pub fn encode_header(&self) -> io::Result<[u8; HEADER_LEN]> {
@@ -131,7 +131,10 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Fram
     if len > MAX_PAYLOAD_LEN {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("incoming frame length {} exceeds max {}", len, MAX_PAYLOAD_LEN),
+            format!(
+                "incoming frame length {} exceeds max {}",
+                len, MAX_PAYLOAD_LEN
+            ),
         ));
     }
     let mut payload = vec![0u8; len];

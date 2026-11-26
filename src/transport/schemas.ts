@@ -3,9 +3,6 @@ import * as v from "valibot";
 export const TerminalBackendIdSchema = v.picklist([
   "wterm-ghostty-dom",
   "wterm-ghostty-webgl",
-  "gespenst",
-  "ghostty-web",
-  "xterm",
 ]);
 
 export type TerminalBackendId = v.InferOutput<typeof TerminalBackendIdSchema>;

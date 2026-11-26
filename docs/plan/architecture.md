@@ -14,7 +14,7 @@ description: "uitermのアーキテクチャをまとめる"
 | Frontend | CSS | Tailwind CSS v4 |
 | Frontend | UIプリミティブ | Base UI |
 | Frontend | 状態管理 | Zustand Vanilla |
-| Frontend | 国際化 | i18next |
+| Frontend | 国際化 | TypeScript 辞書 + Intl API |
 | Frontend | アイコン | Lucide |
 | Frontend | スキーマ検証 | Valibot |
 | Terminal | セッション管理 | herdr-core |
@@ -142,7 +142,7 @@ herdr-core・OSC 7501・エージェント固有のHooksを利用する。
 
 ## 国際化
 
-国際化にはi18nextを利用する。初期対応言語は日本語・英語とする。
+表示文言はキーを型で管理する TypeScript 辞書にまとめる。日付、数値、相対時間の書式化には選択中のロケールを渡して標準の Intl API を使う。初期対応言語は日本語・英語とする。
 
 - メニュー
 - コンテキストメニュー
@@ -235,7 +235,7 @@ Rustにはrustfmt・Clippyを利用する。
 - 日本語IME・全角文字の処理
 - 複数ターミナルの描画性能
 - TypeScript設定ランタイムの実行コスト
-- NixOSにおけるビルドと動作
+- NixOSにおけるビルドと動作（Phase 0 では Flake 評価・依存整合などの静的検証までとし、実機確認は MVP 完成条件とする）
 - Vite+とTauri・Nixの連携
 
 ## 将来的な検討事項

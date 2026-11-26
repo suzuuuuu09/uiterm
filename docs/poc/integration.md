@@ -4,6 +4,8 @@ description: "uiterm Phase 0 統合検証・性能測定・最終技術選定レ
 
 # uiterm Phase 0 統合検証レポート
 
+> 検証時点の記録。統合後の判定、測定条件の差、および修正後の IPC 仕様は [独立検証レポート](./validation.md) を参照。
+
 本ドキュメントは、[docs/poc/backend.md](./backend.md)・[docs/poc/frontend.md](./frontend.md)・[docs/poc/interface.md](./interface.md) を踏まえ、Tauri 2 実ウィンドウ上で `herdr-core` と `wterm` を結合した統合検証・バグ修正・アプリ全体性能測定・比較評価および最終技術選定判断をまとめたものである。
 
 ---
