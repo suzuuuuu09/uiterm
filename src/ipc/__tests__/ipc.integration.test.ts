@@ -2,8 +2,22 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { createAppRuntime } from "../../app/runtime.ts";
 import type { TerminalAdapter, TerminalAdapterCallbacks } from "../../terminal/types.ts";
 import { MockIpcClient } from "../mock.ts";
+import { decodeOutputFrame, OUTPUT_FRAME_CLOSE } from "../types.ts";
 
 const encoder = new TextEncoder();
+
+it("decodes a native signal in a terminal close frame", () => {
+  const payload = encoder.encode(JSON.stringify({ reason: "killed", signal: 9 }));
+  const frame = new Uint8Array(payload.length + 1);
+  frame[0] = OUTPUT_FRAME_CLOSE;
+  frame.set(payload, 1);
+  expect(decodeOutputFrame(frame.buffer)).toEqual({
+    kind: "close",
+    reason: "killed",
+    exitCode: null,
+    signal: "SIGKILL",
+  });
+});
 
 function createFakeElement(): HTMLDivElement {
   return {

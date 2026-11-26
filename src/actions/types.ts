@@ -3,6 +3,7 @@ import type { AppError } from "../errors/appError.ts";
 import type { TranslationKey, TranslationParams } from "../i18n/index.ts";
 import type { SessionId } from "../ipc/types.ts";
 import type { PaneId, TabId } from "../state/types.ts";
+import type { CursorBlinkMode, CursorStyle } from "../terminal/appearance.ts";
 import type { TerminalBackendId } from "../validation/settingsSchemas.ts";
 import type { Locale } from "../i18n/types.ts";
 
@@ -73,6 +74,43 @@ export interface BuiltinActionMap {
     };
     result: { copiedLength: number };
   };
+  "terminal.paste": {
+    args: {
+      tabId?: TabId;
+      text?: string;
+    };
+    result: { pastedLength: number };
+  };
+  "terminal.selectAll": {
+    args: {
+      tabId?: TabId;
+    };
+    result: { selected: boolean };
+  };
+  "terminal.clearSelection": {
+    args: {
+      tabId?: TabId;
+    };
+    result: { cleared: boolean };
+  };
+  "terminal.restart": {
+    args: {
+      tabId?: TabId;
+    };
+    result: { tabId: TabId; paneId: PaneId; sessionId: SessionId };
+  };
+  "terminal.zoomIn": {
+    args: Record<string, never>;
+    result: { fontSize: number };
+  };
+  "terminal.zoomOut": {
+    args: Record<string, never>;
+    result: { fontSize: number };
+  };
+  "terminal.resetFontSize": {
+    args: Record<string, never>;
+    result: { fontSize: number };
+  };
   "tab.select": {
     args: {
       tabId: TabId;
@@ -91,9 +129,37 @@ export interface BuiltinActionMap {
     };
     result: { renderer: TerminalBackendId };
   };
+  "app.setFont": {
+    args: {
+      fontFamily?: string;
+      fontSize?: number;
+      lineHeight?: number;
+      nerdFontFallback?: boolean;
+    };
+    result: {
+      fontFamily: string;
+      fontSize: number;
+      lineHeight: number;
+      nerdFontFallback: boolean;
+    };
+  };
+  "app.setCursor": {
+    args: {
+      cursorStyle?: CursorStyle;
+      cursorBlink?: CursorBlinkMode;
+    };
+    result: {
+      cursorStyle: CursorStyle;
+      cursorBlink: CursorBlinkMode;
+    };
+  };
   "app.toggleSidebar": {
     args: Record<string, never>;
     result: { sidebarVisible: boolean };
+  };
+  "app.toggleDiagnostics": {
+    args: Record<string, never>;
+    result: { diagnosticsPanelVisible: boolean };
   };
 }
 

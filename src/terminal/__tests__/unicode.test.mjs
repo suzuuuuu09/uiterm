@@ -23,6 +23,16 @@ it("keeps UTF-8 fragments and graphemes in the expected terminal columns", async
     expect(core.getCell(0, 7).chars).toBe("e\u0301");
     expect(core.getCell(0, 8).chars).toBe("👩‍💻");
     expect(core.getCell(0, 10).char).toBe("!".codePointAt(0));
+
+    // Verify Nerd Font Private Use Area (BMP PUA + Supplementary PUA-A) cell alignment
+    core.writeRaw(new TextEncoder().encode("\r\n\uE0B0\uE718\uF015\u{F024B}|"));
+    expect(core.getCursor().row).toBe(1);
+    expect(core.getCursor().col).toBe(5);
+    expect(core.getCell(1, 0).char).toBe(0xe0b0);
+    expect(core.getCell(1, 1).char).toBe(0xe718);
+    expect(core.getCell(1, 2).char).toBe(0xf015);
+    expect(core.getCell(1, 3).char).toBe(0xf024b);
+    expect(core.getCell(1, 4).char).toBe("|".codePointAt(0));
   } finally {
     core.dispose();
     vi.unstubAllGlobals();

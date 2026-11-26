@@ -24,7 +24,7 @@ import {
   parseTerminationEventData,
   parseTurnEventData,
 } from "../validation/ipcSchemas.ts";
-import type { TerminalBackendId } from "../validation/settingsSchemas.ts";
+import type { TerminalBackendId, UserSettings } from "../validation/settingsSchemas.ts";
 import { createTerminalAdapter } from "./createAdapter.ts";
 import type {
   TerminalAdapter,
@@ -33,24 +33,10 @@ import type {
 } from "./types.ts";
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 const ACK_BATCH_THRESHOLD = 16 * 1024;
 const STATS_FLUSH_INTERVAL_MS = 100;
-const MAX_LOG_BYTES_PREVIEW = 128;
 const MAX_PENDING_WRITE_BYTES = 1024 * 1024;
 const MAX_PENDING_WRITES = 256;
-
-function formatControlBytes(bytes: Uint8Array): string {
-  const truncated = bytes.byteLength > MAX_LOG_BYTES_PREVIEW;
-  const slice = truncated ? bytes.subarray(0, MAX_LOG_BYTES_PREVIEW) : bytes;
-  const raw = decoder.decode(slice);
-  const formatted = raw
-    .replaceAll("\x1b", "ESC")
-    .replaceAll("\r", "\\r")
-    .replaceAll("\n", "\\n")
-    .replaceAll("\x07", "BEL");
-  return truncated ? `${formatted}...` : formatted;
-}
 
 interface PendingWrite {
   readonly bytes: Uint8Array;
@@ -116,6 +102,7 @@ export class TerminalSessionManager {
   private sessions = new Map<string, ManagedSession>();
   private eventStream: { subscriptionId: number | null } | null = null;
   private activeId: string | null = null;
+  private windowFocused = true;
   private creating = new Map<string, AbortController>();
   private pendingBytesDelta = 0;
   private pendingRepliesDelta = 0;
@@ -455,6 +442,8 @@ export class TerminalSessionManager {
         return false;
       }
       session.attachId = attached.attachId;
+      session.focused = false;
+      this.syncFocus(session);
       this.flushPostAttach(session);
       return true;
     } catch (err) {
@@ -491,7 +480,8 @@ export class TerminalSessionManager {
     let sessionRef: ManagedSession | null = null;
 
     try {
-      const settings = this.store.getState().settings;
+      await this.startEventStream();
+      creation.signal.throwIfAborted();
       termInfo = await this.client.terminalCreate({
         ...createParams,
         name: createParams.name ?? id,
@@ -500,10 +490,12 @@ export class TerminalSessionManager {
       });
       creation.signal.throwIfAborted();
 
-      const initialPaused = hidden && this.store.getState().settings.pauseHiddenRendering;
+      const settings = this.store.getState().settings;
+      const initialPaused = hidden && settings.pauseHiddenRendering;
       adapter = this.adapterFactory(
         backendId,
         {
+          isComposing: () => this.store.getState().ui.isComposing,
           onUserInput: (bytes) => {
             // Never log raw user input text; diagnostics only record byte count when explicitly enabled.
             if (this.diagnostics?.isEnabled()) {
@@ -516,7 +508,7 @@ export class TerminalSessionManager {
             if (this.diagnostics?.isEnabled()) {
               this.diagnostics.pushLog(
                 "auto-reply",
-                `[${id}] ${suppress ? "BLOCKED" : "AUTO(kind=6)"} (${bytes.byteLength}B): ${formatControlBytes(bytes)}`,
+                `[${id}] ${suppress ? "BLOCKED" : "AUTO(kind=6)"} (${bytes.byteLength}B)`,
               );
             }
             if (suppress) {
@@ -538,7 +530,12 @@ export class TerminalSessionManager {
           renderingPaused: initialPaused,
           scrollbackLines: settings.scrollbackLines,
           fontSize: settings.fontSize,
+          lineHeight: settings.lineHeight,
           fontFamily: settings.fontFamily,
+          nerdFontFallback: settings.nerdFontFallback,
+          cursorStyle: settings.cursorStyle,
+          cursorBlink: settings.cursorBlink,
+          macOptionAsMeta: settings.macOptionAsMeta,
         },
       );
 
@@ -554,7 +551,7 @@ export class TerminalSessionManager {
         unackedBytes: 0,
         mounted: true,
         disposed: false,
-        focused: !hidden,
+        focused: false,
         applyingBackendResize: false,
         lastSentCols: adapter.cols,
         lastSentRows: adapter.rows,
@@ -603,6 +600,19 @@ export class TerminalSessionManager {
     return this.sessions.get(id);
   }
 
+  isCreating(id: string): boolean {
+    return this.creating.has(id);
+  }
+
+  private syncFocus(session: ManagedSession): void {
+    const focused = this.windowFocused && session.id === this.activeId;
+    if (session.attachId <= 0 || session.focused === focused) return;
+    session.focused = focused;
+    void this.client
+      .terminalFocus(session.attachId, focused)
+      .catch((err) => this.reportError(`terminalFocus:${session.id}`, err));
+  }
+
   setActive(activeId: string | null): void {
     const pauseHidden = this.store.getState().settings.pauseHiddenRendering;
     const prevActiveId = this.activeId;
@@ -615,13 +625,9 @@ export class TerminalSessionManager {
         session.container.style.display = nextDisplay;
       }
       session.adapter.setHidden(pauseHidden && !isActive);
-      if (session.focused !== isActive && session.attachId > 0) {
-        session.focused = isActive;
-        void this.client
-          .terminalFocus(session.attachId, isActive)
-          .catch((err) => this.reportError(`terminalFocus:${id}`, err));
-      }
-      if (isActive && prevActiveId !== activeId) {
+      if (id === prevActiveId && !isActive) session.adapter.clearSelection?.();
+      this.syncFocus(session);
+      if (isActive && this.windowFocused && prevActiveId !== activeId) {
         session.adapter.fit();
         session.adapter.focus();
       }
@@ -633,6 +639,65 @@ export class TerminalSessionManager {
     if (!session || session.disposed) return false;
     session.adapter.focus();
     return true;
+  }
+
+  pasteText(id: string, text: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session?.stream || session.stream.closed || session.disposed || text.length === 0) return false;
+    if (session.adapter.paste) {
+      session.adapter.paste(text);
+    } else {
+      this.sendInput(session, encoder.encode(text), "user");
+    }
+    return true;
+  }
+
+  async selectAll(id: string): Promise<boolean> {
+    const session = this.sessions.get(id);
+    if (!session || session.disposed || !session.adapter.selectAll) return false;
+    return session.adapter.selectAll();
+  }
+
+  clearSelection(id: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session || session.disposed) return false;
+    session.adapter.clearSelection?.();
+    return true;
+  }
+
+  hasSelection(id: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session || session.disposed) return false;
+    return session.adapter.hasSelection?.() ?? false;
+  }
+
+  getCellMetrics(id: string): { charWidth: number; rowHeight: number } | null {
+    const session = this.sessions.get(id);
+    if (!session || session.disposed) return null;
+    return session.adapter.getCellMetrics?.() ?? null;
+  }
+
+  applySettingsToAll(settings: UserSettings): void {
+    for (const session of this.sessions.values()) {
+      if (session.disposed) continue;
+      session.adapter.applyAppearance?.({
+        fontFamily: settings.fontFamily,
+        fontSize: settings.fontSize,
+        lineHeight: settings.lineHeight,
+        nerdFontFallback: settings.nerdFontFallback,
+        cursorStyle: settings.cursorStyle,
+        cursorBlink: settings.cursorBlink,
+        macOptionAsMeta: settings.macOptionAsMeta,
+      });
+    }
+  }
+
+  setWindowFocused(focused: boolean): void {
+    this.windowFocused = focused;
+    const session = this.activeId ? this.sessions.get(this.activeId) : undefined;
+    if (!session || session.disposed) return;
+    this.syncFocus(session);
+    if (focused) session.adapter.focus();
   }
 
   hideSession(id: string): void {

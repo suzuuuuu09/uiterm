@@ -161,7 +161,7 @@ pub struct HerdrTerminalRecord {
     #[serde(default)]
     pub exit_code: Option<i32>,
     #[serde(default)]
-    pub signal: Option<String>,
+    pub signal: Option<i32>,
     #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
@@ -191,7 +191,7 @@ impl From<HerdrTerminalRecord> for TerminalInfo {
             created_ms: r.created_ms,
             finished_ms: r.finished_ms,
             exit_code: r.exit_code,
-            signal: r.signal,
+            signal: r.signal.map(|signal| signal.to_string()),
             reason: r.reason,
             status: r.status,
             status_ms: r.status_ms,

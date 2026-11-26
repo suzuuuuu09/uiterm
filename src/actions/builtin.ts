@@ -2,9 +2,24 @@ import * as v from "valibot";
 import type { StoreApi } from "zustand/vanilla";
 import { AppError } from "../errors/appError.ts";
 import type { AppState } from "../state/appStore.ts";
+import {
+  clampFontSize,
+  clampLineHeight,
+  DEFAULT_FONT_SIZE,
+  FONT_SIZE_STEP,
+  MAX_FONT_SIZE,
+  MAX_LINE_HEIGHT,
+  MIN_FONT_SIZE,
+  MIN_LINE_HEIGHT,
+} from "../terminal/fonts.ts";
 import type { TerminalSessionManager } from "../terminal/sessionManager.ts";
 import { TerminalColsSchema, TerminalRowsSchema } from "../validation/ipcSchemas.ts";
-import { LocaleSchema, TerminalBackendIdSchema } from "../validation/settingsSchemas.ts";
+import {
+  CursorBlinkModeSchema,
+  CursorStyleSchema,
+  LocaleSchema,
+  TerminalBackendIdSchema,
+} from "../validation/settingsSchemas.ts";
 import type { ActionRegistry } from "./registry.ts";
 
 export interface BuiltinActionDeps {
@@ -12,6 +27,7 @@ export interface BuiltinActionDeps {
   readonly sessionManager: TerminalSessionManager;
   readonly getMountRoot: () => HTMLElement | null;
   readonly writeClipboard?: (text: string) => Promise<void>;
+  readonly readClipboard?: () => Promise<string>;
   readonly isBusy?: () => boolean;
 }
 
@@ -19,6 +35,11 @@ const EmptyArgsSchema = v.object({});
 
 const OptionalTabIdArgsSchema = v.object({
   tabId: v.optional(v.pipe(v.string(), v.minLength(1))),
+});
+
+const TerminalPasteArgsSchema = v.object({
+  tabId: v.optional(v.pipe(v.string(), v.minLength(1))),
+  text: v.optional(v.string()),
 });
 
 const TerminalCreateArgsSchema = v.object({
@@ -39,6 +60,20 @@ const SetLocaleArgsSchema = v.object({
 
 const SetRendererArgsSchema = v.object({
   renderer: TerminalBackendIdSchema,
+});
+
+const SetFontArgsSchema = v.object({
+  fontFamily: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(512))),
+  fontSize: v.optional(v.pipe(v.number(), v.minValue(MIN_FONT_SIZE), v.maxValue(MAX_FONT_SIZE))),
+  lineHeight: v.optional(
+    v.pipe(v.number(), v.minValue(MIN_LINE_HEIGHT), v.maxValue(MAX_LINE_HEIGHT)),
+  ),
+  nerdFontFallback: v.optional(v.boolean()),
+});
+
+const SetCursorArgsSchema = v.object({
+  cursorStyle: v.optional(CursorStyleSchema),
+  cursorBlink: v.optional(CursorBlinkModeSchema),
 });
 
 /**
@@ -115,7 +150,6 @@ export function registerBuiltinActions(
           const selectedPaneId = deps.store.getState().selection.activePaneId;
           if (selectedPaneId === tabId) {
             deps.sessionManager.setActive(tabId);
-            deps.sessionManager.focusSession(tabId);
           } else if (selectedPaneId === null || deps.sessionManager.get(selectedPaneId)) {
             deps.sessionManager.setActive(selectedPaneId);
           } else {
@@ -274,6 +308,207 @@ export function registerBuiltinActions(
 
   unregisters.push(
     registry.register({
+      id: "terminal.paste",
+      owner: "terminal",
+      titleKey: "action.terminal.paste.title",
+      descriptionKey: "action.terminal.paste.description",
+      argsSchema: TerminalPasteArgsSchema,
+      canExecute: (args) => {
+        const targetId = resolveTabId(args?.tabId);
+        if (!targetId) {
+          return { allowed: false, reasonKey: "action.unavailable.noActiveTab" };
+        }
+        if (!hasOwnTab(targetId)) {
+          return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
+        }
+        return { allowed: true };
+      },
+      execute: async (args) => {
+        const targetId = resolveTabId(args.tabId)!;
+        const paneId = deps.store.getState().tabs[targetId]?.activePaneId ?? targetId;
+        const session = deps.sessionManager.get(paneId);
+        if (!session) return { pastedLength: 0 };
+        let text = args.text;
+        if (text === undefined) {
+          if (deps.readClipboard) {
+            text = await deps.readClipboard();
+          } else if (typeof navigator !== "undefined" && navigator.clipboard?.readText) {
+            text = await navigator.clipboard.readText();
+          } else {
+            throw new AppError({
+              code: "ACTION_EXECUTION_FAILED",
+              messageKey: "error.action.failed",
+              messageParams: { actionId: "terminal.paste" },
+              devMessage: "Clipboard read API is unavailable",
+            });
+          }
+        }
+        if (deps.sessionManager.get(paneId) !== session) return { pastedLength: 0 };
+        const pasted = deps.sessionManager.pasteText(paneId, text);
+        return { pastedLength: pasted ? text.length : 0 };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
+      id: "terminal.selectAll",
+      owner: "terminal",
+      titleKey: "action.terminal.selectAll.title",
+      descriptionKey: "action.terminal.selectAll.description",
+      argsSchema: OptionalTabIdArgsSchema,
+      canExecute: (args) => {
+        const targetId = resolveTabId(args?.tabId);
+        if (!targetId) {
+          return { allowed: false, reasonKey: "action.unavailable.noActiveTab" };
+        }
+        if (!hasOwnTab(targetId)) {
+          return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
+        }
+        return { allowed: true };
+      },
+      execute: async (args) => {
+        const targetId = resolveTabId(args.tabId)!;
+        const paneId = deps.store.getState().tabs[targetId]?.activePaneId ?? targetId;
+        const selected = await deps.sessionManager.selectAll(paneId);
+        return { selected };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
+      id: "terminal.clearSelection",
+      owner: "terminal",
+      titleKey: "action.terminal.clearSelection.title",
+      descriptionKey: "action.terminal.clearSelection.description",
+      argsSchema: OptionalTabIdArgsSchema,
+      canExecute: (args) => {
+        const targetId = resolveTabId(args?.tabId);
+        if (!targetId) {
+          return { allowed: false, reasonKey: "action.unavailable.noActiveTab" };
+        }
+        if (!hasOwnTab(targetId)) {
+          return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
+        }
+        return { allowed: true };
+      },
+      execute: (args) => {
+        const targetId = resolveTabId(args.tabId)!;
+        const paneId = deps.store.getState().tabs[targetId]?.activePaneId ?? targetId;
+        const cleared = deps.sessionManager.clearSelection(paneId);
+        return { cleared };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
+      id: "terminal.restart",
+      owner: "terminal",
+      titleKey: "action.terminal.restart.title",
+      descriptionKey: "action.terminal.restart.description",
+      argsSchema: OptionalTabIdArgsSchema,
+      canExecute: (args) => {
+        if (deps.isBusy?.()) {
+          return { allowed: false, reasonKey: "action.unavailable.busy" };
+        }
+        if (!deps.getMountRoot()) {
+          return { allowed: false, reasonKey: "action.unavailable.noHost" };
+        }
+        const targetId = resolveTabId(args?.tabId);
+        if (!targetId) {
+          return { allowed: false, reasonKey: "action.unavailable.noActiveTab" };
+        }
+        if (!hasOwnTab(targetId)) {
+          return { allowed: false, reasonKey: "action.unavailable.tabNotFound" };
+        }
+        const paneId = deps.store.getState().tabs[targetId]?.activePaneId ?? targetId;
+        if (deps.sessionManager.isCreating(paneId)) {
+          return { allowed: false, reasonKey: "action.unavailable.busy" };
+        }
+        return { allowed: true };
+      },
+      execute: async (args) => {
+        const host = deps.getMountRoot();
+        if (!host) {
+          throw new Error("Terminal viewport host is not mounted");
+        }
+        const targetId = resolveTabId(args.tabId)!;
+        const state = deps.store.getState();
+        const paneId = state.tabs[targetId]?.activePaneId ?? targetId;
+        const pane = state.panes[paneId];
+        const isActive = state.selection.activePaneId === paneId;
+
+        deps.sessionManager.disposeSession(paneId);
+
+        const session = await deps.sessionManager.createSession(
+          paneId,
+          state.settings.renderer,
+          host,
+          !isActive,
+          {
+            cols: pane?.cols,
+            rows: pane?.rows,
+          },
+        );
+        if (deps.store.getState().selection.activePaneId === paneId) {
+          deps.sessionManager.setActive(paneId);
+        }
+        return { tabId: targetId, paneId, sessionId: session.sessionId };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
+      id: "terminal.zoomIn",
+      owner: "app",
+      titleKey: "action.terminal.zoomIn.title",
+      descriptionKey: "action.terminal.zoomIn.description",
+      argsSchema: EmptyArgsSchema,
+      execute: () => {
+        const nextSize = clampFontSize(deps.store.getState().settings.fontSize + FONT_SIZE_STEP);
+        deps.store.getState().updateSettings({ fontSize: nextSize });
+        deps.sessionManager.applySettingsToAll(deps.store.getState().settings);
+        return { fontSize: nextSize };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
+      id: "terminal.zoomOut",
+      owner: "app",
+      titleKey: "action.terminal.zoomOut.title",
+      descriptionKey: "action.terminal.zoomOut.description",
+      argsSchema: EmptyArgsSchema,
+      execute: () => {
+        const nextSize = clampFontSize(deps.store.getState().settings.fontSize - FONT_SIZE_STEP);
+        deps.store.getState().updateSettings({ fontSize: nextSize });
+        deps.sessionManager.applySettingsToAll(deps.store.getState().settings);
+        return { fontSize: nextSize };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
+      id: "terminal.resetFontSize",
+      owner: "app",
+      titleKey: "action.terminal.resetFontSize.title",
+      descriptionKey: "action.terminal.resetFontSize.description",
+      argsSchema: EmptyArgsSchema,
+      execute: () => {
+        deps.store.getState().updateSettings({ fontSize: DEFAULT_FONT_SIZE });
+        deps.sessionManager.applySettingsToAll(deps.store.getState().settings);
+        return { fontSize: DEFAULT_FONT_SIZE };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
       id: "tab.select",
       owner: "state",
       titleKey: "action.tab.select.title",
@@ -333,6 +568,65 @@ export function registerBuiltinActions(
 
   unregisters.push(
     registry.register({
+      id: "app.setFont",
+      owner: "app",
+      titleKey: "action.app.setFont.title",
+      descriptionKey: "action.app.setFont.description",
+      argsSchema: SetFontArgsSchema,
+      execute: (args) => {
+        const current = deps.store.getState().settings;
+        const patch = {
+          ...(args.fontFamily !== undefined ? { fontFamily: args.fontFamily } : {}),
+          ...(args.fontSize !== undefined ? { fontSize: clampFontSize(args.fontSize) } : {}),
+          ...(args.lineHeight !== undefined
+            ? { lineHeight: clampLineHeight(args.lineHeight) }
+            : {}),
+          ...(args.nerdFontFallback !== undefined
+            ? { nerdFontFallback: args.nerdFontFallback }
+            : {}),
+        };
+        if (Object.keys(patch).length > 0) {
+          deps.store.getState().updateSettings(patch);
+          deps.sessionManager.applySettingsToAll(deps.store.getState().settings);
+        }
+        const next = deps.store.getState().settings;
+        return {
+          fontFamily: next.fontFamily,
+          fontSize: next.fontSize,
+          lineHeight: next.lineHeight,
+          nerdFontFallback: next.nerdFontFallback ?? current.nerdFontFallback,
+        };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
+      id: "app.setCursor",
+      owner: "app",
+      titleKey: "action.app.setCursor.title",
+      descriptionKey: "action.app.setCursor.description",
+      argsSchema: SetCursorArgsSchema,
+      execute: (args) => {
+        const patch = {
+          ...(args.cursorStyle !== undefined ? { cursorStyle: args.cursorStyle } : {}),
+          ...(args.cursorBlink !== undefined ? { cursorBlink: args.cursorBlink } : {}),
+        };
+        if (Object.keys(patch).length > 0) {
+          deps.store.getState().updateSettings(patch);
+          deps.sessionManager.applySettingsToAll(deps.store.getState().settings);
+        }
+        const next = deps.store.getState().settings;
+        return {
+          cursorStyle: next.cursorStyle,
+          cursorBlink: next.cursorBlink,
+        };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
       id: "app.toggleSidebar",
       owner: "ui",
       titleKey: "action.app.toggleSidebar.title",
@@ -341,6 +635,22 @@ export function registerBuiltinActions(
       execute: () => {
         deps.store.getState().toggleSidebar();
         return { sidebarVisible: deps.store.getState().ui.sidebarVisible };
+      },
+    }),
+  );
+
+  unregisters.push(
+    registry.register({
+      id: "app.toggleDiagnostics",
+      owner: "ui",
+      titleKey: "action.app.toggleDiagnostics.title",
+      descriptionKey: "action.app.toggleDiagnostics.description",
+      argsSchema: EmptyArgsSchema,
+      execute: () => {
+        deps.store.getState().toggleDiagnosticsPanel();
+        return {
+          diagnosticsPanelVisible: deps.store.getState().ui.diagnosticsPanelVisible,
+        };
       },
     }),
   );

@@ -3,8 +3,10 @@
 
 @theme {
   --font-mono:
-    "JetBrains Mono", "SF Mono", "Menlo", "Hiragino Sans", "Hiragino Kaku Gothic ProN",
-    "Noto Sans Mono CJK JP", "BIZ UDGothic", monospace;
+    ui-monospace, "SF Mono", "Menlo", "JetBrains Mono", "Symbols Nerd Font Mono",
+    "Symbols Nerd Font", "UDEV Gothic 35NF", "UDEV Gothic NF", "Hiragino Sans",
+    "Hiragino Kaku Gothic ProN", "Noto Sans Mono CJK JP", "BIZ UDGothic", "Apple Color Emoji",
+    monospace;
 }
 
 html,
@@ -14,15 +16,17 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
+  background-color: #09090b;
 }
 
-/* Ensure wterm uses Japanese-friendly monospace fallback stack */
-.wterm-host {
-  font-family: var(--font-mono);
-  font-size: 14px;
-  line-height: 1.35;
-  --term-bg: #09090b;
-  --term-fg: #f4f4f5;
-  background-color: var(--term-bg);
-  color: var(--term-fg);
+/* Full-bleed desktop terminal host overrides for @wterm/dom */
+.wterm.wterm-host {
+  font-family: var(--term-font-family, var(--font-mono));
+  font-size: var(--term-font-size, 14px);
+  line-height: var(--term-line-height, 1.25);
+  padding: 6px 8px;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--term-app-bg, var(--term-bg, #09090b));
+  color: var(--term-app-fg, var(--term-fg, #f4f4f5));
 }

@@ -273,6 +273,10 @@ async fn herdr_core_lifecycle_io_resize_auto_input_and_osc7501() {
     tokio::time::sleep(Duration::from_millis(150)).await;
     let live = client.terminal_list(false).await.expect("terminal.list");
     assert!(live.is_empty(), "expected 0 live terminals after kill");
+    let all = client.terminal_list(true).await.expect("list including killed terminal");
+    let finished = all.iter().find(|item| item.address == term.address).unwrap();
+    assert_eq!(finished.state, "finished");
+    assert!(finished.signal.is_some(), "signal metadata must survive the IPC boundary");
 
     client
         .events_unsubscribe(sub.subscription_id)

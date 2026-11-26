@@ -37,19 +37,20 @@ description: "uitermの開発ロードマップをまとめる"
 
 実装・検証の詳細は [docs/implementation/phase1-backend.md](../implementation/phase1-backend.md)・[docs/implementation/phase1-frontend.md](../implementation/phase1-frontend.md) を参照。macOS arm64 での統合レビュー・検証を完了し、Phase 2 へ移行可能。NixOS / Hyprland の実機検証（ビルド・GTK/WebKitGTK・Wayland・シグナル終了・Fcitx5）は引き続き保留とし、[MVP の完成条件](./mvp.md#完成条件)（Phase 6）として維持する。
 
-## Phase 2 — ターミナル
+## Phase 2 — ターミナル（独立 QA 済み・macOS 手動検証待ち）
 
 基本的なターミナルとして利用できる状態にする。
 
-- [ ] シェルの起動・終了
-- [ ] ターミナルの描画・入力
-- [ ] スクロールバック
-- [ ] コピー・ペースト
-- [ ] リサイズ
-- [ ] フォント・カラー・カーソル
-- [ ] Nerd Font の表示対応
-- [ ] 日本語IME・文字幅・フォントフォールバック
-- [ ] fish・Neovim・Codexとの互換性確認
+- [x] シェルの起動・終了（リリース .app、専用 core と fish の起動、SIGTERM 後のプロセス解放。再起動の競合と切断後の購読復旧を自動テスト）
+- [x] ターミナルの描画・入力（wterm DOM / Ghostty、Action Registry、PoC 診断ドロワー。VT とキー入力を自動テスト）
+- [x] スクロールバック（既定 2,000 行、ヘッドレスで 10,000 行出力と破棄を測定）
+- [ ] コピー・ペースト（アクション・ブラケットペーストの生成・再起動との競合を自動テスト。macOS のネイティブクリップボードは手動検証待ち）
+- [ ] リサイズ・フォーカス（PTY の初期行列数と IPC のフォーカス通知を確認。macOS のドラッグリサイズ、ズーム、Neovim の実フォーカスは手動検証待ち）
+- [x] フォント・カラー・カーソルの内部設定（システムフォント、行間、ANSI パレット、形状・点滅。グリフとセルの目視確認は下記）
+- [ ] Nerd Font・文字幅・日本語 IME（Ghostty の PUA・日本語・絵文字・結合文字のセルと IME イベント回帰は確認済み。macOS で候補位置、確定 Enter、Option 競合、グリフを手動確認する）
+- [ ] fish・Neovim・Codex の対話互換性（隔離 PTY の fish・Neovim と `codex --version` は確認済み。WKWebView での対話と実打鍵を確認する）
+
+実機チェックリスト、性能測定、IUTF8 の回避策は [Phase 2 実装・検証レポート](../implementation/phase2-terminal.md) を参照。NixOS / Hyprland 実機と 30 分の連続利用時のメモリ測定は Phase 6 に残す。
 
 ## Phase 3 — ワークスペース
 

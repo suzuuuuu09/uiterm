@@ -66,6 +66,7 @@ export interface AppStoreActions {
   toggleSidebar: () => void;
   setIsComposing: (isComposing: boolean) => void;
   setDiagnosticsPanelVisible: (visible: boolean) => void;
+  toggleDiagnosticsPanel: () => void;
   pushNotification: (severity: "info" | "warn" | "error", message: string) => void;
   clearNotification: () => void;
 
@@ -121,9 +122,9 @@ function createInitialData(initialSettings?: Partial<UserSettings>): AppStateDat
     },
     agentStates: {},
     ui: {
-      sidebarVisible: true,
+      sidebarVisible: false,
       isComposing: false,
-      diagnosticsPanelVisible: true,
+      diagnosticsPanelVisible: false,
       lastNotification: null,
     },
     settings: {
@@ -547,6 +548,11 @@ export function createAppStore(
           ? s
           : { ui: { ...s.ui, diagnosticsPanelVisible } },
       ),
+
+    toggleDiagnosticsPanel: () =>
+      set((s) => ({
+        ui: { ...s.ui, diagnosticsPanelVisible: !s.ui.diagnosticsPanelVisible },
+      })),
 
     pushNotification: (severity, message) =>
       set((s) => ({
