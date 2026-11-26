@@ -7,7 +7,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
 
+mod supervisor;
+pub(crate) use supervisor::CoreSupervisor;
+pub use supervisor::run_supervisor;
+
 static INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(1);
+pub(crate) const CORE_VERSION: &str = "0.1.22";
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
@@ -64,10 +69,32 @@ pub struct HerdrDaemon {
     child: Option<Child>,
     ready: bool,
     stopped: bool,
+    stop_attempted: bool,
 }
 
 impl HerdrDaemon {
     pub async fn start(config: HerdrLaunchConfig) -> Result<Self, IpcError> {
+        let version = tokio::time::timeout(
+            STOP_TIMEOUT,
+            Command::new(&config.binary)
+                .arg("--version")
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| IpcError::new("core_start_timeout", "herdr-core version check timed out"))?
+        .map_err(|err| IpcError::new("spawn_failed", err.to_string()))?;
+        if !version.status.success()
+            || String::from_utf8_lossy(&version.stdout).trim() != format!("hc {CORE_VERSION}")
+        {
+            return Err(IpcError::new(
+                "core_version_mismatch",
+                "herdr-core v0.1.22 is required",
+            ));
+        }
+
         let mut template = *b"/tmp/uiterm.XXXXXXXX\0";
         // mkdtemp creates the directory atomically with mode 0700 and substitutes ASCII.
         if unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) }.is_null() {
@@ -84,46 +111,69 @@ impl HerdrDaemon {
             child: None,
             ready: false,
             stopped: false,
+            stop_attempted: false,
         };
 
         // The pinned core's `serve` runs in the foreground and skips shared launchd/systemd
         // startup. We supervise only the process we spawn.
-        daemon.child = Some(
-            Command::from(daemon.command(&["serve"]))
-                .stderr(Stdio::inherit())
+        daemon.spawn_core()?;
+        daemon.wait_for_socket(false).await?;
+        daemon.ready = true;
+        Ok(daemon)
+    }
+
+    fn spawn_core(&mut self) -> Result<(), IpcError> {
+        self.child = Some(
+            Command::from(self.command(&["serve"]))
                 .kill_on_drop(true)
                 .spawn()
                 .map_err(|err| IpcError::new("spawn_failed", err.to_string()))?,
         );
+        Ok(())
+    }
 
+    async fn wait_for_socket(&mut self, recovering: bool) -> Result<(), IpcError> {
         let deadline = Instant::now() + STOP_TIMEOUT;
-        loop {
-            let child = daemon.child.as_mut().unwrap();
-            if let Some(status) = child
-                .try_wait()
-                .map_err(|err| IpcError::new("core_start_failed", err.to_string()))?
-            {
-                return Err(IpcError::new(
-                    "core_start_failed",
-                    format!("herdr-core serve: {status}"),
-                ));
-            }
-            if daemon.socket_path.exists()
-                && tokio::net::UnixStream::connect(daemon.socket_path())
+        tokio::time::timeout_at(deadline.into(), async {
+            loop {
+                if tokio::net::UnixStream::connect(self.socket_path())
                     .await
                     .is_ok()
-            {
-                daemon.ready = true;
-                return Ok(daemon);
+                {
+                    return Ok(());
+                }
+                if !recovering
+                    && self
+                        .child
+                        .as_mut()
+                        .unwrap()
+                        .try_wait()
+                        .map_err(stop_error)?
+                        .is_some()
+                {
+                    return Err(IpcError::new(
+                        "core_start_failed",
+                        "herdr-core exited before opening its socket",
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
             }
-            if Instant::now() >= deadline {
-                return Err(IpcError::new(
-                    "core_start_timeout",
-                    "herdr-core did not open its socket",
-                ));
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
+        })
+        .await
+        .map_err(|_| IpcError::new("core_start_timeout", "herdr-core did not open its socket"))?
+    }
+
+    async fn recover(&mut self) -> Result<(), IpcError> {
+        // The holder may win the core lock. A socket in this instance's private
+        // directory is the authority, even when the original child has exited.
+        if tokio::net::UnixStream::connect(self.socket_path())
+            .await
+            .is_err()
+        {
+            self.spawn_core()?;
+            self.wait_for_socket(true).await?;
         }
+        Ok(())
     }
 
     fn command(&self, args: &[&str]) -> std::process::Command {
@@ -157,6 +207,7 @@ impl HerdrDaemon {
         if self.stopped {
             return Ok(());
         }
+        self.stop_attempted = true;
         tokio::time::timeout(STOP_TIMEOUT, async {
             self.ensure_graceful_stop_possible()?;
             let output = Command::from(self.command(&["--json", "server", "stop"]))
@@ -242,13 +293,8 @@ impl HerdrDaemon {
     }
 
     pub fn stop_blocking(&mut self) {
-        if let Err(err) = self.stop_sync() {
-            eprintln!(
-                "{}: {} ({})",
-                err.code,
-                err.message,
-                self.base_dir.display()
-            );
+        if !self.stop_attempted && self.stop_sync().is_err() {
+            eprintln!("uiterm: core_stop_failed");
         }
     }
 }

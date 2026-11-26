@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 /// Writer queue capacity for outbound frames to herdr-core.
 const WRITER_QUEUE_CAPACITY: usize = 64;
-const MAX_OUTBOUND_PAYLOAD: usize = 1024 * 1024;
+pub(crate) const MAX_OUTBOUND_PAYLOAD: usize = 1024 * 1024;
 const MAX_STREAMS: usize = 128;
 
 #[derive(Debug)]
@@ -155,6 +155,13 @@ impl HerdrClient {
             return Err(IpcError::new(
                 "protocol_error",
                 "herdr-core refused framed mode",
+            ));
+        }
+
+        if hello_res.get("version").and_then(Value::as_str) != Some(super::process::CORE_VERSION) {
+            return Err(IpcError::new(
+                "core_version_mismatch",
+                "herdr-core v0.1.22 is required",
             ));
         }
 
@@ -312,9 +319,7 @@ impl HerdrClient {
         &self,
         params: TerminalCreateParams,
     ) -> Result<TerminalInfo, IpcError> {
-        if let (Some(cols), Some(rows)) = (params.cols, params.rows) {
-            validate_size(cols, rows)?;
-        }
+        params.validate()?;
         let mut obj = serde_json::Map::new();
         if let Some(argv) = params.argv {
             obj.insert("argv".into(), json!(argv));
@@ -616,7 +621,7 @@ fn validate_outbound(frame: &Frame) -> Result<(), IpcError> {
     Ok(())
 }
 
-fn validate_size(cols: u16, rows: u16) -> Result<(), IpcError> {
+pub(crate) fn validate_size(cols: u16, rows: u16) -> Result<(), IpcError> {
     if !(1..=1000).contains(&cols) || !(1..=1000).contains(&rows) {
         return Err(IpcError::new(
             "invalid_args",

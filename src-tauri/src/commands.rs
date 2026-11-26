@@ -1,93 +1,71 @@
 //! Tauri 2 IPC Commands & Channels implementing docs/poc/interface.md.
 
+use crate::app_state::AppState;
 use crate::config_runtime::{self, ConfigEvalParams, ConfigEvalResult};
 use crate::herdr::{
-    CoreEvent, CoreStatus, DisplayFacts, EventsSubscribeResult, HerdrClient, HerdrDaemon,
-    HerdrLaunchConfig, IpcError, TerminalAttachParams, TerminalAttachResult, TerminalCreateParams,
-    TerminalInfo,
+    CoreEvent, CoreStatus, DisplayFacts, EventsSubscribeResult, IpcError, TerminalAttachParams,
+    TerminalAttachResult, TerminalCreateParams, TerminalInfo,
 };
+use crate::os::resolve_os_default_shell;
 use std::sync::Arc;
 use tauri::State;
 use tauri::ipc::{Channel, InvokeBody, Request, Response};
-use tokio::sync::Mutex;
-
-pub struct AppState {
-    pub daemon: Mutex<Option<HerdrDaemon>>,
-    pub client: Mutex<Option<HerdrClient>>,
-}
-
-impl AppState {
-    pub fn new() -> Self {
-        Self {
-            daemon: Mutex::new(None),
-            client: Mutex::new(None),
-        }
-    }
-
-    pub async fn ensure_client(&self) -> Result<HerdrClient, IpcError> {
-        self.connect(true).await
-    }
-
-    pub async fn connect_fresh(&self) -> Result<HerdrClient, IpcError> {
-        self.connect(true).await
-    }
-
-    async fn connect(&self, reconnect: bool) -> Result<HerdrClient, IpcError> {
-        let mut guard = self.client.lock().await;
-        if let Some(client) = guard.as_ref()
-            && (client.is_connected() || !reconnect)
-        {
-            return Ok(client.clone());
-        }
-
-        let (socket_path, session) = {
-            let mut daemon_guard = self.daemon.lock().await;
-            if daemon_guard.is_none() {
-                let cfg = HerdrLaunchConfig::isolated("app")?;
-                let daemon = HerdrDaemon::start(cfg).await?;
-                *daemon_guard = Some(daemon);
-            }
-            let d = daemon_guard.as_ref().unwrap();
-            (d.socket_path().to_path_buf(), d.config().session.clone())
-        };
-
-        let client = HerdrClient::connect(&socket_path, session).await?;
-        *guard = Some(client.clone());
-        Ok(client)
-    }
-
-    pub fn shutdown_blocking(&self) {
-        if let Ok(mut guard) = self.daemon.try_lock()
-            && let Some(daemon) = guard.as_mut()
-        {
-            daemon.stop_blocking();
-        }
-    }
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[tauri::command]
-pub async fn core_status(state: State<'_, Arc<AppState>>) -> Result<CoreStatus, IpcError> {
+pub(crate) async fn core_status(state: State<'_, Arc<AppState>>) -> Result<CoreStatus, IpcError> {
     let client = state.ensure_client().await?;
     client.server_status().await
 }
 
 #[tauri::command]
-pub async fn core_reconnect(state: State<'_, Arc<AppState>>) -> Result<CoreStatus, IpcError> {
-    let client = state.connect_fresh().await?;
+pub(crate) async fn core_reconnect(
+    state: State<'_, Arc<AppState>>,
+) -> Result<CoreStatus, IpcError> {
+    let client = state.ensure_client().await?;
     client.server_status().await
 }
 
 #[tauri::command]
-pub async fn terminal_create(
+pub(crate) async fn terminal_create(
     state: State<'_, Arc<AppState>>,
     mut params: TerminalCreateParams,
 ) -> Result<TerminalInfo, IpcError> {
+    params.validate()?;
+    apply_default_shell_and_env(&mut params);
+    let client = state.ensure_client().await?;
+    client.terminal_create(params).await
+}
+
+fn supports_login_flag(shell: &str) -> bool {
+    matches!(
+        std::path::Path::new(shell)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("fish" | "zsh" | "bash" | "sh" | "dash" | "ksh" | "mksh")
+    )
+}
+
+fn resolve_xdg_dir(env_key: &str, home_subpath: &str) -> Option<String> {
+    if let Ok(value) = std::env::var(env_key)
+        && !value.trim().is_empty()
+    {
+        return Some(value);
+    }
+    let home = std::env::var("HOME").ok()?;
+    if home.trim().is_empty() {
+        return None;
+    }
+    Some(
+        std::path::Path::new(&home)
+            .join(home_subpath)
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
+fn apply_default_shell_and_env(params: &mut TerminalCreateParams) {
+    let env_map = params.env.get_or_insert_with(Default::default);
+
     // Prefer the OS account's configured login shell (getpwuid) by default so
     // shells work consistently even when `nix develop` overrides $SHELL with
     // stdenv's minimal non-interactive bash (no readline).
@@ -95,11 +73,24 @@ pub async fn terminal_create(
         && params.line.is_none()
         && let Some(shell) = resolve_os_default_shell()
     {
-        params.argv = Some(vec![shell]);
+        env_map.entry("SHELL".into()).or_insert_with(|| shell.clone());
+        params.argv = if supports_login_flag(&shell) {
+            Some(vec![shell, "-l".to_string()])
+        } else {
+            Some(vec![shell])
+        };
     }
 
-    // Supply a default when LANG is missing, preserving the caller's locale overrides.
-    let env_map = params.env.get_or_insert_with(Default::default);
+    // HerdrDaemon isolates herdr-core by setting XDG_CONFIG_HOME / XDG_STATE_HOME to a
+    // private /tmp/uiterm.* directory. Restore the user's XDG directories for child shells
+    // so fish (~/.config/fish), nvim, starship, etc. load the user's actual configuration.
+    if let Some(xdg_config) = resolve_xdg_dir("XDG_CONFIG_HOME", ".config") {
+        env_map.entry("XDG_CONFIG_HOME".into()).or_insert(xdg_config);
+    }
+    if let Some(xdg_state) = resolve_xdg_dir("XDG_STATE_HOME", ".local/state") {
+        env_map.entry("XDG_STATE_HOME".into()).or_insert(xdg_state);
+    }
+
     // The daemon's runtime path isolates holder startup from Linux's user manager.
     // Programs need the user's compositor/session sockets.
     if cfg!(target_os = "linux") {
@@ -109,6 +100,8 @@ pub async fn terminal_create(
             }
         }
     }
+
+    // Supply a default when LANG is missing, preserving the caller's locale overrides.
     if !env_map.contains_key("LANG")
         && std::env::var("LANG")
             .map(|v| v.trim().is_empty())
@@ -127,69 +120,10 @@ pub async fn terminal_create(
             });
         env_map.insert("LANG".to_string(), fallback_lang);
     }
-
-    let client = state.ensure_client().await?;
-    client.terminal_create(params).await
-}
-
-#[cfg(unix)]
-fn resolve_os_default_shell() -> Option<String> {
-    let mut size = 1024;
-    let pw_shell = loop {
-        let mut buffer = vec![0; size];
-        let mut pwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
-        let mut result = std::ptr::null_mut();
-
-        // The reentrant lookup stores the record and strings in our local buffers.
-        let status = unsafe {
-            libc::getpwuid_r(
-                libc::geteuid(),
-                pwd.as_mut_ptr(),
-                buffer.as_mut_ptr(),
-                buffer.len(),
-                &mut result,
-            )
-        };
-        if status == libc::ERANGE && size < 1024 * 1024 {
-            size *= 2;
-            continue;
-        }
-        if status != 0 || result.is_null() {
-            break None;
-        }
-        let shell = unsafe { (*result).pw_shell };
-        if shell.is_null() {
-            break None;
-        }
-        break unsafe { std::ffi::CStr::from_ptr(shell) }
-            .to_str()
-            .ok()
-            .map(str::to_owned);
-    };
-
-    if let Some(shell) = pw_shell
-        && std::path::Path::new(&shell).is_file()
-    {
-        return Some(shell);
-    }
-
-    if let Ok(env_shell) = std::env::var("SHELL")
-        && !env_shell.is_empty()
-        && std::path::Path::new(&env_shell).is_file()
-    {
-        return Some(env_shell);
-    }
-
-    None
-}
-
-#[cfg(not(unix))]
-fn resolve_os_default_shell() -> Option<String> {
-    None
 }
 
 #[tauri::command]
-pub async fn terminal_list(
+pub(crate) async fn terminal_list(
     state: State<'_, Arc<AppState>>,
     all: bool,
 ) -> Result<Vec<TerminalInfo>, IpcError> {
@@ -198,7 +132,7 @@ pub async fn terminal_list(
 }
 
 #[tauri::command]
-pub async fn terminal_attach(
+pub(crate) async fn terminal_attach(
     state: State<'_, Arc<AppState>>,
     params: TerminalAttachParams,
     on_output: Channel<Response>,
@@ -222,7 +156,7 @@ pub async fn terminal_attach(
 }
 
 #[tauri::command]
-pub async fn terminal_detach(
+pub(crate) async fn terminal_detach(
     state: State<'_, Arc<AppState>>,
     attach_id: u32,
 ) -> Result<(), IpcError> {
@@ -231,7 +165,7 @@ pub async fn terminal_detach(
 }
 
 #[tauri::command]
-pub async fn terminal_write(
+pub(crate) async fn terminal_write(
     state: State<'_, Arc<AppState>>,
     request: Request<'_>,
 ) -> Result<(), IpcError> {
@@ -255,25 +189,30 @@ pub async fn terminal_write(
     };
 
     let bytes = match request.body() {
-        InvokeBody::Raw(raw) => raw.clone(),
-        InvokeBody::Json(val) => {
-            if let Some(s) = val.as_str() {
-                s.as_bytes().to_vec()
-            } else {
-                return Err(IpcError::new(
-                    "invalid_args",
-                    "terminal_write expects raw binary body (Uint8Array)",
-                ));
-            }
+        InvokeBody::Raw(raw) => raw.as_slice(),
+        InvokeBody::Json(serde_json::Value::String(text)) => text.as_bytes(),
+        _ => {
+            return Err(IpcError::new(
+                "invalid_args",
+                "terminal_write expects raw binary data",
+            ));
         }
     };
+    if bytes.len() > crate::herdr::client::MAX_OUTBOUND_PAYLOAD || attach_id == 0 {
+        return Err(IpcError::new(
+            "invalid_args",
+            "terminal_write requires a nonzero attach ID and at most 1 MiB",
+        ));
+    }
 
     let client = state.ensure_client().await?;
-    client.terminal_write(attach_id, bytes, automatic).await
+    client
+        .terminal_write(attach_id, bytes.to_vec(), automatic)
+        .await
 }
 
 #[tauri::command]
-pub async fn terminal_resize(
+pub(crate) async fn terminal_resize(
     state: State<'_, Arc<AppState>>,
     attach_id: u32,
     cols: u16,
@@ -284,7 +223,7 @@ pub async fn terminal_resize(
 }
 
 #[tauri::command]
-pub async fn terminal_focus(
+pub(crate) async fn terminal_focus(
     state: State<'_, Arc<AppState>>,
     attach_id: u32,
     focused: bool,
@@ -294,7 +233,7 @@ pub async fn terminal_focus(
 }
 
 #[tauri::command]
-pub async fn terminal_facts(
+pub(crate) async fn terminal_facts(
     state: State<'_, Arc<AppState>>,
     attach_id: u32,
     display: DisplayFacts,
@@ -304,7 +243,7 @@ pub async fn terminal_facts(
 }
 
 #[tauri::command]
-pub async fn terminal_ack(
+pub(crate) async fn terminal_ack(
     state: State<'_, Arc<AppState>>,
     attach_id: u32,
     bytes: u32,
@@ -314,7 +253,7 @@ pub async fn terminal_ack(
 }
 
 #[tauri::command]
-pub async fn terminal_kill(
+pub(crate) async fn terminal_kill(
     state: State<'_, Arc<AppState>>,
     session_id: String,
 ) -> Result<(), IpcError> {
@@ -323,6 +262,7 @@ pub async fn terminal_kill(
 }
 
 #[derive(serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct EventDelivery {
     subscription_id: u32,
@@ -331,7 +271,7 @@ pub struct EventDelivery {
 }
 
 #[tauri::command]
-pub async fn events_ack(
+pub(crate) async fn events_ack(
     state: State<'_, Arc<AppState>>,
     subscription_id: u32,
     bytes: u32,
@@ -344,7 +284,7 @@ pub async fn events_ack(
 }
 
 #[tauri::command]
-pub async fn events_subscribe(
+pub(crate) async fn events_subscribe(
     state: State<'_, Arc<AppState>>,
     on_event: Channel<EventDelivery>,
 ) -> Result<EventsSubscribeResult, IpcError> {
@@ -372,7 +312,7 @@ pub async fn events_subscribe(
 }
 
 #[tauri::command]
-pub async fn events_unsubscribe(
+pub(crate) async fn events_unsubscribe(
     state: State<'_, Arc<AppState>>,
     subscription_id: u32,
 ) -> Result<(), IpcError> {
@@ -381,11 +321,28 @@ pub async fn events_unsubscribe(
 }
 
 #[tauri::command]
-pub async fn config_eval_poc(mut params: ConfigEvalParams) -> Result<ConfigEvalResult, IpcError> {
+pub(crate) async fn config_eval_poc(
+    mut params: ConfigEvalParams,
+) -> Result<ConfigEvalResult, IpcError> {
+    if !cfg!(debug_assertions)
+        || std::env::var_os("UITERM_ENABLE_CONFIG_POC").as_deref()
+            != Some(std::ffi::OsStr::new("1"))
+    {
+        return Err(IpcError::new(
+            "untrusted_config",
+            "configuration evaluation is disabled",
+        ));
+    }
+
     let sample = config_runtime::resolve_worker_script()
         .with_file_name("sample.config.ts")
         .canonicalize()
-        .map_err(|err| IpcError::new("io_error", format!("failed to resolve sample config: {err}")))?;
+        .map_err(|err| {
+            IpcError::new(
+                "io_error",
+                format!("failed to resolve sample config: {err}"),
+            )
+        })?;
     if std::path::Path::new(&params.config_path)
         .canonicalize()
         .ok()
@@ -399,4 +356,37 @@ pub async fn config_eval_poc(mut params: ConfigEvalParams) -> Result<ConfigEvalR
     }
     params.config_path = sample.to_string_lossy().into_owned();
     config_runtime::eval_config_poc(params).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_shell_sets_login_flag_and_restores_xdg_and_shell_env() {
+        let mut params = TerminalCreateParams::default();
+        apply_default_shell_and_env(&mut params);
+
+        let env = params.env.as_ref().expect("env map populated");
+        if let Some(shell) = resolve_os_default_shell() {
+            assert_eq!(env.get("SHELL").map(String::as_str), Some(shell.as_str()));
+            let argv = params.argv.as_ref().expect("argv populated");
+            assert_eq!(argv[0], shell);
+            if supports_login_flag(&shell) {
+                assert_eq!(argv.get(1).map(String::as_str), Some("-l"));
+            }
+        }
+        assert!(
+            env.get("XDG_CONFIG_HOME")
+                .is_some_and(|v| !v.starts_with("/tmp/uiterm.")),
+            "XDG_CONFIG_HOME must point to user's config dir, got {:?}",
+            env.get("XDG_CONFIG_HOME")
+        );
+        assert!(
+            env.get("XDG_STATE_HOME")
+                .is_some_and(|v| !v.starts_with("/tmp/uiterm.")),
+            "XDG_STATE_HOME must point to user's state dir, got {:?}",
+            env.get("XDG_STATE_HOME")
+        );
+    }
 }

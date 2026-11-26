@@ -4,11 +4,13 @@ use std::collections::HashMap;
 
 /// Frontend-facing IPC error payload (camelCase JSON).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct IpcError {
     pub code: String,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub hint: Option<String>,
 }
 
@@ -43,19 +45,25 @@ impl std::fmt::Display for IpcError {
 impl std::error::Error for IpcError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayFacts {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub bg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub cell: Option<[u32; 2]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CoreStatus {
     pub version: String,
@@ -70,6 +78,7 @@ pub struct CoreStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ForegroundProcess {
     pub pid: i32,
@@ -79,22 +88,29 @@ pub struct ForegroundProcess {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct StatusRecord {
     pub state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub progress: Option<u8>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[cfg_attr(test, ts(type = "string", optional))]
     pub app: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[cfg_attr(test, ts(type = "string", optional))]
     pub title: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[cfg_attr(test, ts(type = "string", optional))]
     pub msg: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalInfo {
     pub address: String,
@@ -187,33 +203,91 @@ impl From<HerdrTerminalRecord> for TerminalInfo {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalCreateParams {
+    #[cfg_attr(test, ts(optional = nullable))]
     pub argv: Option<Vec<String>>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub line: Option<String>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub cwd: Option<String>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub env: Option<HashMap<String, String>>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub name: Option<String>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub labels: Option<HashMap<String, String>>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub cols: Option<u16>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub rows: Option<u16>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub display: Option<DisplayFacts>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub keep: Option<bool>,
 }
 
+impl TerminalCreateParams {
+    pub(crate) fn validate(&self) -> Result<(), IpcError> {
+        let invalid = |message| IpcError::new("invalid_args", message);
+        if self.argv.is_some() && self.line.is_some() {
+            return Err(invalid("specify either argv or line"));
+        }
+        if let Some(argv) = &self.argv
+            && (argv.first().is_none_or(String::is_empty)
+                || argv.iter().any(|arg| arg.contains('\0')))
+        {
+            return Err(invalid(
+                "argv requires a nonempty program and NUL-free arguments",
+            ));
+        }
+        if self
+            .line
+            .as_ref()
+            .is_some_and(|line| line.trim().is_empty() || line.contains('\0'))
+        {
+            return Err(invalid("line must contain a command without NUL"));
+        }
+        if self.cwd.as_ref().is_some_and(|cwd| cwd.contains('\0')) {
+            return Err(invalid("cwd must not contain NUL"));
+        }
+        if self.env.as_ref().is_some_and(|env| {
+            env.iter().any(|(key, value)| {
+                key.is_empty() || key.contains(['=', '\0']) || value.contains('\0')
+            })
+        }) {
+            return Err(invalid("invalid environment entry"));
+        }
+        if self.cols.is_some() != self.rows.is_some() {
+            return Err(invalid("specify both terminal dimensions"));
+        }
+        if let (Some(cols), Some(rows)) = (self.cols, self.rows) {
+            super::client::validate_size(cols, rows)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalAttachParams {
     pub session_id: String,
     pub cols: u16,
     pub rows: u16,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub history: Option<u32>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub observe: Option<bool>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub resize_notifications: Option<bool>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub display: Option<DisplayFacts>,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalAttachResult {
     pub attach_id: u32,
@@ -224,6 +298,7 @@ pub struct TerminalAttachResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct EventsSubscribeResult {
     pub subscription_id: u32,
@@ -271,6 +346,7 @@ impl OutputStreamFrame {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum CoreEvent {
     Created {
@@ -281,6 +357,7 @@ pub enum CoreEvent {
     Lost {
         seq: u64,
         terminal: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
         data: Value,
     },
     Restarted {
@@ -291,6 +368,7 @@ pub enum CoreEvent {
     Finished {
         seq: u64,
         terminal: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
         data: Value,
     },
     Removed {
@@ -300,21 +378,25 @@ pub enum CoreEvent {
     Status {
         seq: u64,
         terminal: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
         data: Value,
     },
     Turn {
         seq: u64,
         terminal: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
         data: Value,
     },
     Title {
         seq: u64,
         terminal: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
         data: Value,
     },
     Size {
         seq: u64,
         terminal: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
         data: Value,
     },
     Foreground {
@@ -325,6 +407,7 @@ pub enum CoreEvent {
     Labels {
         seq: u64,
         terminal: String,
+        #[cfg_attr(test, ts(type = "unknown"))]
         data: Value,
     },
     Heartbeat {

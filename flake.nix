@@ -10,7 +10,6 @@
     let
       systems = [
         "aarch64-darwin"
-        "x86_64-darwin"
         "aarch64-linux"
         "x86_64-linux"
       ];
@@ -29,10 +28,6 @@
         "aarch64-darwin" = {
           url = "https://releases.herdr.dev/core/${herdrCoreVersion}/herdr-core-macos-aarch64.tar.gz";
           sha256 = "90798daadefa8d126b90ef0bcdbe9c7dda9c6cfbf011a247065ab5da348f350e";
-        };
-        "x86_64-darwin" = {
-          url = "https://releases.herdr.dev/core/${herdrCoreVersion}/herdr-core-macos-x86_64.tar.gz";
-          sha256 = "35144041969e870ddb4edcd2fd08fd26dfe5cee7d18e6b48adb276f90a48aa19";
         };
         "aarch64-linux" = {
           url = "https://releases.herdr.dev/core/${herdrCoreVersion}/herdr-core-linux-aarch64.tar.gz";
