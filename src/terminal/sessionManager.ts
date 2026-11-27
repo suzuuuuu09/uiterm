@@ -53,7 +53,6 @@ export interface ManagedSession {
   mounted: boolean;
   disposed: boolean;
   focused: boolean;
-  applyingBackendResize: boolean;
   lastSentCols: number;
   lastSentRows: number;
   stream: { closed: boolean; writing: boolean; resizing: boolean } | null;
@@ -282,12 +281,21 @@ export class TerminalSessionManager {
       while (!stream.closed && session.pendingResize) {
         const { cols, rows } = session.pendingResize;
         session.pendingResize = null;
-        if (cols === session.lastSentCols && rows === session.lastSentRows) continue;
         try {
+          if (cols !== session.adapter.cols || rows !== session.adapter.rows) {
+            session.adapter.resize(cols, rows);
+            this.store.getState().updatePaneSize(session.id, cols, rows);
+          }
+          if (cols === session.lastSentCols && rows === session.lastSentRows) continue;
           await this.client.terminalResize(attachId, cols, rows);
           if (!stream.closed) {
             session.lastSentCols = cols;
             session.lastSentRows = rows;
+            // The PTY resize must reach herdr-core before the opt-in VT report.
+            const report = session.adapter.getResizeReport?.();
+            if (report) {
+              await this.client.terminalWrite(attachId, report, "automatic");
+            }
           }
         } catch (err) {
           this.reportError(`terminalResize:${session.id}`, err);
@@ -322,19 +330,8 @@ export class TerminalSessionManager {
   private handleOutputFrame(session: ManagedSession, frame: OutputFrame): void {
     if (session.disposed) return;
 
-    if (frame.kind === "resize") {
-      // Guard against echoing backend-originated RESIZE notifications back to herdr-core.
-      session.applyingBackendResize = true;
-      session.lastSentCols = frame.cols;
-      session.lastSentRows = frame.rows;
-      try {
-        session.adapter.resize(frame.cols, frame.rows);
-      } finally {
-        session.applyingBackendResize = false;
-      }
-      this.store.getState().updatePaneSize(session.id, frame.cols, frame.rows);
-      return;
-    }
+    // herdr-core only sends RESIZE to observers. This attachment owns its size.
+    if (frame.kind === "resize") return;
 
     if (frame.kind === "close") {
       this.closeStream(session);
@@ -408,13 +405,14 @@ export class TerminalSessionManager {
   private async attach(session: ManagedSession): Promise<boolean> {
     const stream = { closed: false, failed: false, writing: false, resizing: false };
     session.stream = stream;
+    session.lastSentCols = session.adapter.cols;
+    session.lastSentRows = session.adapter.rows;
     try {
       const attached = await this.client.terminalAttach(
         {
           sessionId: session.sessionId,
-          cols: session.adapter.cols,
-          rows: session.adapter.rows,
-          resizeNotifications: true,
+          cols: session.lastSentCols,
+          rows: session.lastSentRows,
         },
         (frame) => {
           if (session.disposed || session.stream !== stream || stream.closed) return;
@@ -503,8 +501,9 @@ export class TerminalSessionManager {
             }
             this.sendInput(sessionRef, bytes, "user");
           },
-          onAutoResponse: (bytes) => {
-            const suppress = this.store.getState().settings.suppressAutoReplies;
+          onAutoResponse: (bytes, kind) => {
+            // The core deliberately delegates DEC 2048 reports to this viewer.
+            const suppress = kind !== "resize" && this.store.getState().settings.suppressAutoReplies;
             if (this.diagnostics?.isEnabled()) {
               this.diagnostics.pushLog(
                 "auto-reply",
@@ -519,9 +518,13 @@ export class TerminalSessionManager {
             this.sendInput(sessionRef, bytes, "automatic");
           },
           onResize: (cols, rows) => {
-            this.store.getState().updatePaneSize(id, cols, rows);
-            if (!sessionRef || sessionRef.disposed || sessionRef.stream?.closed) return;
-            if (sessionRef.applyingBackendResize) return;
+            if (!sessionRef) {
+              if (adapter && (cols !== adapter.cols || rows !== adapter.rows)) {
+                adapter.resize(cols, rows);
+              }
+              return;
+            }
+            if (sessionRef.disposed || sessionRef.stream?.closed) return;
             sessionRef.pendingResize = { cols, rows };
             void this.flushResize(sessionRef);
           },
@@ -552,9 +555,8 @@ export class TerminalSessionManager {
         mounted: true,
         disposed: false,
         focused: false,
-        applyingBackendResize: false,
-        lastSentCols: adapter.cols,
-        lastSentRows: adapter.rows,
+        lastSentCols: 0,
+        lastSentRows: 0,
         stream: null,
         resyncing: false,
         pendingWrites: [],

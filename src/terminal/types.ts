@@ -11,8 +11,8 @@ export interface TerminalAdapterCallbacks {
   /** User-originated input (keyboard, IME commit, paste, mouse). */
   onUserInput: (bytes: Uint8Array) => void;
   /** Terminal-originated auto-responses (DA1, DA2, DSR, OSC 11, etc.). */
-  onAutoResponse: (bytes: Uint8Array) => void;
-  /** Grid dimension changes. */
+  onAutoResponse: (bytes: Uint8Array, kind?: "resize") => void;
+  /** Fitted dimensions requested by the viewport. */
   onResize: (cols: number, rows: number) => void;
   isComposing?: () => boolean;
 }
@@ -37,6 +37,7 @@ export interface TerminalAdapter {
   mount(container: HTMLElement): Promise<void>;
   write(bytes: Uint8Array): void;
   resize(cols: number, rows: number): void;
+  getResizeReport?(): Uint8Array | null;
   fit(): void;
   focus(): void;
   setHidden(hidden: boolean): void;

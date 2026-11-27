@@ -10,6 +10,7 @@ import {
   toWtermThemeColors,
 } from "./appearance.ts";
 import type { CellMetrics } from "./fonts.ts";
+import { TerminalOutputProtocol } from "./outputProtocol.ts";
 import { isImeComposingEvent, isMacPlatform, translateMacOptionKey } from "./keyboard.ts";
 import type {
   TerminalAdapter,
@@ -39,6 +40,7 @@ export class WTermGhosttyAdapter implements TerminalAdapter {
   private term: WTerm | null = null;
   private hostEl: HTMLDivElement | null = null;
   private onKeyDown: ((e: KeyboardEvent) => void) | null = null;
+  private readonly outputProtocol = new TerminalOutputProtocol();
   private isWriting = false;
   private isHidden = false;
   private disposed = false;
@@ -125,7 +127,7 @@ export class WTermGhosttyAdapter implements TerminalAdapter {
       onBinary: (bytes: Uint8Array) => {
         this.callbacks.onUserInput(bytes);
       },
-      onResize: (cols: number, rows: number) => {
+      onResizeRequest: (cols, rows) => {
         this.callbacks.onResize(cols, rows);
       },
     });
@@ -195,7 +197,11 @@ export class WTermGhosttyAdapter implements TerminalAdapter {
     if (!this.term || this.disposed) return;
     this.isWriting = true;
     try {
-      this.term.write(bytes);
+      const output = this.outputProtocol.process(bytes);
+      this.term.write(output.bytes);
+      for (let request = 0; request < output.resizeRequests; request++) {
+        this.callbacks.onAutoResponse(this.encodeResizeReport(), "resize");
+      }
     } finally {
       this.isWriting = false;
     }
@@ -203,6 +209,17 @@ export class WTermGhosttyAdapter implements TerminalAdapter {
 
   resize(cols: number, rows: number): void {
     this.term?.resize(cols, rows);
+  }
+
+  getResizeReport(): Uint8Array | null {
+    return this.outputProtocol.enabled ? this.encodeResizeReport() : null;
+  }
+
+  private encodeResizeReport(): Uint8Array {
+    const metrics = this.getCellMetrics();
+    const height = metrics ? Math.round(this.rows * metrics.rowHeight) : 0;
+    const width = metrics ? Math.round(this.cols * metrics.charWidth) : 0;
+    return encoder.encode(`\x1b[48;${this.rows};${this.cols};${height};${width}t`);
   }
 
   fit(): void {

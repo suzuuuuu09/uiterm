@@ -18,6 +18,13 @@ vi.mock("@wterm/dom", () => ({
     async init() {}
     clearSelection = clearSelection;
     setThemeColors() {}
+    cols = 80;
+    rows = 24;
+    write() {}
+    resize(cols: number, rows: number) {
+      this.cols = cols;
+      this.rows = rows;
+    }
     fit() {}
     destroy() {}
   },
@@ -78,4 +85,49 @@ it("guards the mounted Option handler during IME and consumes a regular Option k
   }
 
   expect(removeListener.mock.calls).toEqual(addListener.mock.calls);
+});
+
+
+it("reports the grid to applications that enable in-band resize", async () => {
+  const host = Object.assign(new EventTarget(), {
+    style: { setProperty() {} },
+    classList: { toggle() {} },
+    remove() {},
+  });
+  vi.stubGlobal("document", { createElement: () => host });
+  vi.stubGlobal("getComputedStyle", () => ({
+    getPropertyValue: (name: string) => name === "--term-cell-width" ? "8px" : "16px",
+  }));
+  const responses: string[] = [];
+  const adapter = new WTermGhosttyAdapter("dom", {
+    onUserInput() {},
+    onAutoResponse: (bytes) => responses.push(new TextDecoder().decode(bytes)),
+    onResize() {},
+  });
+  const write = (data: string) => adapter.write(new TextEncoder().encode(data));
+
+  try {
+    await adapter.mount({ appendChild() {} } as unknown as HTMLElement);
+    write("\x1b[?2048$p");
+    expect(responses).toEqual([]);
+    write("\x1b[?2026;20");
+    write("48h");
+    write("\x1b[?2048h");
+    expect(responses).toEqual(["\x1b[48;24;80;384;640t", "\x1b[48;24;80;384;640t"]);
+
+    adapter.resize(100, 30);
+    expect(adapter.getResizeReport()).toEqual(new TextEncoder().encode("\x1b[48;30;100;480;800t"));
+
+    write("\x1b[?2048;2026l");
+    expect(adapter.getResizeReport()).toBeNull();
+    write("\x1b[?20480h\x1b[?2048 h\x1b[?2048\x18h");
+    expect(responses).toHaveLength(2);
+    expect(adapter.getResizeReport()).toBeNull();
+
+    write("\x1b[?2048h\x1bc");
+    expect(adapter.getResizeReport()).toBeNull();
+  } finally {
+    adapter.dispose();
+    vi.unstubAllGlobals();
+  }
 });
