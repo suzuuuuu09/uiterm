@@ -58,7 +58,7 @@ export const DEFAULT_FONT_FAMILY = DEFAULT_PRIMARY_FONT_FAMILY;
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   locale: "ja",
-  renderer: "wterm-ghostty-dom",
+  renderer: "wterm-ghostty-webgl",
   scrollbackLines: 2000,
   fontSize: DEFAULT_FONT_SIZE,
   lineHeight: DEFAULT_LINE_HEIGHT,

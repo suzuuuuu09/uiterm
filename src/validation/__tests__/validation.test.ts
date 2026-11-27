@@ -68,6 +68,7 @@ describe("Valibot validation schemas", () => {
   });
 
   it("validates UserSettings and restricts TerminalBackendIdSchema", () => {
+    expect(DEFAULT_USER_SETTINGS.renderer).toBe("wterm-ghostty-webgl");
     expect(v.parse(UserSettingsSchema, DEFAULT_USER_SETTINGS)).toEqual(DEFAULT_USER_SETTINGS);
     expect(() =>
       v.parse(UserSettingsSchema, { ...DEFAULT_USER_SETTINGS, scrollbackLines: 10 }),

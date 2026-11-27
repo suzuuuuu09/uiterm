@@ -1,7 +1,8 @@
 import { expect, it, vi } from "vite-plus/test";
+import { createTerminalAdapter } from "../createAdapter.ts";
 import { WTermGhosttyAdapter } from "../wtermAdapter.ts";
 
-const { core, clearSelection } = vi.hoisted(() => ({
+const { core, clearSelection, wtermConstructorCalls } = vi.hoisted(() => ({
   core: {
     dispose: vi.fn(),
     focusEvents: () => true,
@@ -10,11 +11,15 @@ const { core, clearSelection } = vi.hoisted(() => ({
     kittyKeyboardFlags: () => 0,
   },
   clearSelection: vi.fn(),
+  wtermConstructorCalls: [] as Array<{ element: unknown; options: Record<string, unknown> }>,
 }));
 
 vi.mock("@wterm/ghostty", () => ({ GhosttyCore: { load: async () => core } }));
 vi.mock("@wterm/dom", () => ({
   WTerm: class {
+    constructor(element: unknown, options: Record<string, unknown>) {
+      wtermConstructorCalls.push({ element, options });
+    }
     async init() {}
     clearSelection = clearSelection;
     setThemeColors() {}
@@ -126,6 +131,35 @@ it("reports the grid to applications that enable in-band resize", async () => {
 
     write("\x1b[?2048h\x1bc");
     expect(adapter.getResizeReport()).toBeNull();
+  } finally {
+    adapter.dispose();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("passes renderer: 'webgl' to WTerm when using wterm-ghostty-webgl", async () => {
+  const host = Object.assign(new EventTarget(), {
+    style: { setProperty() {} },
+    classList: { toggle() {} },
+    remove() {},
+  });
+  vi.stubGlobal("document", { createElement: () => host });
+  wtermConstructorCalls.length = 0;
+
+  const adapter = createTerminalAdapter("wterm-ghostty-webgl", {
+    onUserInput() {},
+    onAutoResponse() {},
+    onResize() {},
+  });
+
+  try {
+    await adapter.mount({ appendChild() {} } as unknown as HTMLElement);
+    expect(adapter.backendId).toBe("wterm-ghostty-webgl");
+    expect(wtermConstructorCalls).toHaveLength(1);
+    expect(wtermConstructorCalls[0]?.options).toMatchObject({
+      core,
+      renderer: "webgl",
+    });
   } finally {
     adapter.dispose();
     vi.unstubAllGlobals();
