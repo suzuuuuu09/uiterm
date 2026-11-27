@@ -21,4 +21,4 @@ Flake評価と実機動作を区別する。Linux実機はMVP完成条件。ネ�
 
 ## References
 
-- [関連する設計・実装記録](../docs/plan/architecture.md)
+- [関連する設計・実装記録](../plan/architecture.md)

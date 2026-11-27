@@ -21,4 +21,4 @@ herdr-core側と描画側にVT処理が存在するため、CPU・メモリ負�
 
 ## References
 
-- [関連する設計・実装記録](../docs/implementation/phase2-terminal.md)
+- [関連する設計・実装記録](../implementation/phase2-terminal.md)

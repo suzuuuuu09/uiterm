@@ -21,4 +21,4 @@ JSON・Base64による全出力転送は余分な処理を要する。共有ソ�
 
 ## References
 
-- [関連する設計・実装記録](../docs/implementation/phase1-backend.md)
+- [関連する設計・実装記録](../implementation/phase1-backend.md)

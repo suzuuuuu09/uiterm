@@ -21,4 +21,4 @@ herdr-coreをセッション状態の正とし、v0.1.22に固定する。専用
 
 ## References
 
-- [関連する設計・実装記録](../docs/implementation/phase1-backend.md)
+- [関連する設計・実装記録](../implementation/phase1-backend.md)

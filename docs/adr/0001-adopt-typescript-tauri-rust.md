@@ -21,4 +21,4 @@ WebViewの性能とOSごとの入力互換性に依存する。Phase 2で見つ�
 
 ## References
 
-- [関連する設計・実装記録](../docs/plan/architecture.md)
+- [関連する設計・実装記録](../plan/architecture.md)

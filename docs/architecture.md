@@ -27,6 +27,6 @@ herdr-coreがセッション状態の正、uitermがWindow → Workspace → Tab
 
 ## 構成の再評価
 
-Rust + GPUI + ネイティブlibghostty-vt + herdr-coreを第一候補として検証する。採用決定前は現行構成を維持する。[ADR-0010](../decisions/0010-evaluate-native-gpui-terminal.md) 参照。
+Rust + GPUI + ネイティブlibghostty-vt + herdr-coreを第一候補として検証する。採用決定前は現行構成を維持する。[ADR-0010](adr/0010-evaluate-native-gpui-terminal.md) 参照。
 
-詳細：[設計資料](plan/architecture.md)、[ADR一覧](../decisions/README.md)。
+詳細：[設計資料](plan/architecture.md)、[ADR一覧](adr/README.md)。

@@ -21,4 +21,4 @@ macOS実機と固定版coreの統合テストで修正を確認した。上流�
 
 ## References
 
-- [関連する設計・実装記録](../docs/implementation/phase2-terminal.md)
+- [関連する設計・実装記録](../implementation/phase2-terminal.md)

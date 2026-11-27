@@ -6,7 +6,7 @@
 - [アーキテクチャ](docs/architecture.md)
 - [開発手順](docs/development.md)
 - [通信・操作契約](docs/interfaces.md)
-- [ADR一覧](decisions/README.md)
+- [ADR一覧](docs/adr/README.md)
 
 ## 実装上の制約
 
@@ -21,6 +21,6 @@
 
 ## 開発の進め方
 
-Phase 3はPhase 2の検証と [ADR-0010](decisions/0010-evaluate-native-gpui-terminal.md) の評価が済むまで保留する。mainのコードと既存の実装レポートを参照し、ローカルの検証結果をマージ済みと扱わない。
+Phase 3はPhase 2の検証と [ADR-0010](docs/adr/0010-evaluate-native-gpui-terminal.md) の評価が済むまで保留する。mainのコードと既存の実装レポートを参照し、ローカルの検証結果をマージ済みと扱わない。
 
 重要な設計変更はADRに記録する。検証手順は [docs/development.md](docs/development.md) を参照。

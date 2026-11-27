@@ -21,4 +21,4 @@ Reactコンポーネントに操作と状態を閉じ込める案はCLIや設定
 
 ## References
 
-- [関連する設計・実装記録](../docs/implementation/phase1-frontend.md)
+- [関連する設計・実装記録](../implementation/phase1-frontend.md)

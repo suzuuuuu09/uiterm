@@ -20,4 +20,4 @@
 - 新しい判断は [template.md](template.md) を基に次の番号で記録する。
 - Proposedは検討中、Acceptedは採用済み、Rejectedは不採用、Supersededは後続ADRによる置換を表す。
 - 判断の変更は新規ADRに記録し、置換元・置換先を相互参照する。既存の経緯は消さない。
-- 実装・進捗の詳細は [docs](../docs/README.md) に記載する。
+- 実装・進捗の詳細は [docs](../README.md) に記載する。

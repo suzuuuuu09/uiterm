@@ -21,4 +21,4 @@ i18next等は現時点の要件に対する追加依存となる。
 
 ## References
 
-- [関連する設計・実装記録](../docs/implementation/phase1-frontend.md)
+- [関連する設計・実装記録](../implementation/phase1-frontend.md)

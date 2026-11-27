@@ -28,4 +28,4 @@ mainの基準実装は 5ff26e0。シェル、端末描画、内部設定、PTY�
 
 ## 次の判断
 
-[ADR-0010](../decisions/0010-evaluate-native-gpui-terminal.md) に従い、ネイティブGUI・描画基盤のPoCを検討する。採用は未確定であり、Phase 3は保留する。[ロードマップ](plan/roadmap.md) と [MVP完成条件](plan/mvp.md#完成条件) は維持する。
+[ADR-0010](adr/0010-evaluate-native-gpui-terminal.md) に従い、ネイティブGUI・描画基盤のPoCを検討する。採用は未確定であり、Phase 3は保留する。[ロードマップ](plan/roadmap.md) と [MVP完成条件](plan/mvp.md#完成条件) は維持する。

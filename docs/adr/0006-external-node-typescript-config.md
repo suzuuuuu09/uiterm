@@ -21,4 +21,4 @@ Phase 0で方式を検証済み。現在は明示的に有効化した開発用P
 
 ## References
 
-- [関連する設計・実装記録](../docs/implementation/phase1-backend.md)
+- [関連する設計・実装記録](../implementation/phase1-backend.md)
