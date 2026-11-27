@@ -284,7 +284,7 @@ impl Default for HerdrStartOptions {
     }
 }
 
-/// Non-blocking handle for sending input, resize, focus, and credit frames to the isolated core.
+/// Non-blocking handle for sending input, resize, and focus frames to the isolated core.
 #[derive(Clone, Debug)]
 pub struct HerdrHandle {
     pub attach_channel: u32,
@@ -337,7 +337,7 @@ impl HerdrHandle {
     }
 }
 
-/// Output receiver coupled with automatic flow-control `FRAME_CREDIT` acknowledgement.
+/// Receives output without granting credit. Call `acknowledge` after consuming data.
 pub struct HerdrOutputStream {
     rx: mpsc::Receiver<SessionOutput>,
     handle: HerdrHandle,

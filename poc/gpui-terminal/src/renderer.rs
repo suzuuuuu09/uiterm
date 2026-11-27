@@ -722,8 +722,8 @@ pub fn shape_extracted_row(
             let start_col = cell.col;
 
             if cell.width == 1 && cell.text.is_ascii() {
-                // Coalesce contiguous ASCII cells across color/attribute changes into a single
-                // GPUI `ShapedLine` with multiple `TextRun`s (`SmallVec<[DecorationRun; 32]>`).
+                // GPUI 0.2.2 can merge runs with matching decorations before resolving the next font.
+                // Keep font variant changes in separate shaped lines.
                 let mut text_buf = cell.text.clone();
                 let mut runs: Vec<(TextRun, RunStyleKey)> = Vec::with_capacity(8);
                 push_coalesced_run(&mut runs, cell, eff_fg, fonts);
@@ -765,8 +765,7 @@ pub fn shape_extracted_row(
                     shaped,
                 });
             } else if cell.width == 2 && is_coalesceable_bmp_cjk(&cell.text) {
-                // Coalesce contiguous BMP CJK wide glyphs across style changes into one `ShapedLine`
-                // snapped to exact `2 * cell_width` columns; keep emoji/ZWJ/combining/PUA isolated.
+                // Use the same font variant boundaries as ASCII, with two cells per BMP CJK glyph.
                 let mut text_buf = cell.text.clone();
                 let mut runs: Vec<(TextRun, RunStyleKey)> = Vec::with_capacity(4);
                 push_coalesced_run(&mut runs, cell, eff_fg, fonts);
