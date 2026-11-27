@@ -101,7 +101,7 @@
             ]
           );
         in
-        {
+        rec {
           default = pkgs.mkShell {
             packages =
               with pkgs;
@@ -132,6 +132,27 @@
               + ''
                 export HERDR_CORE_BIN="${herdrCore}/bin/herdr-core"
               '';
+          };
+
+          gpui = pkgs.mkShell {
+            inputsFrom = [ default ];
+            packages = pkgs.lib.optionals isLinux [
+              pkgs.zig_0_17
+              pkgs.fontconfig
+              pkgs.freetype
+              pkgs.libxcb
+              pkgs.vulkan-loader
+            ];
+
+            shellHook = pkgs.lib.optionalString isLinux ''
+              export ZIG="${pkgs.zig_0_17}/bin/zig"
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
+                pkgs.fontconfig
+                pkgs.freetype
+                pkgs.libxcb
+                pkgs.vulkan-loader
+              ]}:/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            '';
           };
         }
       );
