@@ -87,7 +87,7 @@ export interface TerminalSessionManagerOptions {
  * - Binary `OutputFrame` bytes flow directly to `TerminalAdapter.write(bytes)` and NEVER enter Zustand.
  * - Authoritative session lifecycle & OSC 7501 metadata from `herdr-core` sync into `AppState`.
  * - Prevents `attachId = 0` IPC calls before `terminalAttach()` resolves by queuing ACK/writes/resizes.
- * - Prevents backend-originated RESIZE loops via guard flag + dimension deduplication.
+ * - Coalesces viewport resize requests and serializes PTY resize notifications.
  * - Normal logs never record raw terminal input bytes or IME text.
  */
 export class TerminalSessionManager {
@@ -524,7 +524,14 @@ export class TerminalSessionManager {
               }
               return;
             }
-            if (sessionRef.disposed || sessionRef.stream?.closed) return;
+            if (sessionRef.disposed) return;
+            if (sessionRef.stream?.closed) {
+              if (cols !== sessionRef.adapter.cols || rows !== sessionRef.adapter.rows) {
+                sessionRef.adapter.resize(cols, rows);
+                this.store.getState().updatePaneSize(id, cols, rows);
+              }
+              return;
+            }
             sessionRef.pendingResize = { cols, rows };
             void this.flushResize(sessionRef);
           },

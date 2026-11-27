@@ -5,6 +5,7 @@ const PRESERVE_PROMPT = new TextEncoder().encode(";redraw=0");
 
 export class TerminalOutputProtocol {
   enabled = false;
+  private savedEnabled = false;
   private state: "ground" | "escape" | "csi" | "private" | "osc" | "string" = "ground";
   private param = 0;
   private matched = false;
@@ -42,6 +43,12 @@ export class TerminalOutputProtocol {
         continue;
       }
 
+      // C0 controls and DEL do not end an ESC or CSI sequence.
+      if ((byte < 0x20 || byte === 0x7f) &&
+          (this.state === "escape" || this.state === "csi" || this.state === "private")) {
+        continue;
+      }
+
       switch (this.state) {
         case "escape":
           this.state = "ground";
@@ -56,6 +63,7 @@ export class TerminalOutputProtocol {
             this.state = "string";
           } else if (byte === 0x63) {
             this.enabled = false;
+            this.savedEnabled = false;
           }
           break;
         case "csi":
@@ -76,6 +84,10 @@ export class TerminalOutputProtocol {
                 requests++;
               } else if (byte === 0x6c) {
                 this.enabled = false;
+              } else if (byte === 0x73) {
+                this.savedEnabled = this.enabled;
+              } else if (byte === 0x72) {
+                this.enabled = this.savedEnabled;
               }
             }
             this.state = "ground";
@@ -111,7 +123,7 @@ export class TerminalOutputProtocol {
     if (!this.oscPrompt) return;
 
     if (this.oscFieldIndex === 0) this.oscPrompt = this.oscField === "133";
-    else if (this.oscFieldIndex === 1) this.oscPrompt = this.oscField === "A";
+    else if (this.oscFieldIndex === 1) this.oscPrompt = this.oscField === "A" || this.oscField === "N";
     else this.oscExplicitRedraw ||= this.oscField === "redraw=";
 
     this.oscFieldIndex = Math.min(2, this.oscFieldIndex + 1);

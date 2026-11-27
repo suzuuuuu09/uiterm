@@ -110,7 +110,7 @@ index 581372e9dc3fe2213fac13e8de8d4dd975fad059..dfe9e516e1c20f31593bc60483545248
          this.bridge.resize(cols, rows);
          this._outputAnnouncements.invalidate();
          this.cols = this.bridge.getCols();
-@@ -1594,15 +1601,19 @@ export class WTerm {
+@@ -1594,15 +1601,21 @@ export class WTerm {
              return;
          const { charWidth, rowHeight } = measured;
          const contentHeight = containerRect.height;
@@ -120,16 +120,18 @@ index 581372e9dc3fe2213fac13e8de8d4dd975fad059..dfe9e516e1c20f31593bc60483545248
          const newCols = Math.max(1, Math.floor(containerRect.width / charWidth));
          const newRows = Math.max(1, Math.floor(height / rowHeight));
 -        const atBottom = this._isScrolledToBottom();
++        const unchanged = newCols === this.cols && newRows === this.rows;
++        const atBottom = unchanged && this._isScrolledToBottom();
          this._setKeyboardInset(contentHeight - height);
 -        if (newCols !== this.cols || newRows !== this.rows) {
 +        if (this.onResizeRequest) {
 +            this.onResizeRequest(newCols, newRows);
 +        }
-+        else if (newCols !== this.cols || newRows !== this.rows) {
++        else if (!unchanged) {
              this.resize(newCols, newRows);
          }
 -        else if (atBottom) {
-+        else if (this._isScrolledToBottom()) {
++        if (atBottom) {
              this._scrollToBottom();
          }
      }

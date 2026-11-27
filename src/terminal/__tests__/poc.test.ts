@@ -320,10 +320,16 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
         false,
       );
       adapterCallbacks.onUserInput(encoder.encode("stale"));
+      adapterCallbacks.onResize(100, 30);
       expect(session.attachId).toBe(0);
       expect(writes).not.toHaveBeenCalled();
 
+      const reattach = vi.spyOn(mock, "terminalAttach");
       await Promise.all([mgr.resyncSession("closed"), mgr.resyncSession("closed")]);
+      expect(reattach).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ cols: 100, rows: 30 }),
+        expect.any(Function),
+      );
       expect(callbacks).toHaveLength(2);
       expect(session.attachId).toBeGreaterThan(0);
       const rendered = render.mock.calls.length;

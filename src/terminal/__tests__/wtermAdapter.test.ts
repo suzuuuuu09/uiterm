@@ -87,7 +87,6 @@ it("guards the mounted Option handler during IME and consumes a regular Option k
   expect(removeListener.mock.calls).toEqual(addListener.mock.calls);
 });
 
-
 it("reports the grid to applications that enable in-band resize", async () => {
   const host = Object.assign(new EventTarget(), {
     style: { setProperty() {} },
@@ -118,13 +117,17 @@ it("reports the grid to applications that enable in-band resize", async () => {
     adapter.resize(100, 30);
     expect(adapter.getResizeReport()).toEqual(new TextEncoder().encode("\x1b[48;30;100;480;800t"));
 
-    write("\x1b[?2048;2026l");
+    write("\x1b[?2048s\x1b[\x07?2048;2026l");
     expect(adapter.getResizeReport()).toBeNull();
     write("\x1b[?20480h\x1b[?2048 h\x1b[?2048\x18h");
     expect(responses).toHaveLength(2);
     expect(adapter.getResizeReport()).toBeNull();
 
-    write("\x1b[?2048h\x1bc");
+    write("\x1b[?2048r");
+    expect(adapter.getResizeReport()).not.toBeNull();
+    expect(responses).toHaveLength(2);
+
+    write("\x1bc\x1b[?2048r");
     expect(adapter.getResizeReport()).toBeNull();
   } finally {
     adapter.dispose();

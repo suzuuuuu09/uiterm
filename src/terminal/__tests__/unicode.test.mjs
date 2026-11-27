@@ -41,10 +41,11 @@ it("keeps UTF-8 fragments and graphemes in the expected terminal columns", async
 });
 
 it.each([
-  ["", "\x1b\\", "試験>"],
-  [";redraw=0", "\x07", "試験>"],
-  [";redraw=1", "\x1b\\", ""],
-])("handles a fragmented OSC 133 prompt with options %j on resize", async (options, terminator, expected) => {
+  ["A", "", "\x1b\\", "試験>"],
+  ["N", "", "\x07", "試験>"],
+  ["A", ";redraw=0", "\x07", "試験>"],
+  ["A", ";redraw=1", "\x1b\\", ""],
+])("handles a fragmented OSC 133 %s prompt with options %j on resize", async (marker, options, terminator, expected) => {
   const resolve = createRequire(import.meta.url).resolve;
   const wasm = readFileSync(resolve("@wterm/ghostty/ghostty-vt.wasm"));
   vi.stubGlobal("fetch", async () => new Response(new Uint8Array(wasm), {
@@ -56,7 +57,7 @@ it.each([
     core.init(80, 24);
     const bytes = new TextEncoder().encode(
       "履歴\r\n".repeat(40) +
-        `\x1b]133;A;click_events=1${options}${terminator}試験> \x1b]133;B\x1b\\`,
+        `\x1b]133;${marker};click_events=1${options}${terminator}試験> \x1b]133;B\x1b\\`,
     );
     for (const byte of bytes) core.writeRaw(output.process(Uint8Array.of(byte)).bytes);
 

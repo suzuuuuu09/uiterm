@@ -90,7 +90,7 @@ export interface IpcError {
 
 | `tag` | 定数名 | ペイロード形式 | 説明 |
 | --- | --- | --- | --- |
-| `0x00` | `OUTPUT_FRAME_DATA` | 生 VT / PTY 出力バイト列 | 初回は `herdr-core` による現在画面の再描画（+ オプションの履歴 + OSC 7501 状態 + タイトル + `CSI ?9001h/l`）、以降はライブ出力。描画側では、再描画を明示していない OSC 133 のプロンプト開始マーカーに `redraw=0` を補って `wterm` に渡す。 |
+| `0x00` | `OUTPUT_FRAME_DATA` | 生 VT / PTY 出力バイト列 | 初回は `herdr-core` による現在画面の再描画（+ オプションの履歴 + OSC 7501 状態 + タイトル + `CSI ?9001h/l`）、以降はライブ出力。描画側では、再描画を明示していない OSC 133 のプロンプト開始マーカー（`A` / `N`）に `redraw=0` を補って `wterm` に渡す。 |
 | `0x01` | `OUTPUT_FRAME_RESIZE` | `[cols: u16 LE][rows: u16 LE]` (4 bytes) | herdr-core 0.1.22 では `observe: true` かつ `resizeNotifications: true` のアタッチに送信される。監視側は後続の `DATA` を処理する前に描画グリッドをリサイズする。uiterm の操作用アタッチはペインのサイズを使う。 |
 | `0x02` | `OUTPUT_FRAME_CLOSE` | UTF-8 JSON（省略可） | ストリーム終了通知。例: `{"reason":"exited","exit_code":0,"signal":null}`。 |
 

@@ -85,3 +85,26 @@ it("keeps following output when a programmatic scroll event arrives after the vi
     vi.unstubAllGlobals();
   }
 });
+
+it("keeps following output when the keyboard inset changes without changing the grid", () => {
+  const terminal = {
+    cols: 80,
+    rows: 24,
+    autoResize: true,
+    _lastContainerRect: { width: 640, height: 390 },
+    _measureCharSize: () => ({ charWidth: 8, rowHeight: 16 }),
+    _visibleContentHeight: () => 384,
+    _setKeyboardInset: vi.fn(),
+    _isScrolledToBottom() {
+      return this._setKeyboardInset.mock.calls.length === 0;
+    },
+    _scrollToBottom: vi.fn(),
+    onResizeRequest: vi.fn(),
+  };
+
+  Reflect.get(WTerm.prototype, "_fitAutoResize").call(terminal);
+
+  expect(terminal._setKeyboardInset).toHaveBeenCalledWith(6);
+  expect(terminal.onResizeRequest).toHaveBeenCalledWith(80, 24);
+  expect(terminal._scrollToBottom).toHaveBeenCalledOnce();
+});
