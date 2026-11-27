@@ -23,9 +23,9 @@ export type AppErrorCode =
   | "TERMINAL_RENDER_FAILED"
   | "TERMINAL_QUEUE_FULL";
 
-export type ErrorSeverity = "info" | "warn" | "error" | "fatal";
+type ErrorSeverity = "info" | "warn" | "error" | "fatal";
 
-export interface AppErrorOptions {
+interface AppErrorOptions {
   code: AppErrorCode;
   messageKey: TranslationKey;
   messageParams?: TranslationParams;
@@ -37,7 +37,7 @@ export interface AppErrorOptions {
   cause?: unknown;
 }
 
-export interface ErrorDiagnostics {
+interface ErrorDiagnostics {
   readonly code: AppErrorCode;
   readonly severity: ErrorSeverity;
   readonly devMessage: string;
@@ -111,7 +111,7 @@ export class AppError extends Error {
   }
 }
 
-export function isIpcErrorLike(value: unknown): value is IpcError {
+function isIpcErrorLike(value: unknown): value is IpcError {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -198,7 +198,7 @@ export function normalizeError(
   });
 }
 
-export type AsyncResult<T> =
+type AsyncResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: AppError };
 

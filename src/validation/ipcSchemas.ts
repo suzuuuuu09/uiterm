@@ -18,12 +18,12 @@ import type {
  *   and statically assert compatibility with `src/ipc/types.ts` so the two never drift.
  */
 
-export const MIN_TERMINAL_COLS = 1;
-export const MAX_TERMINAL_COLS = 1000;
-export const MIN_TERMINAL_ROWS = 1;
-export const MAX_TERMINAL_ROWS = 1000;
+const MIN_TERMINAL_COLS = 1;
+const MAX_TERMINAL_COLS = 1000;
+const MIN_TERMINAL_ROWS = 1;
+const MAX_TERMINAL_ROWS = 1000;
 
-export const SessionIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
+const SessionIdSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(256));
 
 export const AttachIdSchema = v.pipe(
   v.number(),
@@ -46,9 +46,7 @@ export const TerminalRowsSchema = v.pipe(
   v.maxValue(MAX_TERMINAL_ROWS),
 );
 
-export const InputKindSchema = v.picklist(["user", "automatic"]);
-
-export const DisplayFactsSchema = v.object({
+const DisplayFactsSchema = v.object({
   fg: v.optional(v.nullable(v.string())),
   bg: v.optional(v.nullable(v.string())),
   cursor: v.optional(v.nullable(v.string())),
@@ -91,7 +89,7 @@ export const ResizePayloadSchema = v.object({
   rows: TerminalRowsSchema,
 });
 
-export type ResizePayload = v.InferOutput<typeof ResizePayloadSchema>;
+type ResizePayload = v.InferOutput<typeof ResizePayloadSchema>;
 
 export const IpcErrorSchema = v.object({
   code: v.pipe(v.string(), v.minLength(1)),
@@ -140,7 +138,7 @@ const LabelsEventDataSchema = v.object({
   labels: v.record(v.string(), v.string()),
 });
 
-export interface ParsedTerminationEventData {
+interface ParsedTerminationEventData {
   readonly reason: string | null;
   readonly exitCode: number | null;
   readonly signal: string | null;

@@ -51,15 +51,13 @@ export const UserSettingsSchema = v.object({
 
 export type UserSettings = v.InferOutput<typeof UserSettingsSchema>;
 
-export const DEFAULT_FONT_FAMILY = DEFAULT_PRIMARY_FONT_FAMILY;
-
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   locale: "ja",
   renderer: "wterm-ghostty-dom",
   scrollbackLines: 2000,
   fontSize: DEFAULT_FONT_SIZE,
   lineHeight: DEFAULT_LINE_HEIGHT,
-  fontFamily: DEFAULT_FONT_FAMILY,
+  fontFamily: DEFAULT_PRIMARY_FONT_FAMILY,
   nerdFontFallback: DEFAULT_TERMINAL_APPEARANCE.nerdFontFallback,
   cursorStyle: DEFAULT_TERMINAL_APPEARANCE.cursorStyle,
   cursorBlink: DEFAULT_TERMINAL_APPEARANCE.cursorBlink,

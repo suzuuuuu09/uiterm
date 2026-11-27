@@ -5,7 +5,7 @@ const LOCALE_TAGS: Record<Locale, string> = {
   en: "en-US",
 };
 
-export function toBcp47Tag(locale: Locale): string {
+function toBcp47Tag(locale: Locale): string {
   return LOCALE_TAGS[locale];
 }
 

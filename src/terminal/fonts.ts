@@ -9,7 +9,7 @@
  * - Full settings UI and TypeScript config integration are deferred to Phase 4.
  */
 
-export interface FontFallbackOptions {
+interface FontFallbackOptions {
   /** Append common system-installed Nerd Font / symbol fallbacks for PUA icons. */
   readonly nerdFontFallback?: boolean;
   /** Append Japanese monospace/gothic fallbacks for CJK full-width & half-width kana. */
@@ -68,7 +68,7 @@ export const JAPANESE_FONT_FALLBACK_FAMILIES: readonly string[] = [
 /**
  * System color emoji fallback families.
  */
-export const EMOJI_FONT_FALLBACK_FAMILIES: readonly string[] = [
+const EMOJI_FONT_FALLBACK_FAMILIES: readonly string[] = [
   '"Apple Color Emoji"',
   '"Noto Color Emoji"',
 ];

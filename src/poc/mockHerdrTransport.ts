@@ -1,28 +1,13 @@
-import { validateResizePayload } from "../validation/ipcSchemas.ts";
-import { JAPANESE_TEST_PAYLOAD, VT_ANSI_TEST_PAYLOAD, VT_QUERY_TEST_PAYLOAD } from "./probes.ts";
-
-export interface TerminalOutputChunk {
+interface TerminalOutputChunk {
   readonly kind: "initial_screen" | "stream" | "resync";
   readonly bytes: Uint8Array;
-}
-
-export interface TerminalTransport {
-  readonly sessionId: string;
-  subscribeOutput(listener: (chunk: TerminalOutputChunk) => void): () => void;
-  attach(cols: number, rows: number): void;
-  sendInput(bytes: Uint8Array): void;
-  resize(cols: number, rows: number): void;
-  requestResync(): void;
-  dispose(): void;
 }
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-/**
- * Phase 0 in-memory mock transport retained for regression testing and standalone benchmarks.
- */
-export class MockHerdrTransport implements TerminalTransport {
+/** Phase 0 in-memory mock transport used by the regression tests. */
+export class MockHerdrTransport {
   readonly sessionId: string;
   private listeners = new Set<(chunk: TerminalOutputChunk) => void>();
   private cols = 80;
@@ -98,12 +83,6 @@ export class MockHerdrTransport implements TerminalTransport {
     }
   }
 
-  resize(cols: number, rows: number): void {
-    const validated = validateResizePayload({ sessionId: this.sessionId, cols, rows });
-    this.cols = validated.cols;
-    this.rows = validated.rows;
-  }
-
   requestResync(): void {
     const resyncSnapshot = [
       `\x1b[2J\x1b[H`,
@@ -112,18 +91,6 @@ export class MockHerdrTransport implements TerminalTransport {
       `\x1b[32muiterm-mock\x1b[0m$ ${this.lineBuffer}`,
     ].join("");
     this.emit("resync", resyncSnapshot);
-  }
-
-  emitJapaneseTest(): void {
-    this.emit("stream", JAPANESE_TEST_PAYLOAD);
-  }
-
-  emitVtTest(): void {
-    this.emit("stream", VT_ANSI_TEST_PAYLOAD);
-  }
-
-  emitQueryProbe(): void {
-    this.emit("stream", VT_QUERY_TEST_PAYLOAD);
   }
 
   emitBurst(lines = 10_000, chunkLines = 200): { totalBytes: number; durationMs: number } {

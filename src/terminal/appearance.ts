@@ -8,12 +8,12 @@ import {
   DEFAULT_PRIMARY_FONT_FAMILY,
 } from "./fonts.ts";
 
-export type WtermThemeColors = NonNullable<Parameters<WTerm["setThemeColors"]>[0]>;
+type WtermThemeColors = NonNullable<Parameters<WTerm["setThemeColors"]>[0]>;
 
 export type CursorStyle = "auto" | "block" | "bar" | "underline";
 export type CursorBlinkMode = "auto" | "on" | "off";
 
-export type AnsiColorPalette = readonly [
+type AnsiColorPalette = readonly [
   string,
   string,
   string,

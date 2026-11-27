@@ -8,8 +8,7 @@ use std::time::{Duration, Instant};
 use ghostty_vt::Error as VtError;
 use ghostty_vt::fmt::Format;
 use ghostty_vt::key::{
-    Action as KeyAction, Encoder as KeyEncoder, Event as KeyEvent, Key, KittyKeyFlags, Mods,
-    OptionAsAlt,
+    Action as KeyAction, Encoder as KeyEncoder, Event as KeyEvent, Key, Mods, OptionAsAlt,
 };
 use ghostty_vt::mouse::{
     Action as MouseAction, Button as MouseButton, Encoder as MouseEncoder,
@@ -17,7 +16,7 @@ use ghostty_vt::mouse::{
 };
 use ghostty_vt::paste;
 use ghostty_vt::render::{
-    CellIterator, CursorVisualStyle, Dirty, RenderState, RowId, RowIterator, Snapshot,
+    CellIterator, CursorVisualStyle, Dirty, RenderState, RowIterator, Snapshot,
 };
 use ghostty_vt::screen::{CellWide, Screen};
 use ghostty_vt::selection::FormatOptions;
@@ -69,7 +68,6 @@ pub struct StyledCell {
     pub underline: Underline,
     pub underline_rgb: Option<(u8, u8, u8)>,
     pub strikethrough: bool,
-    #[allow(dead_code)]
     pub overline: bool,
 }
 
@@ -406,13 +404,6 @@ impl VtTerminal {
 
     pub fn is_viewport_active(&self) -> bool {
         self.terminal.is_viewport_active().unwrap_or(true)
-    }
-
-    #[allow(dead_code)]
-    pub fn kitty_keyboard_flags(&self) -> KittyKeyFlags {
-        self.terminal
-            .kitty_keyboard_flags()
-            .unwrap_or(KittyKeyFlags::DISABLED)
     }
 
     /// Feeds raw PTY bytes into `libghostty-vt` and drains VT events (`PtyWrite`, title, bell, sync hold).
@@ -855,11 +846,6 @@ pub fn extract_row_cells(
         col = col.saturating_add(1);
     }
     Ok(row_cells)
-}
-
-#[allow(dead_code)]
-pub fn row_id_value(id: RowId) -> [u64; 2] {
-    id.0
 }
 
 /// Returns current process resident set size (RSS) in MiB on macOS.
