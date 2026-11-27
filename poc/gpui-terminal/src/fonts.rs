@@ -46,6 +46,25 @@ impl FontPreset {
         FontPreset::Menlo,
     ];
 
+    pub fn from_cli_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "default" => Some(FontPreset::Default),
+            "udev" | "udev-gothic" | "udev35nf" | "udev-gothic-35nf" => {
+                Some(FontPreset::UdevGothic35Nf)
+            }
+            "menlo" => Some(FontPreset::Menlo),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            FontPreset::Default => FontPreset::UdevGothic35Nf,
+            FontPreset::UdevGothic35Nf => FontPreset::Menlo,
+            FontPreset::Menlo => FontPreset::Default,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             FontPreset::Default => "Default (Menlo+NF)",
@@ -68,6 +87,16 @@ impl FontPreset {
 
 /// Builds a GPUI `Font` with deduplicated Nerd Font, Japanese, and Emoji fallbacks.
 pub fn build_terminal_font(preset: FontPreset, nerd_font_fallback: bool) -> Font {
+    build_terminal_font_styled(preset, nerd_font_fallback, false, false)
+}
+
+/// Builds a GPUI `Font` with bold/italic variants and deduplicated fallbacks.
+pub fn build_terminal_font_styled(
+    preset: FontPreset,
+    nerd_font_fallback: bool,
+    bold: bool,
+    italic: bool,
+) -> Font {
     let primary = preset.primary_family();
     let mut fallbacks: Vec<String> = Vec::new();
     let mut push_unique = |name: &str| {
@@ -98,8 +127,16 @@ pub fn build_terminal_font(preset: FontPreset, nerd_font_fallback: bool) -> Font
         family: primary.into(),
         features: FontFeatures::default(),
         fallbacks: Some(FontFallbacks::from_fonts(fallbacks)),
-        weight: FontWeight::NORMAL,
-        style: FontStyle::Normal,
+        weight: if bold {
+            FontWeight::BOLD
+        } else {
+            FontWeight::NORMAL
+        },
+        style: if italic {
+            FontStyle::Italic
+        } else {
+            FontStyle::Normal
+        },
     }
 }
 
