@@ -263,8 +263,14 @@ describe("appStore (Zustand Vanilla, React-independent)", () => {
     store.getState().setIsComposing(false);
     expect(store.getState().ui).toBe(uiBefore);
 
-    store.getState().toggleSidebar();
     expect(store.getState().ui.sidebarVisible).toBe(false);
+    expect(store.getState().ui.diagnosticsPanelVisible).toBe(false);
+
+    store.getState().toggleSidebar();
+    expect(store.getState().ui.sidebarVisible).toBe(true);
+
+    store.getState().toggleDiagnosticsPanel();
+    expect(store.getState().ui.diagnosticsPanelVisible).toBe(true);
 
     store.getState().updateSettings({ locale: "en", fontSize: 16 });
     expect(store.getState().settings.locale).toBe("en");

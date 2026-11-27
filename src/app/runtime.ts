@@ -29,6 +29,7 @@ export interface CreateAppRuntimeOptions {
   diagnostics?: SessionDiagnosticsSink;
   isBusy?: () => boolean;
   writeClipboard?: (text: string) => Promise<void>;
+  readClipboard?: () => Promise<string>;
 }
 
 /**
@@ -53,6 +54,7 @@ export function createAppRuntime(options: CreateAppRuntimeOptions = {}): AppRunt
     getMountRoot: () => mountRoot,
     isBusy: options.isBusy,
     writeClipboard: options.writeClipboard,
+    readClipboard: options.readClipboard,
   });
 
   return {

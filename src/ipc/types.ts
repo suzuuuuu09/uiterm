@@ -5,6 +5,7 @@
  * and re-exported here via `./generated/index.ts` so the rest of the frontend
  * keeps a single stable import path.
  */
+import { parseTerminationEventData } from "../validation/ipcSchemas.ts";
 import type {
   ConfigEvalParams,
   ConfigEvalResult,
@@ -88,17 +89,8 @@ export function decodeOutputFrame(buffer: ArrayBuffer): OutputFrame {
       return { kind: "close", reason: "detached", exitCode: null, signal: null };
     }
     try {
-      const parsed = JSON.parse(text) as {
-        reason?: string;
-        exit_code?: number | null;
-        signal?: string | null;
-      };
-      return {
-        kind: "close",
-        reason: parsed.reason ?? "closed",
-        exitCode: parsed.exit_code ?? null,
-        signal: parsed.signal ?? null,
-      };
+      const { reason, exitCode, signal } = parseTerminationEventData(JSON.parse(text));
+      return { kind: "close", reason: reason ?? "closed", exitCode, signal };
     } catch {
       return { kind: "close", reason: text, exitCode: null, signal: null };
     }

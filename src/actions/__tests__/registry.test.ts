@@ -32,6 +32,7 @@ function createStubAdapterFactory(selectionText = "selected text") {
     async getSelection() {
       return selectionText;
     },
+    paste() {},
     dispose() {},
   });
 }
@@ -186,7 +187,14 @@ describe("ActionRegistry", () => {
       expect(runtime.store.getState().settings.locale).toBe("en");
 
       const sidebarRes = await runtime.actions.execute("app.toggleSidebar", {}, { caller: "keybind" });
-      expect(sidebarRes).toEqual({ ok: true, value: { sidebarVisible: false } });
+      expect(sidebarRes).toEqual({ ok: true, value: { sidebarVisible: true } });
+
+      const diagRes = await runtime.actions.execute(
+        "app.toggleDiagnostics",
+        {},
+        { caller: "keybind" },
+      );
+      expect(diagRes).toEqual({ ok: true, value: { diagnosticsPanelVisible: true } });
 
       // Close terminal
       const closed = await runtime.actions.execute("terminal.close", { tabId }, { caller: "gui" });

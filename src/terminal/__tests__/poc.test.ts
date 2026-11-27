@@ -132,6 +132,7 @@ function sessionAdapter(
       async getSelection() {
         return "";
       },
+      paste() {},
       dispose,
     };
   };
@@ -151,6 +152,8 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
     const mock = new MockIpcClient();
     let emitFrame!: (frame: OutputFrame) => void;
     let resolveAttach!: (res: TerminalAttachResult) => void;
+    let markAttachStarted!: () => void;
+    const attachStarted = new Promise<void>((resolve) => { markAttachStarted = resolve; });
 
     mock.terminalAck = async (attachId, bytes) => {
       ackCalls.push({ attachId, bytes });
@@ -169,6 +172,7 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
       emitFrame = onFrame;
       return new Promise<TerminalAttachResult>((resolve) => {
         resolveAttach = resolve;
+        markAttachStarted();
       });
     };
 
@@ -187,8 +191,7 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
         false,
       );
 
-      await Promise.resolve();
-      await Promise.resolve();
+      await attachStarted;
 
       emitFrame({ kind: "data", bytes: new Uint8Array(20 * 1024).fill(65) });
 
@@ -451,6 +454,7 @@ describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounde
         async getSelection() {
           return "";
         },
+        paste() {},
         dispose() {
           disposedCount++;
         },
@@ -471,6 +475,8 @@ describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounde
       expect(mountOptions[1]?.renderingPaused).toBe(true);
       expect(mountOptions[2]?.renderingPaused).toBe(true);
 
+      mgr.setActive("s1");
+      focusCalls.length = 0;
       mgr.setActive("s2");
       expect(focusCalls).toEqual([
         { attachId: s1.attachId, focused: false },
@@ -485,6 +491,16 @@ describe("Phase 0 Optimization guards (renderer restriction, focus dedup, bounde
       expect(focusCalls).toEqual([
         { attachId: s2.attachId, focused: false },
         { attachId: s3.attachId, focused: true },
+      ]);
+
+      focusCalls.length = 0;
+      mgr.setWindowFocused(false);
+      mgr.setActive("s1");
+      mgr.setWindowFocused(true);
+      mgr.setWindowFocused(true);
+      expect(focusCalls).toEqual([
+        { attachId: s3.attachId, focused: false },
+        { attachId: s1.attachId, focused: true },
       ]);
 
       mgr.stopEventStream();

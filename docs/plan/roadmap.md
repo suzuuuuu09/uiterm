@@ -37,19 +37,24 @@ description: "uitermの開発ロードマップをまとめる"
 
 実装・検証の詳細は [docs/implementation/phase1-backend.md](../implementation/phase1-backend.md)・[docs/implementation/phase1-frontend.md](../implementation/phase1-frontend.md) を参照。macOS arm64 での統合レビュー・検証を完了し、Phase 2 へ移行可能。NixOS / Hyprland の実機検証（ビルド・GTK/WebKitGTK・Wayland・シグナル終了・Fcitx5）は引き続き保留とし、[MVP の完成条件](./mvp.md#完成条件)（Phase 6）として維持する。
 
-## Phase 2 — ターミナル
+## Phase 2 — ターミナル（未完了・一部実機検証待ち）
 
 基本的なターミナルとして利用できる状態にする。
 
-- [ ] シェルの起動・終了
-- [ ] ターミナルの描画・入力
-- [ ] スクロールバック
-- [ ] コピー・ペースト
-- [ ] リサイズ
-- [ ] フォント・カラー・カーソル
-- [ ] Nerd Font の表示対応
-- [ ] 日本語IME・文字幅・フォントフォールバック
-- [ ] fish・Neovim・Codexとの互換性確認
+- [x] シェルの起動・終了（リリース .app、専用 core と fish の起動、SIGTERM 後のプロセス解放。再起動の競合と切断後の購読復旧を自動テスト）
+- [x] ターミナルの描画・入力（wterm DOM / Ghostty、Action Registry、PoC 診断ドロワー。VT とキー入力を自動テスト）
+- [x] スクロールバック（既定 2,000 行、ヘッドレスで 10,000 行出力と破棄を測定）
+- [ ] コピー・ペースト（アクション・ブラケットペーストの生成・再起動との競合を自動テスト。macOS のネイティブクリップボードは手動検証待ち）
+- [ ] リサイズ・フォーカス（PTY の初期行列数と IPC のフォーカス通知を確認。macOS のドラッグリサイズ、ズーム、Neovim の実フォーカスは手動検証待ち）
+- [x] フォント・カラー・カーソルの内部設定（システムフォント、行間、ANSI パレット、形状・点滅。グリフとセルの目視確認は下記）
+- [ ] Nerd Font・文字幅・日本語 IME（Ghostty の PUA・日本語・絵文字・結合文字のセルと IME イベント回帰は確認済み。ユーザーによる修正後 macOS リリースビルド実機検証で Nerd Font 表示および macSKK フォーカス復帰時の未確定文字表示は正常確認済み。文字幅 3 パターン、標準日本語入力、候補位置、確定 Enter、Option 競合は手動確認待ち）
+- [ ] fish・Neovim・Codex の対話互換性（隔離 PTY の fish・Neovim と `codex --version` は確認済み。WKWebView での対話と実打鍵を確認する）
+
+- [x] カノニカル入力での UTF-8 消去（uiterm 側 `--uiterm-pty-init` で macOS/Linux の新規 PTY に `IUTF8` を設定する暫定修正・回帰テスト・リリース `.app` 検証に加え、ユーザーによる実機検証でも文字化け修正を確認済み。上流修正後に撤去予定）
+- [ ] macSKK・標準日本語入力の実打鍵確認（blur 処理修正・連続確定/未確定削除の回帰テスト追加済み。ユーザー実機検証で macSKK のフォーカス復帰時の未確定文字表示は正常確認済み。Esc 取消・確定フローおよび標準日本語入力の実打鍵確認待ち）
+- [ ] macism による Neovim 起動遅延（自動比較および修正後ビルドのユーザー実機検証のいずれでも再現せず。ただし根本原因未特定のため恒久的な解決済みとは扱わず、既知の調査事項として維持し再発時の `sample` スタック採取待ち）
+
+実機検証結果・残存チェックリスト・性能測定・IUTF8 の暫定対応・macism の調査事項は [Phase 2 実装・検証レポート](../implementation/phase2-terminal.md) を参照。一部実機検証が未完了のため Phase 2 は未完了扱いとし、Phase 3 へは移行しない。NixOS / Hyprland 実機と 30 分の連続利用時のメモリ測定は Phase 6 に残す。
 
 ## Phase 3 — ワークスペース
 

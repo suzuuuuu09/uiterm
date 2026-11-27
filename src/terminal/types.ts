@@ -1,4 +1,11 @@
 import type { TerminalBackendId } from "../validation/settingsSchemas.ts";
+import type {
+  CursorBlinkMode,
+  CursorStyle,
+  TerminalAppearance,
+  TerminalTheme,
+} from "./appearance.ts";
+import type { CellMetrics } from "./fonts.ts";
 
 export interface TerminalAdapterCallbacks {
   /** User-originated input (keyboard, IME commit, paste, mouse). */
@@ -7,12 +14,19 @@ export interface TerminalAdapterCallbacks {
   onAutoResponse: (bytes: Uint8Array) => void;
   /** Grid dimension changes. */
   onResize: (cols: number, rows: number) => void;
+  isComposing?: () => boolean;
 }
 
 export interface TerminalAdapterOptions {
   scrollbackLines?: number;
   fontSize?: number;
+  lineHeight?: number;
   fontFamily?: string;
+  nerdFontFallback?: boolean;
+  cursorStyle?: CursorStyle;
+  cursorBlink?: CursorBlinkMode;
+  theme?: TerminalTheme;
+  macOptionAsMeta?: boolean;
   renderingPaused?: boolean;
 }
 
@@ -27,5 +41,11 @@ export interface TerminalAdapter {
   focus(): void;
   setHidden(hidden: boolean): void;
   getSelection(): Promise<string>;
+  hasSelection?: () => boolean;
+  selectAll?: () => Promise<boolean>;
+  clearSelection?: () => void;
+  paste(text: string): void;
+  applyAppearance?: (patch: Partial<TerminalAppearance> & { macOptionAsMeta?: boolean }) => void;
+  getCellMetrics?: () => CellMetrics | null;
   dispose(): void;
 }

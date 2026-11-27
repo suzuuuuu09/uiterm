@@ -161,7 +161,7 @@ pub struct HerdrTerminalRecord {
     #[serde(default)]
     pub exit_code: Option<i32>,
     #[serde(default)]
-    pub signal: Option<String>,
+    pub signal: Option<i32>,
     #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
@@ -176,12 +176,26 @@ pub struct HerdrTerminalRecord {
     pub foreground: Option<ForegroundProcess>,
 }
 
+fn normalize_posix_signal(signal: i32) -> String {
+    match signal {
+        1 => "SIGHUP".to_string(),
+        2 => "SIGINT".to_string(),
+        3 => "SIGQUIT".to_string(),
+        6 => "SIGABRT".to_string(),
+        9 => "SIGKILL".to_string(),
+        13 => "SIGPIPE".to_string(),
+        14 => "SIGALRM".to_string(),
+        15 => "SIGTERM".to_string(),
+        other => other.to_string(),
+    }
+}
+
 impl From<HerdrTerminalRecord> for TerminalInfo {
     fn from(r: HerdrTerminalRecord) -> Self {
         Self {
             address: r.address,
             name: r.name,
-            argv: r.argv,
+            argv: crate::os::strip_pty_iutf8_wrapper(r.argv),
             cwd: r.cwd,
             state: r.state,
             cols: r.cols,
@@ -191,7 +205,7 @@ impl From<HerdrTerminalRecord> for TerminalInfo {
             created_ms: r.created_ms,
             finished_ms: r.finished_ms,
             exit_code: r.exit_code,
-            signal: r.signal,
+            signal: r.signal.map(normalize_posix_signal),
             reason: r.reason,
             status: r.status,
             status_ms: r.status_ms,
@@ -530,5 +544,13 @@ mod tests {
                 .expect_err(&format!("case {idx} should fail validation"));
             assert_eq!(err.code, "invalid_args", "case {idx} error code mismatch");
         }
+    }
+
+    #[test]
+    fn herdr_terminal_record_normalizes_posix_signal_names() {
+        assert_eq!(normalize_posix_signal(9), "SIGKILL");
+        assert_eq!(normalize_posix_signal(15), "SIGTERM");
+        assert_eq!(normalize_posix_signal(2), "SIGINT");
+        assert_eq!(normalize_posix_signal(99), "99");
     }
 }

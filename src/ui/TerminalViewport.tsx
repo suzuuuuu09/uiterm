@@ -52,12 +52,20 @@ export function TerminalViewport({ onHostReady }: TerminalViewportProps) {
       }
     };
 
+    const onBlur = (e: FocusEvent) => {
+      const doc = el.ownerDocument;
+      if (e.relatedTarget === null && !doc.hasFocus() && doc.activeElement === e.target) return;
+      appStore.getState().setIsComposing(false);
+    };
+
+    el.addEventListener("blur", onBlur, true);
     el.addEventListener("compositionstart", onCompStart, true);
     el.addEventListener("compositionupdate", onCompUpdate, true);
     el.addEventListener("compositionend", onCompEnd, true);
     el.addEventListener("keydown", onKeyDown, true);
 
     return () => {
+      el.removeEventListener("blur", onBlur, true);
       el.removeEventListener("compositionstart", onCompStart, true);
       el.removeEventListener("compositionupdate", onCompUpdate, true);
       el.removeEventListener("compositionend", onCompEnd, true);

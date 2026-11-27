@@ -1,0 +1,31 @@
+diff --git a/dist/input.js b/dist/input.js
+index 78a86ffd96eec03222777f40e9db6a0561684c3f..7ab8cd176c5e7c2c20ce898df074bde363bdd6d9 100644
+--- a/dist/input.js
++++ b/dist/input.js
+@@ -155,14 +155,21 @@ export class InputHandler {
+             if (this.getBridge()?.focusEvents?.())
+                 this.onData("\x1b[I");
+         };
+-        this._onBlur = () => {
++        this._onBlur = (event) => {
+             this.tabExitArmed = false;
+             this.focused = false;
+-            this.composing = false;
+-            this.recentCompositionCommit = null;
++            const doc = this.textarea.ownerDocument;
++            // WebKit blurs the focused element when its window deactivates.
++            const windowBlur = event.relatedTarget === null &&
++                !doc.hasFocus() && doc.activeElement === this.textarea;
++            if (!windowBlur || !this.composing) {
++                this.composing = false;
++                this.hideComposition();
++                this.textarea.value = "";
++            }
++            if (!windowBlur)
++                this.recentCompositionCommit = null;
+             this.suppressNextTouchDeleteInput = false;
+-            this.hideComposition();
+-            this.textarea.value = "";
+             this.element.classList.remove("focused");
+             this.stopMouseCapture();
+             this.lastMouseMotion = null;

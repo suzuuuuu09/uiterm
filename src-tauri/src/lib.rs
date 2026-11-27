@@ -4,7 +4,7 @@ mod bindings;
 pub mod commands;
 pub mod config_runtime;
 pub mod herdr;
-mod os;
+pub mod os;
 
 use app_state::AppState;
 use std::sync::Arc;
