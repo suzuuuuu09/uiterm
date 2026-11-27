@@ -1624,6 +1624,21 @@ const PROBE_CASES: &[ProbeCase] = &[
     },
 ];
 
+fn feed_benchmark_output(
+    rt: &tokio::runtime::Runtime,
+    stream: &HerdrOutputStream,
+    vt: &mut VtTerminal,
+    bytes: &[u8],
+) {
+    let replies = vt.feed(bytes).pty_writes;
+    rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(2), stream.acknowledge(bytes.len() as u32, replies))
+            .await
+    })
+    .expect("benchmark writer capacity timed out")
+    .expect("benchmark writer closed");
+}
+
 struct BenchState {
     scenario: BenchScenario,
     started_at: Instant,
@@ -1777,13 +1792,10 @@ impl GpuiPocView {
                 let mut seen = Vec::new();
                 while Instant::now() < deadline {
                     if let Ok(Some(SessionOutput::Data(bytes))) = rt.block_on(async {
-                        tokio::time::timeout(Duration::from_millis(120), stream.recv()).await
+                        tokio::time::timeout(Duration::from_millis(120), stream.recv_uncredited()).await
                     }) {
                         seen.extend_from_slice(&bytes);
-                        let ev = vt.feed(&bytes);
-                        for r in ev.pty_writes {
-                            let _ = handle.try_send_automatic(r);
-                        }
+                        feed_benchmark_output(&rt, &stream, &mut vt, &bytes);
                         if seen.windows(b"sample_fn_0000".len()).any(|w| w == b"sample_fn_0000") {
                             break;
                         }
@@ -1835,7 +1847,7 @@ impl GpuiPocView {
                 let deadline = Instant::now() + Duration::from_secs(10);
                 while Instant::now() < deadline && !saw_done {
                     if let Ok(Some(SessionOutput::Data(bytes))) = rt.block_on(async {
-                        tokio::time::timeout(Duration::from_millis(200), stream.recv()).await
+                        tokio::time::timeout(Duration::from_millis(200), stream.recv_uncredited()).await
                     }) {
                         aux_bytes += bytes.len();
                         if bytes
@@ -1844,10 +1856,7 @@ impl GpuiPocView {
                         {
                             saw_done = true;
                         }
-                        let ev = vt.feed(&bytes);
-                        for r in ev.pty_writes {
-                            let _ = handle.try_send_automatic(r);
-                        }
+                        feed_benchmark_output(&rt, &stream, &mut vt, &bytes);
                     }
                 }
                 aux_metric_ms = t_seq.elapsed().as_secs_f64() * 1000.0;
@@ -1989,31 +1998,21 @@ impl GpuiPocView {
                     let mut got_output = false;
                     if let Some(stream) = &mut bench.herdr_stream {
                         if let Ok(Some(SessionOutput::Data(bytes))) = bench.rt.block_on(async {
-                            tokio::time::timeout(Duration::from_millis(200), stream.recv()).await
+                            tokio::time::timeout(Duration::from_millis(200), stream.recv_uncredited()).await
                         }) {
                             got_output = true;
                             bench.aux_bytes += bytes.len();
-                            let events = bench.vt.feed(&bytes);
-                            for r in events.pty_writes {
-                                if let Some(h) = &bench.herdr_handle {
-                                    let _ = h.try_send_automatic(r);
-                                }
-                            }
+                            feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes);
                         }
                         // Drain any trailing bytes that arrived in the same redraw burst
                         let quiesce = Instant::now() + Duration::from_millis(2);
                         while Instant::now() < quiesce {
                             match bench.rt.block_on(async {
-                                tokio::time::timeout(Duration::from_millis(1), stream.recv()).await
+                                tokio::time::timeout(Duration::from_millis(1), stream.recv_uncredited()).await
                             }) {
                                 Ok(Some(SessionOutput::Data(bytes))) => {
                                     bench.aux_bytes += bytes.len();
-                                    let events = bench.vt.feed(&bytes);
-                                    for r in events.pty_writes {
-                                        if let Some(h) = &bench.herdr_handle {
-                                            let _ = h.try_send_automatic(r);
-                                        }
-                                    }
+                                    feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes);
                                 }
                                 _ => break,
                             }
@@ -2047,7 +2046,7 @@ impl GpuiPocView {
                 if let Some(stream) = &mut bench.herdr_stream {
                     let mut budget = 0usize;
                     while budget < 256 * 1024 {
-                        match stream.try_recv() {
+                        match stream.try_recv_uncredited() {
                             Some(SessionOutput::Data(bytes)) => {
                                 budget += bytes.len();
                                 bench.aux_bytes += bytes.len();
@@ -2057,12 +2056,7 @@ impl GpuiPocView {
                                 {
                                     saw_end = true;
                                 }
-                                let events = bench.vt.feed(&bytes);
-                                for r in events.pty_writes {
-                                    if let Some(h) = &bench.herdr_handle {
-                                        let _ = h.try_send_automatic(r);
-                                    }
-                                }
+                                feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes);
                             }
                             _ => break,
                         }
@@ -2083,8 +2077,8 @@ impl GpuiPocView {
                     }
                     std::thread::sleep(Duration::from_millis(80));
                     if let Some(stream) = &mut bench.herdr_stream {
-                        while let Some(SessionOutput::Data(b)) = stream.try_recv() {
-                            bench.vt.feed(&b);
+                        while let Some(SessionOutput::Data(b)) = stream.try_recv_uncredited() {
+                            feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &b);
                         }
                     }
                     // Run 100 synchronous round-trips (50 ASCII + 50 Japanese UTF-8) through
@@ -2105,12 +2099,12 @@ impl GpuiPocView {
                         while Instant::now() < deadline && !got {
                             if let Some(stream) = &mut bench.herdr_stream
                                 && let Ok(Some(SessionOutput::Data(bytes))) = bench.rt.block_on(async {
-                                    tokio::time::timeout(Duration::from_millis(50), stream.recv())
+                                    tokio::time::timeout(Duration::from_millis(50), stream.recv_uncredited())
                                         .await
                                 })
                             {
                                 bench.aux_bytes += bytes.len();
-                                bench.vt.feed(&bytes);
+                                feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes);
                                 if bytes.windows(payload.len()).any(|w| w == payload) {
                                     got = true;
                                 }

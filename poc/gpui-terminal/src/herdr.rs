@@ -25,7 +25,6 @@ use crate::os;
 pub const CORE_VERSION: &str = "0.1.22";
 pub const HEADER_LEN: usize = 9;
 pub const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
-pub const CREDIT_ACK_THRESHOLD: u32 = 16 * 1024;
 
 pub const FRAME_DATA: u8 = 0;
 pub const FRAME_CREDIT: u8 = 1;
@@ -298,19 +297,6 @@ impl HerdrHandle {
             .map_err(|e| format!("herdr user send failed: {e}"))
     }
 
-    pub fn try_send_automatic(&self, bytes: Vec<u8>) -> Result<(), String> {
-        if self.attach_channel == 0 || bytes.is_empty() {
-            return Ok(());
-        }
-        if !self.automatic_input_supported {
-            // Never fall back to FRAME_DATA for automatic responses.
-            return Err("automatic_input not negotiated".to_string());
-        }
-        self.writer_tx
-            .try_send(vec![Frame::automatic_input(self.attach_channel, bytes)])
-            .map_err(|e| format!("herdr automatic send failed: {e}"))
-    }
-
     pub fn try_resize_with_reports(
         &self,
         cols: u16,
@@ -341,41 +327,15 @@ impl HerdrHandle {
             .try_send(vec![Frame::focus(self.attach_channel, focused)])
             .map_err(|e| format!("herdr focus send failed: {e}"))
     }
-
-    pub fn try_send_credit(&self, bytes: u32) -> Result<(), String> {
-        if self.attach_channel == 0 || bytes == 0 {
-            return Ok(());
-        }
-        self.writer_tx
-            .try_send(vec![Frame::credit(self.attach_channel, bytes)])
-            .map_err(|e| format!("herdr credit send failed: {e}"))
-    }
 }
 
 /// Output receiver coupled with automatic flow-control `FRAME_CREDIT` acknowledgement.
 pub struct HerdrOutputStream {
     rx: mpsc::Receiver<SessionOutput>,
     handle: HerdrHandle,
-    pending_ack_bytes: u32,
 }
 
 impl HerdrOutputStream {
-    pub async fn recv(&mut self) -> Option<SessionOutput> {
-        let ev = self.rx.recv().await?;
-        if let SessionOutput::Data(ref bytes) = ev {
-            self.note_consumed(bytes.len());
-        }
-        Some(ev)
-    }
-
-    pub fn try_recv(&mut self) -> Option<SessionOutput> {
-        let ev = self.rx.try_recv().ok()?;
-        if let SessionOutput::Data(ref bytes) = ev {
-            self.note_consumed(bytes.len());
-        }
-        Some(ev)
-    }
-
     pub async fn recv_uncredited(&mut self) -> Option<SessionOutput> {
         self.rx.recv().await
     }
@@ -400,17 +360,6 @@ impl HerdrOutputStream {
             .send(frames)
             .await
             .map_err(|_| "herdr writer closed".to_string())
-    }
-
-    fn note_consumed(&mut self, len: usize) {
-        self.pending_ack_bytes = self
-            .pending_ack_bytes
-            .saturating_add(len.min(u32::MAX as usize) as u32);
-        if self.pending_ack_bytes >= CREDIT_ACK_THRESHOLD
-            && self.handle.try_send_credit(self.pending_ack_bytes).is_ok()
-        {
-            self.pending_ack_bytes = 0;
-        }
     }
 }
 
@@ -450,7 +399,10 @@ impl HerdrGuard {
     fn take_stream(session: &mut IsolatedHerdrSession) -> Result<(HerdrHandle, HerdrOutputStream), String> {
         let handle = session.handle();
         let rx = session.take_output_rx().ok_or_else(|| "missing output receiver".to_string())?;
-        let stream = HerdrOutputStream { rx, handle: handle.clone(), pending_ack_bytes: 0 };
+        let stream = HerdrOutputStream {
+            rx,
+            handle: handle.clone(),
+        };
         Ok((handle, stream))
     }
 
@@ -1023,15 +975,15 @@ mod tests {
         let (writer_tx, mut writer_rx) = mpsc::channel(1);
         let (_, rx) = mpsc::channel(1);
         let handle = HerdrHandle { attach_channel: 7, automatic_input_supported: true, writer_tx };
-        let stream = HerdrOutputStream { rx, handle, pending_ack_bytes: 0 };
+        let stream = HerdrOutputStream { rx, handle };
         stream.handle.try_send_user(b"x".to_vec()).unwrap();
 
-        let ack = stream.acknowledge(42, Vec::new());
+        let ack = stream.acknowledge(42, vec![b"reply".to_vec()]);
         tokio::pin!(ack);
         assert!(tokio::time::timeout(Duration::from_millis(1), &mut ack).await.is_err());
         writer_rx.recv().await.unwrap();
         ack.await.unwrap();
-        assert_eq!(writer_rx.recv().await.unwrap(), [Frame::credit(7, 42)]);
+        assert_eq!(writer_rx.recv().await.unwrap(), [Frame::automatic_input(7, b"reply".to_vec()), Frame::credit(7, 42)]);
     }
 
     #[test]

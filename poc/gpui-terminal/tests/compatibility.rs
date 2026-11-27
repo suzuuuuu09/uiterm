@@ -17,7 +17,16 @@ mod herdr;
 #[path = "../src/vt.rs"]
 mod vt;
 
-use herdr::{HerdrGuard, HerdrStartOptions, SessionOutput};
+use herdr::{HerdrGuard, HerdrOutputStream, HerdrStartOptions, SessionOutput};
+
+async fn recv_output(stream: &mut HerdrOutputStream) -> Option<SessionOutput> {
+    let event = stream.recv_uncredited().await?;
+    if let SessionOutput::Data(bytes) = &event {
+        // A closed writer can still have final output queued for the test to read.
+        let _ = stream.acknowledge(bytes.len() as u32, Vec::new()).await;
+    }
+    Some(event)
+}
 
 fn has_cmd(name: &str) -> bool {
     Command::new("which")
@@ -44,7 +53,7 @@ fn reattach_replays_the_same_pty_and_preserves_its_running_command() {
         rt.block_on(async {
             tokio::time::timeout(Duration::from_secs(3), async {
                 let mut output = Vec::new();
-                while let Some(event) = stream.recv().await {
+                while let Some(event) = recv_output(stream).await {
                     if let SessionOutput::Data(bytes) = event {
                         output.extend(bytes);
                         if output.windows(marker.len()).any(|part| part == marker) {
@@ -61,7 +70,7 @@ fn reattach_replays_the_same_pty_and_preserves_its_running_command() {
     let mut previous_stream = stream;
     let (handle, mut stream) = guard.reattach(HerdrStartOptions::default()).expect("reattach");
     assert!(previous_handle.try_send_user(b"old connection".to_vec()).is_err());
-    assert!(rt.block_on(previous_stream.recv()).is_none());
+    assert!(rt.block_on(previous_stream.recv_uncredited()).is_none());
     collect_until(&mut stream, b"INITIAL_SCREEN");
     handle.try_send_user(b"same command\n".to_vec()).expect("write to original PTY");
     collect_until(&mut stream, b"REATTACHED:same command");
@@ -75,7 +84,7 @@ fn pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty() {
         vec![
             "/bin/sh".into(),
             "-c".into(),
-            "stty -a; cat".into(),
+            "stty -echo && stty -a && printf '%s\\n' IUTF8_READY && exec cat".into(),
         ],
         bin,
     );
@@ -94,19 +103,20 @@ fn pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty() {
     let (mut guard, handle, mut stream) = HerdrGuard::start_live(opts).expect("start herdr");
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    let mut out = String::new();
+    let mut startup = Vec::new();
+    let ready = b"IUTF8_READY\r\n";
     let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && !out.contains("iutf8") {
+    while Instant::now() < deadline && !startup.ends_with(ready) {
         if let Ok(Some(SessionOutput::Data(bytes))) = rt.block_on(async {
-            tokio::time::timeout(Duration::from_millis(200), stream.recv()).await
+            tokio::time::timeout(Duration::from_millis(200), recv_output(&mut stream)).await
         }) {
-            out.push_str(&String::from_utf8_lossy(&bytes));
+            startup.extend(bytes);
         }
     }
-    assert!(
-        out.contains("iutf8") && !out.contains("-iutf8"),
-        "expected iutf8 enabled on fresh herdr PTY, got: {out:?}"
-    );
+    assert!(startup.ends_with(ready), "expected PTY setup to finish");
+    let settings = String::from_utf8_lossy(&startup);
+    assert!(settings.split_whitespace().any(|word| word == "iutf8"));
+    assert!(settings.split_whitespace().any(|word| word == "-echo"));
 
     // Canonical Japanese Backspace test: "あいうえお" + 5x DEL + "かきくけこ\n" -> "かきくけこ"
     let mut seq = "あいうえお".as_bytes().to_vec();
@@ -118,13 +128,14 @@ fn pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty() {
     seq.push(0x04); // Ctrl+D EOF
     handle.try_send_user(seq).expect("send canonical input");
 
+    let mut output = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         match rt.block_on(async {
-            tokio::time::timeout(Duration::from_millis(250), stream.recv()).await
+            tokio::time::timeout(Duration::from_millis(250), recv_output(&mut stream)).await
         }) {
             Ok(Some(SessionOutput::Data(bytes))) => {
-                out.push_str(&String::from_utf8_lossy(&bytes));
+                output.extend(bytes);
             }
             Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
             Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
@@ -132,23 +143,20 @@ fn pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty() {
     }
     guard.stop_blocking();
 
-    assert!(
-        out.contains("かきくけこ"),
-        "expected intact かきくけこ after 5 UTF-8 backspaces, got: {out:?}"
-    );
-    assert!(
-        out.contains("A日B"),
-        "expected intact A日B after 1 UTF-8 backspace, got: {out:?}"
-    );
+    assert_eq!(output, "かきくけこ\r\nA日B\r\n".as_bytes());
 }
 
 #[test]
+#[ignore = "requires fish, nvim, and codex on PATH"]
 fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
+    for cli in ["fish", "nvim", "codex"] {
+        assert!(has_cmd(cli), "install {cli} before running CLI compatibility checks");
+    }
     let bin = env!("CARGO_BIN_EXE_uiterm-gpui-poc");
 
     // 1. Fish shell + resize check
-    if has_cmd("fish") {
-        let wrapped = os::wrap_argv_with_pty_iutf8_init(vec!["fish".into(), "-l".into()], bin);
+    {
+        let wrapped = os::wrap_argv_with_pty_iutf8_init(vec!["fish".into(), "-l".into(), "--no-config".into()], bin);
         let opts = HerdrStartOptions {
             tag: "fish".into(),
             argv: Some(wrapped),
@@ -162,7 +170,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         let (mut guard, handle, mut stream) = HerdrGuard::start_live(opts).expect("start fish");
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _ = rt.block_on(async {
-            tokio::time::timeout(Duration::from_millis(300), stream.recv()).await
+            tokio::time::timeout(Duration::from_millis(300), recv_output(&mut stream)).await
         });
         assert!(handle.try_resize_with_reports(106, 32, || Ok(Vec::new())).unwrap());
         std::thread::sleep(Duration::from_millis(60));
@@ -174,7 +182,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         let deadline = Instant::now() + Duration::from_secs(8);
         while Instant::now() < deadline && !out.contains("FISH_COMPAT_OK") {
             match rt.block_on(async {
-                tokio::time::timeout(Duration::from_millis(200), stream.recv()).await
+                tokio::time::timeout(Duration::from_millis(200), recv_output(&mut stream)).await
             }) {
                 Ok(Some(SessionOutput::Data(bytes))) => {
                     out.push_str(&String::from_utf8_lossy(&bytes));
@@ -189,7 +197,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
     }
 
     // 2. Neovim alternate screen + resize check (non-interactive headless script in real PTY)
-    if has_cmd("nvim") {
+    {
         let qa_home = format!("/tmp/u-gp-itnv-{}", std::process::id());
         let _ = std::fs::create_dir_all(&qa_home);
         let mut env = os::build_child_shell_env(Some("/bin/sh"));
@@ -219,7 +227,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             if let Ok(Some(SessionOutput::Data(bytes))) = rt.block_on(async {
-                tokio::time::timeout(Duration::from_millis(200), stream.recv()).await
+                tokio::time::timeout(Duration::from_millis(200), recv_output(&mut stream)).await
             }) {
                 raw_bytes.extend_from_slice(&bytes);
                 if raw_bytes.windows(b"NVIM_BOOT_OK".len()).any(|w| w == b"NVIM_BOOT_OK") {
@@ -230,7 +238,9 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         // Wait for Neovim TUI startup bursts to settle, then deliver FRAME_RESIZE + Mode 2048 report
         // just like LiveTerminalView::sync_resize_if_needed.
         std::thread::sleep(Duration::from_millis(80));
-        while let Some(SessionOutput::Data(bytes)) = stream.try_recv() {
+        while let Some(SessionOutput::Data(bytes)) = stream.try_recv_uncredited() {
+            rt.block_on(async { stream.acknowledge(bytes.len() as u32, Vec::new()).await })
+                .expect("credit Neovim startup output");
             raw_bytes.extend_from_slice(&bytes);
         }
         let mut terminal = vt::VtTerminal::new(80, 24, 200).expect("VT terminal");
@@ -249,7 +259,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         let resize_deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < resize_deadline {
             match rt.block_on(async {
-                tokio::time::timeout(Duration::from_millis(100), stream.recv()).await
+                tokio::time::timeout(Duration::from_millis(100), recv_output(&mut stream)).await
             }) {
                 Ok(Some(SessionOutput::Data(bytes))) => {
                     raw_bytes.extend_from_slice(&bytes);
@@ -268,7 +278,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             match rt.block_on(async {
-                tokio::time::timeout(Duration::from_millis(200), stream.recv()).await
+                tokio::time::timeout(Duration::from_millis(200), recv_output(&mut stream)).await
             }) {
                 Ok(Some(SessionOutput::Data(bytes))) => raw_bytes.extend_from_slice(&bytes),
                 Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
@@ -306,7 +316,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
     }
 
     // 3. Codex CLI smoke check in isolated herdr PTY
-    if has_cmd("codex") {
+    {
         let opts = HerdrStartOptions {
             tag: "codex".into(),
             argv: Some(vec!["codex".into(), "--version".into()]),
@@ -323,7 +333,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             match rt.block_on(async {
-                tokio::time::timeout(Duration::from_millis(200), stream.recv()).await
+                tokio::time::timeout(Duration::from_millis(200), recv_output(&mut stream)).await
             }) {
                 Ok(Some(SessionOutput::Data(bytes))) => {
                     out.push_str(&String::from_utf8_lossy(&bytes));
