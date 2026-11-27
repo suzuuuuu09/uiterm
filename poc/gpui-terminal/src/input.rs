@@ -499,6 +499,11 @@ mod tests {
             classify_keydown(&cmd_c, false, false, true),
             KeyDispatchDecision::PassToIme
         );
+        let cmd_w = Keystroke { key: "w".into(), ..cmd_c };
+        assert_eq!(
+            classify_keydown(&cmd_w, false, true, true),
+            KeyDispatchDecision::PassToIme
+        );
     }
     #[cfg(not(target_os = "macos"))]
     #[test]
