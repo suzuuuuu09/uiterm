@@ -1,0 +1,39 @@
+# 開発・検証手順
+
+現行Tauri版を対象とする。リポジトリルートで実行する。
+
+## 起動
+
+```sh
+nix develop --command pnpm install --frozen-lockfile
+nix develop --command pnpm tauri dev
+```
+
+## 自動検証
+
+```sh
+nix develop --command pnpm check
+nix develop --command pnpm typecheck
+nix develop --command pnpm test
+nix develop --command pnpm build
+nix develop --command cargo test --locked --manifest-path src-tauri/Cargo.toml
+nix develop --command cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+nix flake check --no-build --all-systems --no-write-lock-file
+```
+
+## macOS配布ビルド
+
+```sh
+nix develop --command pnpm tauri build --bundles app
+```
+
+herdr-coreは固定版0.1.22を利用する。現在は外部依存で、配布サイズ評価ではcoreも含める。開発シェル外での起動経路と配布方法は今後の課題である。
+
+## 検証上の注意
+
+- 手動検証ではfish、Neovim、Codex、IME、Nerd Font、コピー・ペースト、リサイズを確認する。
+- 性能はリリースビルド、同じグリッド・フォント・履歴・負荷条件で測定する。関連プロセスを含め、体感と測定値を区別する。
+- テスト用HOME・XDGを隔離する。他のHerdrや実行中のプロセスを停止しない。
+- Flakeの静的評価はLinux実機検証の代わりにならない。
+
+詳細：[Phase 1 Rust](implementation/phase1-backend.md)、[Phase 2検証レポート](implementation/phase2-terminal.md)。
