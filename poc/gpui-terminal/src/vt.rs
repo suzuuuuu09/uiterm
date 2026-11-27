@@ -651,16 +651,13 @@ impl VtTerminal {
         }
     }
 
-    pub fn selection_release(&mut self, col: u16, row: u16) {
-        let clamped_col = col.min(self.cols.saturating_sub(1));
-        let clamped_row = row.min(self.rows.saturating_sub(1));
-        let grid_ref = self
-            .terminal
-            .grid_ref(Point::Viewport(PointCoordinate {
-                x: clamped_col,
-                y: clamped_row as u32,
-            }))
-            .ok();
+    pub fn selection_release(&mut self, cell: Option<(u16, u16)>) {
+        let grid_ref = cell.and_then(|(col, row)| {
+            self.terminal.grid_ref(Point::Viewport(PointCoordinate {
+                x: col.min(self.cols.saturating_sub(1)),
+                y: u32::from(row.min(self.rows.saturating_sub(1))),
+            })).ok()
+        });
         let _ = self
             .selection_release
             .apply(&mut self.selection_gesture, &self.terminal, grid_ref);
@@ -861,16 +858,11 @@ pub fn row_id_value(id: RowId) -> [u64; 2] {
 }
 
 /// Returns current process resident set size (RSS) in MiB on macOS.
-pub fn current_rss_mib() -> f64 {
+pub fn current_rss_mib() -> Option<f64> {
     #[cfg(target_os = "macos")]
-    {
-        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-        let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-        if rc == 0 {
-            return mach_current_rss_mib().unwrap_or(usage.ru_maxrss as f64 / (1024.0 * 1024.0));
-        }
-    }
-    0.0
+    return mach_current_rss_mib();
+    #[cfg(not(target_os = "macos"))]
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -946,8 +938,12 @@ pub fn run_headless_vt_benchmark() {
         let drop_ms = t_drop.elapsed().as_secs_f64() * 1000.0;
         let rss_after = current_rss_mib();
 
+        let rss_delta = |sample: Option<f64>| {
+            sample.zip(rss0).map_or_else(|| "unavailable".to_string(),
+                |(sample, base)| format!("{:+.2}MiB", sample - base))
+        };
         println!(
-            "count={:<2} create={:5.2}ms write10k={:5.2}ms ({:6.1} MiB/s) snap={:5.3}ms drop={:5.2}ms replies={} grid={}x{} (lines={}) cursor=({},{}) fg=#{:06x} sel={} rss_idle_delta={:+.2}MiB rss_loaded_delta={:+.2}MiB rss_after_drop_delta={:+.2}MiB",
+            "count={:<2} create={:5.2}ms write10k={:5.2}ms ({:6.1} MiB/s) snap={:5.3}ms drop={:5.2}ms replies={} grid={}x{} (lines={}) cursor=({},{}) fg=#{:06x} sel={} rss_idle_delta={} rss_loaded_delta={} rss_after_drop_delta={}",
             count,
             create_ms,
             write_ms,
@@ -962,9 +958,9 @@ pub fn run_headless_vt_benchmark() {
             snap.cursor.row,
             snap.colors.fg_u32,
             snap.row_selections.iter().flatten().count(),
-            rss_idle - rss0,
-            rss_loaded - rss0,
-            rss_after - rss0,
+            rss_delta(rss_idle),
+            rss_delta(rss_loaded),
+            rss_delta(rss_after),
         );
     }
 }
@@ -1151,7 +1147,7 @@ mod tests {
         // Selection update -> verify RenderState sees selection on row 0 ("L2")
         vt.selection_press(0, 0, 1.0, 1.0);
         vt.selection_drag(2, 0, (20.0, 1.0), false, (8, 0, 120));
-        vt.selection_release(2, 0);
+        vt.selection_release(Some((2, 0)));
         assert_eq!(vt.selected_text().as_deref(), Some("L2"));
         let mut sel_seen = None;
         vt.render_update(|_meta, snap, ri, _ci| {

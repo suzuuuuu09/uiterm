@@ -485,6 +485,24 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    fn cmd_q_quits_only_outside_ime_composition() {
+        let cmd_q = Keystroke {
+            modifiers: Modifiers::command(),
+            key: "q".into(),
+            key_char: None,
+        };
+        assert_eq!(
+            classify_keydown(&cmd_q, true, false, true),
+            KeyDispatchDecision::ConsumeNoPty
+        );
+        assert_eq!(
+            classify_keydown(&cmd_q, false, false, true),
+            KeyDispatchDecision::AppAction(TerminalAppAction::Quit)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
     fn cmd_c_copies_only_when_selection_active_and_cmd_w_is_not_hijacked() {
         let cmd_c = Keystroke {
             modifiers: Modifiers::command(),

@@ -1,7 +1,7 @@
 //! Terminal grid shaping, `RenderState::next_dirty()` + `RowId` `ShapedLine` cache,
 //! and GPUI Metal/Blade quad + glyph painting.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -78,7 +78,6 @@ pub struct FrameRenderStats {
     pub cache_misses: usize,
     pub dirty_rows: usize,
     pub cached_entries: usize,
-    pub estimated_cache_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -253,10 +252,14 @@ impl RowShapeCache {
     }
 
     pub fn estimated_bytes(&self) -> usize {
-        self.by_row_id
-            .values()
-            .map(|entry| entry.row.estimated_bytes + std::mem::size_of::<(RowId, CachedRowEntry)>())
-            .sum::<usize>()
+        let mut seen = HashSet::new();
+        let payload_bytes: usize = self.by_row_id.values().map(|entry| &entry.row)
+            .chain(self.viewport_rows.iter().flatten())
+            .filter(|row| seen.insert(Arc::as_ptr(row)))
+            .map(|row| row.estimated_bytes)
+            .sum();
+        payload_bytes
+            + self.by_row_id.len() * std::mem::size_of::<(RowId, CachedRowEntry)>()
             + self.viewport_rows.capacity() * std::mem::size_of::<Option<Arc<CachedShapedRow>>>()
     }
 
@@ -541,12 +544,6 @@ impl RowShapeCache {
         } else {
             0
         };
-        let estimated_cache_bytes = if self.mode == RenderCacheMode::DirtyRowCache {
-            self.estimated_bytes()
-        } else {
-            0
-        };
-
         self.last_stats = FrameRenderStats {
             prepaint_us: t0.elapsed().as_micros() as u64,
             shape_calls,
@@ -554,7 +551,6 @@ impl RowShapeCache {
             cache_misses,
             dirty_rows,
             cached_entries,
-            estimated_cache_bytes,
         };
 
         Ok(PreparedTerminalFrame {
@@ -736,6 +732,8 @@ pub fn shape_extracted_row(
                 while idx + 1 < cells.len() {
                     let next = &cells[idx + 1];
                     if next.col == expected_col
+                        && next.bold == cell.bold
+                        && next.italic == cell.italic
                         && next.width == 1
                         && next.text.is_ascii()
                         && !next.invisible
@@ -777,6 +775,8 @@ pub fn shape_extracted_row(
                 while idx + 1 < cells.len() {
                     let next = &cells[idx + 1];
                     if next.col == expected_col
+                        && next.bold == cell.bold
+                        && next.italic == cell.italic
                         && next.width == 2
                         && is_coalesceable_bmp_cjk(&next.text)
                         && !next.invisible
@@ -1000,7 +1000,7 @@ pub fn paint_terminal_frame(
                 CursorVisualStyle::Block => {
                     window.paint_quad(fill(
                         Bounds::new(cx_pos, size(cw_cells, rh)),
-                        hsla(0.0, 0.0, 0.92, 0.45),
+                        Hsla { a: 0.45, ..rgb(cursor_color_u32).into() },
                     ));
                 }
                 CursorVisualStyle::Bar => {
@@ -1122,6 +1122,26 @@ pub fn paint_terminal_frame(
 mod tests {
     use super::*;
     use crate::vt::DEFAULT_SCROLLBACK_LINES;
+
+    #[test]
+    fn cache_estimate_counts_shared_and_viewport_only_rows_once() {
+        let mut cache = RowShapeCache::new(RenderCacheMode::DirtyRowCache);
+        let row = |estimated_bytes| Arc::new(CachedShapedRow {
+            bg_quads: Vec::new(),
+            shaped_spans: Vec::new(),
+            estimated_bytes,
+        });
+        let shared = row(100);
+        cache.by_row_id.insert(RowId([1, 0]), CachedRowEntry {
+            generation: 0,
+            content_hash: 0,
+            row: shared.clone(),
+        });
+        cache.viewport_rows = vec![Some(shared), Some(row(200))];
+        let overhead = std::mem::size_of::<(RowId, CachedRowEntry)>()
+            + cache.viewport_rows.capacity() * std::mem::size_of::<Option<Arc<CachedShapedRow>>>();
+        assert_eq!(cache.estimated_bytes(), overhead + 300);
+    }
 
     #[test]
     fn resolves_sgr2_faint_sgr8_invisible_and_sgr7_inverse_backgrounds() {

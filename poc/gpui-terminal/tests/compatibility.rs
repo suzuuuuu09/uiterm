@@ -70,7 +70,11 @@ fn reattach_replays_the_same_pty_and_preserves_its_running_command() {
     let mut previous_stream = stream;
     let (handle, mut stream) = guard.reattach(HerdrStartOptions::default()).expect("reattach");
     assert!(previous_handle.try_send_user(b"old connection".to_vec()).is_err());
-    assert!(rt.block_on(previous_stream.recv_uncredited()).is_none());
+    rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while previous_stream.recv_uncredited().await.is_some() {}
+        }).await.expect("old attachment reached EOF");
+    });
     collect_until(&mut stream, b"INITIAL_SCREEN");
     handle.try_send_user(b"same command\n".to_vec()).expect("write to original PTY");
     collect_until(&mut stream, b"REATTACHED:same command");

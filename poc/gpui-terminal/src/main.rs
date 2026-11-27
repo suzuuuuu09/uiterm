@@ -7,7 +7,6 @@ mod renderer;
 mod vt;
 
 use std::ops::Range;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use fonts::{
@@ -29,7 +28,7 @@ use gpui::{
     Window, WindowBounds, WindowOptions, actions, div, fill, hsla, point, prelude::*, px, rgb,
     rgba, size,
 };
-use herdr::{CloseInfo, HerdrGuard, HerdrHandle, HerdrOutputStream, HerdrStartOptions, SessionOutput};
+use herdr::{CloseInfo, DirCleanupGuard, HerdrGuard, HerdrHandle, HerdrOutputStream, HerdrStartOptions, SessionOutput};
 use ime::{ImeBuffer, TerminalImeState};
 use input::{KeyDispatchDecision, TerminalAppAction, classify_keydown};
 use renderer::{
@@ -121,6 +120,7 @@ enum RunMode {
     ProbeUi,
     ProbeFonts,
     BenchWindow,
+    BenchVt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +195,7 @@ impl CliConfig {
                 "--probe-fonts" => mode = RunMode::ProbeFonts,
                 "--probe-ui" => mode = RunMode::ProbeUi,
                 "--bench-window" => mode = RunMode::BenchWindow,
+                "--bench-vt" => mode = RunMode::BenchVt,
                 "--minimal" => minimal = true,
                 "--no-iutf8-wrap" => wrap_iutf8 = false,
                 "--cols" => {
@@ -302,6 +303,7 @@ struct LiveTerminalView {
     pending_title: Option<String>,
     last_content_bounds: Option<Bounds<Pixels>>,
     last_requested_grid: Option<(u16, u16)>,
+    mouse_presses: Vec<(MouseButton, bool)>,
     last_cell_w: f32,
     last_row_h: f32,
     last_ime_anchor: Option<Bounds<Pixels>>,
@@ -351,6 +353,7 @@ impl LiveTerminalView {
             pending_title: Some("uiterm GPUI PoC".to_string()),
             last_content_bounds: None,
             last_requested_grid: None,
+            mouse_presses: Vec::new(),
             last_cell_w: 8.43,
             last_row_h: (config.font_size * DEFAULT_LINE_HEIGHT).ceil(),
             last_ime_anchor: None,
@@ -401,6 +404,7 @@ impl LiveTerminalView {
     }
 
     fn start_session(&mut self, cx: &mut Context<Self>) {
+        self.mouse_presses.clear();
         self.shutdown();
         self.session_closed = None;
         self.session_error = None;
@@ -462,6 +466,7 @@ impl LiveTerminalView {
         };
         match guard.reattach(opts) {
             Ok((handle, stream)) => {
+                self.mouse_presses.clear();
                 self.vt = VtTerminal::new(cols, rows, self.config.scrollback_lines)
                     .expect("reset VT before replay");
                 self.cache.clear();
@@ -752,9 +757,16 @@ impl LiveTerminalView {
         let local_y = (f32::from(pos.y - origin.y)).max(0.0);
         let cw = self.last_cell_w.max(1.0);
         let rh = self.last_row_h.max(1.0);
-        let col = ((local_x / cw).floor() as u16).min(self.vt.cols().saturating_sub(1));
-        let row = ((local_y / rh).floor() as u16).min(self.vt.rows().saturating_sub(1));
+        let (cols, rows) = self.presented_grid();
+        let col = ((local_x / cw).floor() as u16).min(cols.saturating_sub(1));
+        let row = ((local_y / rh).floor() as u16).min(rows.saturating_sub(1));
         (col, row, local_x as f64, local_y as f64)
+    }
+
+    fn presented_grid(&self) -> (u16, u16) {
+        self.presented_frame.as_ref().map_or((self.vt.cols(), self.vt.rows()), |frame| {
+            (frame.meta.cols, frame.meta.rows)
+        })
     }
 
     fn mouse_encoder_position(&self, x: f64, y: f64) -> (f32, f32) {
@@ -777,7 +789,8 @@ impl LiveTerminalView {
         let (screen_width, screen_height) = if self.vt.uses_pixel_mouse_coordinates() {
             (w.max(1), h.max(1))
         } else {
-            (u32::from(self.vt.cols()) * cell_width, u32::from(self.vt.rows()) * cell_height)
+            let (cols, rows) = self.presented_grid();
+            (u32::from(cols) * cell_width, u32::from(rows) * cell_height)
         };
         VtMouseSize {
             screen_width,
@@ -800,7 +813,9 @@ impl LiveTerminalView {
         window.focus(&self.focus_handle);
         let (col, row, lx, ly) = self.pointer_to_grid(event.position);
 
-        if self.vt.is_mouse_tracking() && !event.modifiers.shift {
+        let to_pty = self.vt.is_mouse_tracking() && !event.modifiers.shift;
+        self.mouse_presses.retain(|(button, _)| *button != event.button);
+        if to_pty {
             let (x, y) = self.mouse_encoder_position(lx, ly);
             if let Some(btn) = gpui_button_to_vt(event.button) {
                 let bytes = self.vt.encode_mouse(
@@ -812,12 +827,18 @@ impl LiveTerminalView {
                     true,
                     self.mouse_encoder_size(),
                 );
-                self.send_user_bytes(bytes);
+                if !bytes.is_empty() && self.herdr_handle.is_some() {
+                    self.send_user_bytes(bytes);
+                    if self.session_error.is_none() {
+                        self.mouse_presses.push((event.button, true));
+                    }
+                }
             }
             return;
         }
 
-        if event.button == MouseButton::Left {
+        if event.button == MouseButton::Left && !self.vt.is_sync_held() {
+            self.mouse_presses.push((event.button, false));
             self.vt.selection_press(col, row, lx, ly);
             cx.notify();
         }
@@ -830,7 +851,11 @@ impl LiveTerminalView {
         cx: &mut Context<Self>,
     ) {
         let (col, row, lx, ly) = self.pointer_to_grid(event.position);
-        if self.vt.is_mouse_tracking() && !event.modifiers.shift {
+        let to_pty = match event.pressed_button {
+            Some(button) => self.mouse_presses.contains(&(button, true)),
+            None => self.vt.is_mouse_tracking() && !event.modifiers.shift,
+        };
+        if to_pty {
             let (x, y) = self.mouse_encoder_position(lx, ly);
             let btn = event.pressed_button.and_then(gpui_button_to_vt);
             let bytes = self.vt.encode_mouse(
@@ -846,7 +871,10 @@ impl LiveTerminalView {
             return;
         }
 
-        if event.pressed_button == Some(MouseButton::Left) {
+        if event.pressed_button == Some(MouseButton::Left)
+            && self.mouse_presses.contains(&(MouseButton::Left, false))
+            && !self.vt.is_sync_held()
+        {
             let bounds = self.last_content_bounds.unwrap_or_default();
             self.vt.selection_drag(
                 col,
@@ -870,7 +898,11 @@ impl LiveTerminalView {
         cx: &mut Context<Self>,
     ) {
         let (col, row, lx, ly) = self.pointer_to_grid(event.position);
-        if self.vt.is_mouse_tracking() && !event.modifiers.shift {
+        let Some(index) = self.mouse_presses.iter().position(|(button, _)| *button == event.button) else {
+            return;
+        };
+        let (_, to_pty) = self.mouse_presses.swap_remove(index);
+        if to_pty {
             let (x, y) = self.mouse_encoder_position(lx, ly);
             if let Some(btn) = gpui_button_to_vt(event.button) {
                 let bytes = self.vt.encode_mouse(
@@ -888,7 +920,8 @@ impl LiveTerminalView {
         }
 
         if event.button == MouseButton::Left {
-            self.vt.selection_release(col, row);
+            let cell = (!self.vt.is_sync_held()).then_some((col, row));
+            self.vt.selection_release(cell);
             cx.notify();
         }
     }
@@ -1275,8 +1308,6 @@ impl Element for LiveTerminalElement {
 
         let prepared = self.view.update(cx, |view, _| {
             view.last_content_bounds = Some(content_bounds);
-            view.last_cell_w = cell_w;
-            view.last_row_h = row_h;
             if view.sync_resize_if_needed(content_bounds, cell_w, row_h) {
                 let view = self.view.downgrade();
                 window.on_next_frame(move |_, cx| {
@@ -1286,6 +1317,8 @@ impl Element for LiveTerminalElement {
             if !view.vt.is_sync_held()
                 && let Ok(frame) = view.cache.prepare_frame(&mut view.vt, &view.style, scale_factor, window.text_system())
             {
+                view.last_cell_w = f32::from(frame.metrics.cell_width);
+                view.last_row_h = f32::from(frame.metrics.row_height);
                 view.presented_frame = Some(std::rc::Rc::new(frame));
             }
             view.presented_frame.clone()
@@ -1394,7 +1427,7 @@ impl Render for LiveTerminalView {
 
         let stats = self.cache.last_stats;
         let header_status = format!(
-            "{}x{} | {} | {:.1}px | shape={} hit/miss={}/{} | {}us | {:.1} KiB",
+            "{}x{} | {} | {:.1}px | shape={} hit/miss={}/{} | {}us",
             self.vt.cols(),
             self.vt.rows(),
             self.cache.mode.label(),
@@ -1402,8 +1435,7 @@ impl Render for LiveTerminalView {
             stats.shape_calls,
             stats.cache_hits,
             stats.cache_misses,
-            stats.prepaint_us,
-            stats.estimated_cache_bytes as f64 / 1024.0
+            stats.prepaint_us
         );
 
         let mut root = div()
@@ -1532,7 +1564,7 @@ impl Render for LiveTerminalView {
         );
 
         if let Some(info) = &self.session_closed {
-            let can_reconnect = info.reason == "disconnected" && self.session_error.is_none();
+            let can_reconnect = info.reason == "disconnected" && self.herdr_guard.is_some();
             let summary = info.summary();
             root = root.child(
                 div()
@@ -1547,28 +1579,24 @@ impl Render for LiveTerminalView {
                     .border_color(rgb(ACCENT_RED))
                     .text_size(px(12.0))
                     .child(format!("Session closed: {summary}"))
-                    .child(
-                        div()
-                            .id("live-restart-btn")
-                            .px_2()
-                            .py_0p5()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .bg(rgb(ACCENT_BLUE))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    if can_reconnect {
-                                        this.reattach(cx);
-                                    } else {
-                                        this.start_session(cx);
-                                    }
-                                    window.focus(&this.focus_handle);
-                                    cx.notify();
-                                }),
-                            )
-                            .child(if can_reconnect { "Reconnect" } else { "Restart" }),
-                    ),
+                    .when(can_reconnect, |row| {
+                        row.child(session_button("live-reconnect-btn", "Reconnect").on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, cx| {
+                                this.reattach(cx);
+                                window.focus(&this.focus_handle);
+                                cx.notify();
+                            }),
+                        ))
+                    })
+                    .child(session_button("live-restart-btn", "Restart").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.start_session(cx);
+                            window.focus(&this.focus_handle);
+                            cx.notify();
+                        }),
+                    )),
             );
         }
         if let Some(err) = &self.session_error {
@@ -1624,19 +1652,42 @@ const PROBE_CASES: &[ProbeCase] = &[
     },
 ];
 
+fn session_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+    div().id(id).px_2().py_0p5().rounded_sm().cursor_pointer()
+        .bg(rgb(ACCENT_BLUE)).child(label)
+}
+
 fn feed_benchmark_output(
     rt: &tokio::runtime::Runtime,
     stream: &HerdrOutputStream,
     vt: &mut VtTerminal,
     bytes: &[u8],
-) {
+) -> Result<(), &'static str> {
     let replies = vt.feed(bytes).pty_writes;
     rt.block_on(async {
         tokio::time::timeout(Duration::from_secs(2), stream.acknowledge(bytes.len() as u32, replies))
             .await
     })
-    .expect("benchmark writer capacity timed out")
-    .expect("benchmark writer closed");
+    .map_err(|_| "benchmark writer capacity timed out")?
+    .map_err(|_| "benchmark writer closed")
+}
+
+const BURST_WORKLOAD_COMMAND: &[u8] = b"if python3 scripts/bench-app.py workload --mib 5 --seconds 0; then printf '%s%s\\n' GPUI_BURST_ OK; else printf '%s%s\\n' GPUI_BURST_ FAILED; fi\n";
+
+fn contains_stream_marker(tail: &mut Vec<u8>, bytes: &[u8], marker: &[u8]) -> bool {
+    let limit = marker.len() - 1;
+    let prefix = bytes.len().min(limit);
+    tail.extend_from_slice(&bytes[..prefix]);
+    let found = tail.windows(marker.len()).any(|part| part == marker)
+        || bytes.windows(marker.len()).any(|part| part == marker);
+
+    if bytes.len() >= limit {
+        tail.clear();
+        tail.extend_from_slice(&bytes[bytes.len() - limit..]);
+    } else if tail.len() > limit {
+        tail.drain(..tail.len() - limit);
+    }
+    found
 }
 
 struct BenchState {
@@ -1664,7 +1715,12 @@ struct BenchState {
     latencies_ms: Vec<f64>,
     rt: tokio::runtime::Runtime,
     bench_finished: bool,
-    tmp_file: Option<PathBuf>,
+    scratch: Option<DirCleanupGuard>,
+    marker_tail: Vec<u8>,
+    failure_tail: Vec<u8>,
+    failure: Option<&'static str>,
+    latency_ready: bool,
+
 }
 
 struct GpuiPocView {
@@ -1706,10 +1762,11 @@ impl GpuiPocView {
         .detach();
 
         cx.on_app_quit(|this, _cx| {
-            if let Some(bench) = &mut this.bench
-                && let Some(mut guard) = bench.herdr_guard.take()
-            {
-                guard.stop_blocking();
+            if let Some(bench) = &mut this.bench {
+                if let Some(mut guard) = bench.herdr_guard.take() {
+                    guard.stop_blocking();
+                }
+                bench.scratch = None;
             }
             std::future::ready(())
         }).detach();
@@ -1747,12 +1804,13 @@ impl GpuiPocView {
         let cache = RowShapeCache::new(cfg.render_mode);
         let mut aux_metric_ms = 0.0;
         let mut aux_bytes = 0usize;
-        let mut tmp_file: Option<PathBuf> = None;
+        let mut failure = None;
+        let mut scratch = None;
 
         let (herdr_guard, herdr_handle, mut herdr_stream) = match cfg.scenario {
             BenchScenario::NvimCtrlDu => {
-                let sample_path =
-                    PathBuf::from(format!("/tmp/uiterm-nvim-bench-{}.rs", std::process::id()));
+                let dir = DirCleanupGuard::create("nvim-bench").expect("create Neovim benchmark directory");
+                let sample_path = dir.path().join("sample.rs");
                 let mut content = String::with_capacity(64 * 1024);
                 for i in 0..1000 {
                     content.push_str(&format!(
@@ -1760,15 +1818,14 @@ impl GpuiPocView {
                     ));
                 }
                 std::fs::write(&sample_path, content).expect("write nvim sample");
-                tmp_file = Some(sample_path.clone());
-
                 let mut env = os::build_child_shell_env(Some("/bin/sh"));
-                let qa_home = format!("/tmp/u-gp-nvhome-{}", std::process::id());
-                let _ = std::fs::create_dir_all(&qa_home);
-                env.insert("HOME".into(), qa_home.clone());
+                let qa_home = dir.path().to_string_lossy();
+                env.insert("HOME".into(), qa_home.to_string());
                 env.insert("XDG_CONFIG_HOME".into(), format!("{qa_home}/cfg"));
                 env.insert("XDG_STATE_HOME".into(), format!("{qa_home}/st"));
                 env.insert("XDG_DATA_HOME".into(), format!("{qa_home}/data"));
+                env.insert("XDG_CACHE_HOME".into(), format!("{qa_home}/cache"));
+                scratch = Some(dir);
 
                 let opts = HerdrStartOptions {
                     tag: "bnvim".into(),
@@ -1795,7 +1852,10 @@ impl GpuiPocView {
                         tokio::time::timeout(Duration::from_millis(120), stream.recv_uncredited()).await
                     }) {
                         seen.extend_from_slice(&bytes);
-                        feed_benchmark_output(&rt, &stream, &mut vt, &bytes);
+                        if let Err(error) = feed_benchmark_output(&rt, &stream, &mut vt, &bytes) {
+                            failure = Some(error);
+                            break;
+                        }
                         if seen.windows(b"sample_fn_0000".len()).any(|w| w == b"sample_fn_0000") {
                             break;
                         }
@@ -1840,24 +1900,31 @@ impl GpuiPocView {
                 };
                 let (guard, handle, mut stream) = HerdrGuard::start_live(opts).expect("start sh");
                 let t_seq = Instant::now();
-                let _ = handle.try_send_user(
-                    b"seq 1 10000; printf '%s%s\\n' UITERM_GPUI_ BENCH_DONE\n".to_vec(),
-                );
+                if handle.try_send_user(
+                    b"seq 1 10000 && printf '%s%s\\n' UITERM_GPUI_ BENCH_DONE\n".to_vec(),
+                ).is_err() {
+                    failure = Some("could not start scroll-stream workload");
+                }
                 let mut saw_done = false;
+                let mut tail = Vec::new();
                 let deadline = Instant::now() + Duration::from_secs(10);
-                while Instant::now() < deadline && !saw_done {
-                    if let Ok(Some(SessionOutput::Data(bytes))) = rt.block_on(async {
+                while Instant::now() < deadline && !saw_done && failure.is_none() {
+                    match rt.block_on(async {
                         tokio::time::timeout(Duration::from_millis(200), stream.recv_uncredited()).await
                     }) {
-                        aux_bytes += bytes.len();
-                        if bytes
-                            .windows(b"UITERM_GPUI_BENCH_DONE".len())
-                            .any(|w| w == b"UITERM_GPUI_BENCH_DONE")
-                        {
-                            saw_done = true;
+                        Ok(Some(SessionOutput::Data(bytes))) => {
+                            aux_bytes += bytes.len();
+                            saw_done = contains_stream_marker(&mut tail, &bytes, b"UITERM_GPUI_BENCH_DONE");
+                            failure = feed_benchmark_output(&rt, &stream, &mut vt, &bytes).err();
                         }
-                        feed_benchmark_output(&rt, &stream, &mut vt, &bytes);
+                        Ok(None | Some(SessionOutput::Closed(_))) => {
+                            failure = Some("scroll-stream connection closed");
+                        }
+                        Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
                     }
+                }
+                if !saw_done {
+                    failure.get_or_insert("scroll-stream workload timed out");
                 }
                 aux_metric_ms = t_seq.elapsed().as_secs_f64() * 1000.0;
                 (Some(guard), Some(handle), Some(stream))
@@ -1892,7 +1959,11 @@ impl GpuiPocView {
             latencies_ms: Vec::new(),
             rt,
             bench_finished: false,
-            tmp_file,
+            scratch,
+            marker_tail: Vec::new(),
+            failure_tail: Vec::new(),
+            failure,
+            latency_ready: false,
         }
     }
 
@@ -1951,7 +2022,7 @@ impl GpuiPocView {
         bench.last_frame_at = Some(now);
 
         let frame_idx = bench.total_frames;
-        let done = match bench.scenario {
+        let done = bench.failure.is_some() || match bench.scenario {
             BenchScenario::ScrollStream => {
                 let line = format!(
                     "\x1b[36m[{frame_idx:05}]\x1b[0m \x1b[32mINFO\x1b[0m \u{E0A0} main 日本語スクロール描画テスト Neovim/Ctrl+D frame={frame_idx}\r\n"
@@ -2002,17 +2073,17 @@ impl GpuiPocView {
                         }) {
                             got_output = true;
                             bench.aux_bytes += bytes.len();
-                            feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes);
+                            bench.failure = feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes).err();
                         }
                         // Drain any trailing bytes that arrived in the same redraw burst
                         let quiesce = Instant::now() + Duration::from_millis(2);
-                        while Instant::now() < quiesce {
+                        while Instant::now() < quiesce && bench.failure.is_none() {
                             match bench.rt.block_on(async {
                                 tokio::time::timeout(Duration::from_millis(1), stream.recv_uncredited()).await
                             }) {
                                 Ok(Some(SessionOutput::Data(bytes))) => {
                                     bench.aux_bytes += bytes.len();
-                                    feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes);
+                                    bench.failure = feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes).err();
                                 }
                                 _ => break,
                             }
@@ -2033,103 +2104,48 @@ impl GpuiPocView {
                 }
             }
             BenchScenario::Burst5MiB => {
-                if frame_idx == 0 {
-                    bench.aux_bytes = 0;
-                    if let Some(h) = &bench.herdr_handle {
-                        let _ = h.try_send_user(
-                            b"python3 scripts/bench-app.py workload --mib 5 --seconds 0; printf '%s%s\\n' GPUI_ BURST_END\n"
-                                .to_vec(),
-                        );
-                    }
+                if frame_idx == 0
+                    && bench.herdr_handle.as_ref().is_none_or(|handle| {
+                        handle.try_send_user(BURST_WORKLOAD_COMMAND.to_vec()).is_err()
+                    })
+                {
+                    bench.failure = Some("could not start burst workload");
                 }
                 let mut saw_end = false;
                 if let Some(stream) = &mut bench.herdr_stream {
-                    let mut budget = 0usize;
-                    while budget < 256 * 1024 {
+                    let mut budget = 0;
+                    while budget < 256 * 1024 && !saw_end && bench.failure.is_none() {
                         match stream.try_recv_uncredited() {
                             Some(SessionOutput::Data(bytes)) => {
                                 budget += bytes.len();
                                 bench.aux_bytes += bytes.len();
-                                if bytes
-                                    .windows(b"GPUI_BURST_END".len())
-                                    .any(|w| w == b"GPUI_BURST_END")
-                                {
-                                    saw_end = true;
+                                saw_end = contains_stream_marker(&mut bench.marker_tail, &bytes, b"GPUI_BURST_OK");
+                                if contains_stream_marker(&mut bench.failure_tail, &bytes, b"GPUI_BURST_FAILED") {
+                                    bench.failure = Some("burst workload exited unsuccessfully");
                                 }
-                                feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes);
-                            }
-                            _ => break,
-                        }
-                    }
-                }
-                if saw_end || now.duration_since(bench.started_at) > Duration::from_secs(20) {
-                    let total_ms = now.duration_since(bench.started_at).as_secs_f64() * 1000.0;
-                    bench.aux_metric_ms = (total_ms - bench.first_paint_ms.unwrap_or(0.0)).max(0.0);
-                    true
-                } else {
-                    false
-                }
-            }
-            BenchScenario::InputLatency => {
-                if frame_idx == 0 {
-                    if let Some(h) = &bench.herdr_handle {
-                        let _ = h.try_send_user(b"stty raw -echo; cat\n".to_vec());
-                    }
-                    std::thread::sleep(Duration::from_millis(80));
-                    if let Some(stream) = &mut bench.herdr_stream {
-                        while let Some(SessionOutput::Data(b)) = stream.try_recv_uncredited() {
-                            feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &b);
-                        }
-                    }
-                    // Run 100 synchronous round-trips (50 ASCII + 50 Japanese UTF-8) through
-                    // herdr-core PTY + VtTerminal + RowShapeCache.
-                    let ts = window.text_system();
-                    for idx in 0..100usize {
-                        let payload: &[u8] = if idx < 50 {
-                            b"a"
-                        } else {
-                            "あ".as_bytes()
-                        };
-                        let t_send = Instant::now();
-                        if let Some(h) = &bench.herdr_handle {
-                            let _ = h.try_send_user(payload.to_vec());
-                        }
-                        let mut got = false;
-                        let deadline = Instant::now() + Duration::from_secs(2);
-                        while Instant::now() < deadline && !got {
-                            if let Some(stream) = &mut bench.herdr_stream
-                                && let Ok(Some(SessionOutput::Data(bytes))) = bench.rt.block_on(async {
-                                    tokio::time::timeout(Duration::from_millis(50), stream.recv_uncredited())
-                                        .await
-                                })
-                            {
-                                bench.aux_bytes += bytes.len();
-                                feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes);
-                                if bytes.windows(payload.len()).any(|w| w == payload) {
-                                    got = true;
+                                if let Err(error) = feed_benchmark_output(&bench.rt, stream, &mut bench.vt, &bytes) {
+                                    bench.failure.get_or_insert(error);
                                 }
                             }
-                        }
-                        let _ = bench.cache.prepare_frame(
-                            &mut bench.vt,
-                            &bench.style,
-                            window.scale_factor(),
-                            ts,
-                        );
-                        if got {
-                            bench
-                                .latencies_ms
-                                .push(t_send.elapsed().as_secs_f64() * 1000.0);
+                            Some(SessionOutput::Closed(_)) => {
+                                bench.failure = Some("burst workload connection closed");
+                            }
+                            Some(SessionOutput::Resize { .. }) => continue,
+                            None => break,
                         }
                     }
-                    if let Some(h) = &bench.herdr_handle {
-                        let _ = h.try_send_user(b"\x04".to_vec());
-                    }
-                    true
-                } else {
-                    true
                 }
+                let elapsed_ms = now.duration_since(bench.started_at).as_secs_f64() * 1000.0
+                    - bench.first_paint_ms.unwrap_or(0.0);
+                if saw_end {
+                    bench.aux_metric_ms = elapsed_ms;
+                } else if elapsed_ms > 20_000.0 {
+                    bench.failure.get_or_insert("burst workload timed out");
+                }
+                saw_end || bench.failure.is_some()
             }
+            BenchScenario::InputLatency => Self::step_input_latency(bench, window, frame_idx),
+
         };
 
         bench.total_frames += 1;
@@ -2141,6 +2157,81 @@ impl GpuiPocView {
 
         window.request_animation_frame();
         cx.notify();
+    }
+
+    fn step_input_latency(bench: &mut BenchState, window: &Window, frame_idx: usize) -> bool {
+        let (Some(handle), Some(stream)) = (&bench.herdr_handle, &mut bench.herdr_stream) else {
+            bench.failure = Some("input-latency attachment is unavailable");
+            return true;
+        };
+        if frame_idx == 0 {
+            if handle.try_send_user(
+                b"stty raw -echo && printf '%s%s' GPUI_LATENCY_ READY && exec cat\n".to_vec()
+            ).is_err() {
+                bench.failure = Some("could not start input-latency workload");
+                return true;
+            }
+            return false;
+        }
+
+        let (payload, sent_at) = if bench.latency_ready {
+            let payload: &[u8] = if bench.latencies_ms.len() < 50 { b"a" } else { "あ".as_bytes() };
+            let sent_at = Instant::now();
+            if handle.try_send_user(payload.to_vec()).is_err() {
+                bench.failure = Some("input-latency input could not be sent");
+                return true;
+            }
+            (payload, sent_at)
+        } else {
+            (&b"GPUI_LATENCY_READY"[..], Instant::now())
+        };
+
+        let event = bench.rt.block_on(async {
+            tokio::time::timeout(Duration::from_millis(30), async {
+                while let Some(event) = stream.recv_uncredited().await {
+                    match event {
+                        SessionOutput::Data(bytes) => {
+                            bench.aux_bytes += bytes.len();
+                            let matched = contains_stream_marker(&mut bench.marker_tail, &bytes, payload);
+                            stream.acknowledge(bytes.len() as u32, bench.vt.feed(&bytes).pty_writes).await?;
+                            if matched {
+                                return Ok(true);
+                            }
+                        }
+                        SessionOutput::Closed(_) => break,
+                        SessionOutput::Resize { .. } => {}
+                    }
+                }
+                Ok::<_, String>(false)
+            }).await
+        });
+        match event {
+            Ok(Ok(true)) if !bench.latency_ready => {
+                bench.latency_ready = true;
+                bench.marker_tail.clear();
+                false
+            }
+            Ok(Ok(true)) => {
+                let _ = bench.cache.prepare_frame(
+                    &mut bench.vt,
+                    &bench.style,
+                    window.scale_factor(),
+                    window.text_system(),
+                );
+                bench.latencies_ms.push(sent_at.elapsed().as_secs_f64() * 1000.0);
+                bench.marker_tail.clear();
+                bench.latencies_ms.len() == 100
+            }
+            Err(_) if !bench.latency_ready && bench.started_at.elapsed() < Duration::from_secs(2) => false,
+            Err(_) => {
+                bench.failure = Some("input-latency wait timed out");
+                true
+            }
+            Ok(_) => {
+                bench.failure = Some("input-latency connection closed");
+                true
+            }
+        }
     }
 
     fn report_bench_and_quit(bench: &mut BenchState, cx: &mut Context<Self>) {
@@ -2185,11 +2276,15 @@ impl GpuiPocView {
             "  first_paint_ms   : {:.2} ms",
             bench.first_paint_ms.unwrap_or(0.0)
         );
-        println!(
-            "  aux_ms           : {:.2} ms (bytes={:.1} KiB)",
-            bench.aux_metric_ms,
-            bench.aux_bytes as f64 / 1024.0
-        );
+        if let Some(failure) = bench.failure {
+            eprintln!("  status           : failed ({failure})");
+        } else {
+            println!(
+                "  aux_ms           : {:.2} ms (bytes={:.1} KiB)",
+                bench.aux_metric_ms,
+                bench.aux_bytes as f64 / 1024.0,
+            );
+        }
         println!(
             "  frame_interval   : n={} p50={:.2}ms p95={:.2}ms p99={:.2}ms max={:.2}ms >16.67ms={} >25ms={}",
             bench.frame_times_ms.len(),
@@ -2212,7 +2307,7 @@ impl GpuiPocView {
             bench.max_cached_entries,
             bench.max_cache_bytes as f64 / 1024.0
         );
-        if !bench.latencies_ms.is_empty() {
+        if bench.failure.is_none() && !bench.latencies_ms.is_empty() {
             let mut lats = bench.latencies_ms.clone();
             lats.sort_by(|a, b| a.total_cmp(b));
             let lp50 = lats[lats.len() / 2];
@@ -2228,11 +2323,16 @@ impl GpuiPocView {
                 lmax
             );
         }
+        let rss_label = |rss: Option<f64>| {
+            rss.map_or_else(|| "unavailable".to_string(), |value| format!("{value:.2} MiB"))
+        };
+        let total = main_rss.zip(core_rss).map_or_else(String::new, |(main, core)| {
+            format!(", total={:.2} MiB", main + core)
+        });
         println!(
-            "  rss_mib          : gpui={:.2} MiB, herdr-core={:.2} MiB, total={:.2} MiB",
-            main_rss,
-            core_rss,
-            main_rss + core_rss
+            "  rss_mib          : gpui={}, herdr-core={}{total}",
+            rss_label(main_rss),
+            rss_label(core_rss),
         );
 
         bench.herdr_stream = None;
@@ -2240,12 +2340,9 @@ impl GpuiPocView {
         if let Some(mut guard) = bench.herdr_guard.take() {
             guard.stop_blocking();
         }
-        if let Some(p) = bench.tmp_file.take() {
-            let _ = std::fs::remove_file(p);
-        }
-        let qa_home = PathBuf::from(format!("/tmp/u-gp-nvhome-{}", std::process::id()));
-        if qa_home.exists() {
-            let _ = std::fs::remove_dir_all(qa_home);
+        bench.scratch = None;
+        if bench.failure.is_some() {
+            std::process::exit(1);
         }
         cx.quit();
     }
@@ -2364,21 +2461,18 @@ impl GpuiPocView {
     }
 }
 
-fn pid_rss_mib(pid: u32) -> f64 {
+fn pid_rss_mib(pid: u32) -> Option<f64> {
     if pid == 0 {
-        return 0.0;
+        return Some(0.0);
     }
-    let Ok(out) = std::process::Command::new("ps")
+    let out = std::process::Command::new("ps")
         .args(["-o", "rss=", "-p", &pid.to_string()])
-        .output()
-    else {
-        return 0.0;
-    };
-    let kib: f64 = String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse()
-        .unwrap_or(0.0);
-    kib / 1024.0
+        .output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let kib: f64 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
+    Some(kib / 1024.0)
 }
 
 impl Focusable for GpuiPocView {
@@ -2534,17 +2628,17 @@ impl Element for VtBenchScreenElement {
         let ts = window.text_system();
         let prepared = self.view.update(cx, |v, _| {
             let b = v.bench.as_mut()?;
-            let mut cache = std::mem::replace(&mut b.cache, RowShapeCache::new(RenderCacheMode::Uncached));
-            let res = cache.prepare_frame(&mut b.vt, &b.style, scale_factor, ts).ok();
-            let stats = cache.last_stats;
+            let res = b.cache.prepare_frame(&mut b.vt, &b.style, scale_factor, ts).ok();
+            let stats = b.cache.last_stats;
             b.prepaint_us_samples.push(stats.prepaint_us);
             b.shape_calls_total += stats.shape_calls;
             b.dirty_rows_total += stats.dirty_rows;
             b.cache_hits_total += stats.cache_hits;
             b.cache_misses_total += stats.cache_misses;
             b.max_cached_entries = b.max_cached_entries.max(stats.cached_entries);
-            b.max_cache_bytes = b.max_cache_bytes.max(stats.estimated_cache_bytes);
-            b.cache = cache;
+            if b.cache.mode == RenderCacheMode::DirtyRowCache {
+                b.max_cache_bytes = b.max_cache_bytes.max(b.cache.estimated_bytes());
+            }
             res
         });
         VtBenchPrepaint { prepared }
@@ -3056,7 +3150,8 @@ fn main() {
     }
 
     let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--bench-vt") {
+    let cfg = CliConfig::parse(&args);
+    if cfg.mode == RunMode::BenchVt {
         vt::run_headless_vt_benchmark();
         return;
     }
@@ -3064,7 +3159,6 @@ fn main() {
     #[cfg(unix)]
     let quit_signal = install_signal_cleanup_watcher();
 
-    let cfg = CliConfig::parse(&args);
     let started_at = Instant::now();
 
     Application::new().run(move |cx: &mut App| {
@@ -3108,7 +3202,7 @@ fn main() {
                 KeyBinding::new("cmd-q", QuitPoc, None),
             ]);
             cx.on_action(|_: &QuitPoc, cx| cx.quit());
-        } else {
+        } else if cfg.mode != RunMode::LiveTerminal {
             cx.bind_keys([KeyBinding::new("cmd-q", QuitPoc, None)]);
             cx.on_action(|_: &QuitPoc, cx| cx.quit());
         }
@@ -3128,6 +3222,7 @@ fn main() {
                 size(px(w), px(h))
             }
             RunMode::ProbeUi | RunMode::ProbeFonts => size(px(920.0), px(420.0)),
+            RunMode::BenchVt => unreachable!("headless benchmark runs before GPUI"),
         };
 
         let bounds = Bounds::centered(None, win_size, cx);
@@ -3153,4 +3248,42 @@ fn main() {
         }
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn benchmark_flag_is_not_consumed_from_child_arguments() {
+        let args = ["uiterm", "--cmd", "example", "--bench-vt"].map(str::to_owned);
+        let config = CliConfig::parse(&args);
+        assert_eq!(config.mode, RunMode::LiveTerminal);
+        assert_eq!(config.cmd_argv.unwrap(), ["example", "--bench-vt"]);
+        let args = ["uiterm", "--bench-vt"].map(str::to_owned);
+        assert_eq!(CliConfig::parse(&args).mode, RunMode::BenchVt);
+    }
+
+    #[test]
+    fn burst_command_marks_workload_success_and_failure_separately() {
+        let command = std::str::from_utf8(BURST_WORKLOAD_COMMAND).unwrap();
+        for (code, marker) in [(0, "GPUI_BURST_OK"), (7, "GPUI_BURST_FAILED")] {
+            let script = format!("python3() {{ return {code}; }}\n{command}");
+            let output = std::process::Command::new("/bin/sh")
+                .args(["-c", &script])
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), marker);
+        }
+    }
+
+    #[test]
+    fn stream_marker_is_found_across_chunks_without_retaining_the_output() {
+        let marker = b"ready";
+        let mut tail = Vec::new();
+        assert!(!contains_stream_marker(&mut tail, b"long output re", marker));
+        assert!(!contains_stream_marker(&mut tail, b"a", marker));
+        assert!(contains_stream_marker(&mut tail, b"dy trailing output", marker));
+        assert_eq!(tail, b"tput");
+    }
 }

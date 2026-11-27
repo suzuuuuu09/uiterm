@@ -150,9 +150,17 @@ pub fn resolve_herdr_core_bin() -> PathBuf {
     PathBuf::from("herdr-core")
 }
 
-struct DirCleanupGuard(Option<PathBuf>);
+pub(crate) struct DirCleanupGuard(Option<PathBuf>);
 
 impl DirCleanupGuard {
+    pub(crate) fn create(tag: &str) -> io::Result<Self> {
+        create_private_dir(tag).map(|dir| Self(Some(dir)))
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        self.0.as_deref().expect("private directory is owned")
+    }
+
     fn disarm(&mut self) {
         self.0 = None;
     }
@@ -492,9 +500,9 @@ impl IsolatedHerdrSession {
 
     pub async fn start_with_options(opts: HerdrStartOptions) -> Result<Self, String> {
         let binary = resolve_herdr_core_bin();
-        let base_dir =
-            create_private_dir(&opts.tag).map_err(|e| format!("create private dir: {e}"))?;
-        let mut dir_cleanup = DirCleanupGuard(Some(base_dir.clone()));
+        let mut dir_cleanup = DirCleanupGuard::create(&opts.tag)
+            .map_err(|e| format!("create private dir: {e}"))?;
+        let base_dir = dir_cleanup.path().to_path_buf();
         let socket_path = base_dir.join("hc.sock");
         let session_name = format!(
             "gpui-poc-{}-{}",
@@ -919,6 +927,21 @@ impl Drop for IsolatedHerdrSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scratch_cleanup_only_removes_its_owned_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let sibling = DirCleanupGuard::create("scratch-test").unwrap();
+        let owned = DirCleanupGuard::create("scratch-test").unwrap();
+        let path = owned.path().to_path_buf();
+        assert_ne!(path, sibling.path());
+        assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o700);
+        std::fs::write(path.join("sample.rs"), "sample").unwrap();
+        drop(owned);
+        assert!(!path.exists());
+        assert!(sibling.path().is_dir());
+    }
 
     #[tokio::test]
     async fn receives_the_controlling_viewers_resize_as_an_observer() {

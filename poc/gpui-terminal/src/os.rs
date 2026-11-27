@@ -301,9 +301,12 @@ mod tests {
         assert_eq!(env.get("SHELL").map(String::as_str), Some("/bin/zsh"));
         assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
-        assert!(
-            env.get("XDG_CONFIG_HOME")
-                .is_some_and(|v| !v.starts_with("/tmp/u-gp-"))
-        );
+        let expected = std::env::var("XDG_CONFIG_HOME").ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                let home = std::env::var("HOME").ok().filter(|value| !value.trim().is_empty())?;
+                Some(Path::new(&home).join(".config").to_string_lossy().into_owned())
+            });
+        assert_eq!(env.get("XDG_CONFIG_HOME"), expected.as_ref());
     }
 }

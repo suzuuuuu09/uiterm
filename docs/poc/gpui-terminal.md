@@ -74,6 +74,8 @@ Stage 1・2 で検証した GPUI フォントシェーピング・IME 状態管�
 2. **`Screen::Alternate` の `Dirty::Full` キャッシュ無効化と容量上限の引き下げ**: `MAX_CACHED_ROWS` を `256` → **`128`**（32 行画面×4 画面分）へ縮小し、`by_row_id` + `hash_styled_cells` はスクロール履歴が機能する `Screen::Primary` のみに限定。`Screen::Alternate` の `Dirty::Full`（`Ctrl+D`/`Ctrl+U` 等）では `by_row_id` を参照・登録せず直接 `viewport_rows` を更新する。なお、`Screen::Primary`/`Alternate` 双方で `Dirty::Clean` と `Dirty::Partial`（`RenderState::next_dirty()`）は常に有効。
 3. **無効化条件**: `CacheConfigKey`（フォントプリセット、Nerd Font fallback、フォントサイズ、行間、ディスプレイ倍率、`cols×rows`、`Screen::{Primary, Alternate}`、色/パレットハッシュ `colors_hash`）の変化時に `by_row_id` と `viewport_rows` を全破棄。さらに `selection_generation` 変化時に選択範囲のみ更新し、128 行超過時は世代順 LRU で破棄する（`renderer::tests::cache_eviction_bounds_memory_and_clears_on_config_change` で検証）。
 
+計測表は変更前の履歴値である。現行の入力遅延ベンチマークはフレームごとに1サンプルを処理し、応答待ちが30 msを超えた場合は計測を中断する。キャッシュ容量の推計には、表示行だけが保持するデータも含める。
+
 ### 3.3 最適化前後比較（v2・各 3 試行の中央値、106×32 Menlo 14px 履歴 2,000 行）
 
 ※ `Burst5MiB` は v1 計測時にコマンドエコー内の `GPUI_BURST_END` 文字列と自己一致し `0.4 KiB` で早期終了するベンチマーク上の不具合があったため、v2 で `printf '%s%s\n' GPUI_ BURST_END` に修正し実データ `5,250.6 KiB` で再計測した。
