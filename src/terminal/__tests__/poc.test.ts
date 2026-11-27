@@ -124,7 +124,6 @@ function sessionAdapter(
       resize(cols: number, rows: number) {
         fakeCols = cols;
         fakeRows = rows;
-        callbacks.onResize(cols, rows);
       },
       fit() {},
       focus() {},
@@ -149,6 +148,12 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
     const writeCalls: Array<{ attachId: AttachId; kind: InputKind; len: number }> = [];
     const resizeCalls: Array<{ attachId: AttachId; cols: number; rows: number }> = [];
 
+    let finishResize!: () => void;
+    const resizeGate = new Promise<void>((resolve) => { finishResize = resolve; });
+    let markReportStarted!: () => void;
+    const reportStarted = new Promise<void>((resolve) => { markReportStarted = resolve; });
+    let finishReport!: () => void;
+    const reportGate = new Promise<void>((resolve) => { finishReport = resolve; });
     const mock = new MockIpcClient();
     let emitFrame!: (frame: OutputFrame) => void;
     let resolveAttach!: (res: TerminalAttachResult) => void;
@@ -161,9 +166,14 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
     mock.terminalWrite = async (attachId, data, kind = "user") => {
       const len = typeof data === "string" ? data.length : data.byteLength;
       writeCalls.push({ attachId, kind, len });
+      if (typeof data !== "string" && new TextDecoder().decode(data) === "\x1b[48;43;132;0;0t") {
+        markReportStarted();
+        await reportGate;
+      }
     };
     mock.terminalResize = async (attachId, cols, rows) => {
       resizeCalls.push({ attachId, cols, rows });
+      await resizeGate;
     };
     mock.terminalAttach = (
       _params: TerminalAttachParams,
@@ -226,19 +236,45 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
         initialCreditBytes: 256 * 1024,
       });
 
-      await createPromise;
+      const session = await createPromise;
 
       expect(ackCalls).toEqual([{ attachId: 7, bytes: 20 * 1024 }]);
       expect(writeCalls).toEqual([{ attachId: 7, kind: "automatic", len: 9 }]);
 
+      store.getState().updateSettings({ suppressAutoReplies: true });
+      capturedCallbacks.onAutoResponse(encoder.encode("\x1b[48;24;80;0;0t"), "resize");
+      await vi.waitFor(() => expect(writeCalls).toHaveLength(2));
+      expect(writeCalls.at(-1)).toEqual({ attachId: 7, kind: "automatic", len: 15 });
+
+      session.adapter.getResizeReport = () => encoder.encode(
+        `\x1b[48;${session.adapter.rows};${session.adapter.cols};0;0t`,
+      );
+      capturedCallbacks.onResize(132, 43);
+      expect(resizeCalls).toEqual([{ attachId: 7, cols: 132, rows: 43 }]);
+
+      capturedCallbacks.onResize(50, 12);
       emitFrame({ kind: "resize", cols: 120, rows: 40 });
-      expect(resizeCalls).toEqual([]);
+      emitFrame({ kind: "data", bytes: new Uint8Array([65]) });
+      expect([session.adapter.cols, session.adapter.rows]).toEqual([132, 43]);
 
+      // Returning to the committed size cancels the queued shrink without
+      // cropping the alternate screen or asking the PTY to resize twice.
       capturedCallbacks.onResize(132, 43);
+      expect(writeCalls).toHaveLength(2);
+      finishResize();
+      await reportStarted;
+      expect(writeCalls.at(-1)).toEqual({ attachId: 7, kind: "automatic", len: 16 });
       expect(resizeCalls).toEqual([{ attachId: 7, cols: 132, rows: 43 }]);
 
-      capturedCallbacks.onResize(132, 43);
-      expect(resizeCalls).toEqual([{ attachId: 7, cols: 132, rows: 43 }]);
+      capturedCallbacks.onResize(100, 30);
+      expect(resizeCalls).toHaveLength(1);
+      finishReport();
+      await vi.waitFor(() => {
+        expect(resizeCalls).toEqual([
+          { attachId: 7, cols: 132, rows: 43 },
+          { attachId: 7, cols: 100, rows: 30 },
+        ]);
+      });
 
       mgr.disposeAll();
     } finally {

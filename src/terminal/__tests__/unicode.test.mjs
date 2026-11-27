@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { GhosttyCore } from "@wterm/ghostty";
 import { expect, it, vi } from "vite-plus/test";
+import { TerminalOutputProtocol } from "../outputProtocol.ts";
 
 it("keeps UTF-8 fragments and graphemes in the expected terminal columns", async () => {
   const resolve = createRequire(import.meta.url).resolve;
@@ -33,6 +34,41 @@ it("keeps UTF-8 fragments and graphemes in the expected terminal columns", async
     expect(core.getCell(1, 2).char).toBe(0xf015);
     expect(core.getCell(1, 3).char).toBe(0xf024b);
     expect(core.getCell(1, 4).char).toBe("|".codePointAt(0));
+  } finally {
+    core.dispose();
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each([
+  ["", "\x1b\\", "試験>"],
+  [";redraw=0", "\x07", "試験>"],
+  [";redraw=1", "\x1b\\", ""],
+])("handles a fragmented OSC 133 prompt with options %j on resize", async (options, terminator, expected) => {
+  const resolve = createRequire(import.meta.url).resolve;
+  const wasm = readFileSync(resolve("@wterm/ghostty/ghostty-vt.wasm"));
+  vi.stubGlobal("fetch", async () => new Response(new Uint8Array(wasm), {
+    headers: { "content-type": "application/wasm" },
+  }));
+  const core = await GhosttyCore.load({ wasmPath: "file:///uiterm-prompt-resize-test.wasm" });
+  const output = new TerminalOutputProtocol();
+  try {
+    core.init(80, 24);
+    const bytes = new TextEncoder().encode(
+      "履歴\r\n".repeat(40) +
+        `\x1b]133;A;click_events=1${options}${terminator}試験> \x1b]133;B\x1b\\`,
+    );
+    for (const byte of bytes) core.writeRaw(output.process(Uint8Array.of(byte)).bytes);
+
+    for (const [cols, rows] of [[60, 14], [100, 24]]) {
+      core.resize(cols, rows);
+      const cursor = core.getCursor();
+      const text = Array.from({ length: cursor.col }, (_, col) => {
+        const cell = core.getCell(cursor.row, col);
+        return cell.width === 0 ? "" : String.fromCodePoint(cell.char || 32);
+      }).join("").trimEnd();
+      expect(text).toBe(expected);
+    }
   } finally {
     core.dispose();
     vi.unstubAllGlobals();

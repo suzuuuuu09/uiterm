@@ -88,6 +88,7 @@ async fn herdr_core_lifecycle_io_resize_auto_input_and_osc7501() {
         .await
         .expect("terminal.attach");
     assert!(attach.result.automatic_input);
+    assert!(!attach.result.resize_notifications);
     let attach_id = attach.result.attach_id;
 
     // 0. Defensive check: attachId=0 must be rejected without touching JSON-RPC channel 0
@@ -114,28 +115,46 @@ async fn herdr_core_lifecycle_io_resize_auto_input_and_osc7501() {
     .await;
     assert!(out.contains("UITERM_USER_OK"), "got output: {out:?}");
 
-    // 2. Resize (RESIZE frame kind 3) -> verify via `stty size`
+    // The foreground shell must see the new dimensions from its WINCH handler.
     client
-        .terminal_resize(attach_id, 111, 33)
+        .terminal_write(
+            attach_id,
+            concat!(
+                r#"trap 'printf "UITERM_WINCH "; stty size' WINCH; printf '%s%s\n' UITERM_ READY"#,
+                "\n"
+            )
+            .as_bytes()
+            .to_vec(),
+            false,
+        )
         .await
-        .expect("resize");
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    client
-        .terminal_write(attach_id, b"stty size\n".to_vec(), false)
-        .await
-        .expect("write stty");
-    let out = collect_until(
+        .expect("install WINCH handler");
+    let ready = collect_until(
         &mut attach.rx,
         &client,
         attach_id,
-        "33 111",
+        "UITERM_READY",
         Duration::from_secs(5),
     )
     .await;
-    assert!(
-        out.contains("33 111"),
-        "expected resized 33 111, got: {out:?}"
-    );
+    assert!(ready.contains("UITERM_READY"), "got output: {ready:?}");
+
+    for (cols, rows) in [(111, 33), (61, 15), (132, 43)] {
+        client
+            .terminal_resize(attach_id, cols, rows)
+            .await
+            .expect("resize");
+        let expected = format!("UITERM_WINCH {rows} {cols}");
+        let out = collect_until(
+            &mut attach.rx,
+            &client,
+            attach_id,
+            &expected,
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(out.contains(&expected), "expected {expected}, got: {out:?}");
+    }
 
     // 3. Automatic input (AUTOMATIC_INPUT frame kind 6) -> verify bytes reach PTY unchanged
     client

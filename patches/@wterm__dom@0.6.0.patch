@@ -29,3 +29,107 @@ index 78a86ffd96eec03222777f40e9db6a0561684c3f..7ab8cd176c5e7c2c20ce898df074bde3
              this.element.classList.remove("focused");
              this.stopMouseCapture();
              this.lastMouseMotion = null;
+diff --git a/dist/wterm.d.ts b/dist/wterm.d.ts
+index f4a9d5d31b37ba4c6f97ebd4f9dd1016a3377d34..0551a0b1efe41e08da02569b4cb8118d7588ce71 100644
+--- a/dist/wterm.d.ts
++++ b/dist/wterm.d.ts
+@@ -46,6 +46,8 @@ export interface WTermOptions {
+     /** Latest shell-reported state per parser chunk. Requires a supporting core and OSC 133 markers. */
+     onShellIntegration?: (state: ShellIntegrationState) => void;
+     onResize?: (cols: number, rows: number) => void;
++    /** Let the host apply fitted dimensions alongside the PTY resize. */
++    onResizeRequest?: (cols: number, rows: number) => void;
+     onSearchChange?: (state: SearchState) => void;
+ }
+ export declare class WTerm {
+@@ -118,6 +120,7 @@ export declare class WTerm {
+     onShellIntegration: ((state: ShellIntegrationState) => void) | null;
+     onClipboardWrite: ((text: string) => void) | null;
+     onResize: ((cols: number, rows: number) => void) | null;
++    private onResizeRequest;
+     onSearchChange: ((state: SearchState) => void) | null;
+     private _container;
+     constructor(element: HTMLElement, options?: WTermOptions);
+diff --git a/dist/wterm.js b/dist/wterm.js
+index 581372e9dc3fe2213fac13e8de8d4dd975fad059..dfe9e516e1c20f31593bc604835452486c65db2e 100644
+--- a/dist/wterm.js
++++ b/dist/wterm.js
+@@ -210,6 +210,7 @@ export class WTerm {
+         this.onShellIntegration = options.onShellIntegration || null;
+         this.onClipboardWrite = options.onClipboardWrite || null;
+         this.onResize = options.onResize || null;
++        this.onResizeRequest = options.onResizeRequest;
+         this.onSearchChange = options.onSearchChange || null;
+         this._search = new SearchController((reveal) => {
+             this._searchReveal || (this._searchReveal = reveal);
+@@ -326,17 +327,18 @@ export class WTerm {
+         this._onScroll = () => {
+             if (this._pendingResizeScrollTop !== null)
+                 return;
+-            const atBottom = this._isScrolledToBottom();
+-            if (this._shouldScrollToBottom && atBottom) {
+-                this._programmaticScrollTop = null;
+-                return;
+-            }
++            // A delayed event from our own scroll can arrive after the viewport shrinks.
+             if (this._programmaticScrollTop !== null &&
+                 Math.abs(this.element.scrollTop - this._programmaticScrollTop) <=
+                     PROGRAMMATIC_SCROLL_TOLERANCE) {
+                 this._programmaticScrollTop = null;
+                 return;
+             }
++            const atBottom = this._isScrolledToBottom();
++            if (this._shouldScrollToBottom && atBottom) {
++                this._programmaticScrollTop = null;
++                return;
++            }
+             this._programmaticScrollTop = null;
+             this._shouldScrollToBottom = false;
+             this._scheduleRender();
+@@ -715,7 +717,11 @@ export class WTerm {
+         if (!this.bridge || this._destroyed)
+             return;
+         const size = this._measureGridSize();
+-        if (size && (size.cols !== this.cols || size.rows !== this.rows))
++        if (!size)
++            return;
++        if (this.onResizeRequest)
++            this.onResizeRequest(size.cols, size.rows);
++        else if (size.cols !== this.cols || size.rows !== this.rows)
+             this.resize(size.cols, size.rows);
+     }
+     _measureGridSize() {
+@@ -753,8 +759,9 @@ export class WTerm {
+         this._rectangleDrag.cancel();
+         this._historySelection.invalidate();
+         this.renderer?.beforeMutation(this.bridge);
++        // The viewport already has its new height, but the DOM still has the old grid.
+         this._shouldScrollToBottom =
+-            this._pendingResizeScrollTop === null && this._isScrolledToBottom();
++            this._pendingResizeScrollTop === null && this._pinnedToBottom;
+         this.bridge.resize(cols, rows);
+         this._outputAnnouncements.invalidate();
+         this.cols = this.bridge.getCols();
+@@ -1594,15 +1601,19 @@ export class WTerm {
+             return;
+         const { charWidth, rowHeight } = measured;
+         const contentHeight = containerRect.height;
++        if (containerRect.width <= 0 || contentHeight <= 0)
++            return;
+         const height = this._visibleContentHeight(contentHeight);
+         const newCols = Math.max(1, Math.floor(containerRect.width / charWidth));
+         const newRows = Math.max(1, Math.floor(height / rowHeight));
+-        const atBottom = this._isScrolledToBottom();
+         this._setKeyboardInset(contentHeight - height);
+-        if (newCols !== this.cols || newRows !== this.rows) {
++        if (this.onResizeRequest) {
++            this.onResizeRequest(newCols, newRows);
++        }
++        else if (newCols !== this.cols || newRows !== this.rows) {
+             this.resize(newCols, newRows);
+         }
+-        else if (atBottom) {
++        else if (this._isScrolledToBottom()) {
+             this._scrollToBottom();
+         }
+     }
