@@ -11,11 +11,11 @@ TypeScript 側の型定義・実装は [src/ipc/types.ts](../../src/ipc/types.ts
 
 ## 1. 識別子
 
-| 識別子 | 型 | 説明 |
-| --- | --- | --- |
-| `SessionId` | `string` | `herdr-core` が採番する不変の端末アドレス（例: `"t1"`, `"t2"`）。プロセス終了後も一意。 |
-| `AttachId` | `number` (`u32`) | `terminal_attach` で割り当てられる uiterm のプロセス内で一意なストリーム ID。Rust が接続ごとの Framed Mode チャンネルに変換する。`terminal_write` / `terminal_resize` / `terminal_focus` / `terminal_facts` / `terminal_ack` / `terminal_detach` の対象指定に使用する。 |
-| `subscriptionId` | `number` (`u32`) | `events_subscribe` で割り当てられるイベント購読 ID。アタッチと同様、Rust が接続ごとのチャンネルに変換する。 |
+| 識別子           | 型               | 説明                                                                                                                                                                                                                                                                    |
+| ---------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SessionId`      | `string`         | `herdr-core` が採番する不変の端末アドレス（例: `"t1"`, `"t2"`）。プロセス終了後も一意。                                                                                                                                                                                 |
+| `AttachId`       | `number` (`u32`) | `terminal_attach` で割り当てられる uiterm のプロセス内で一意なストリーム ID。Rust が接続ごとの Framed Mode チャンネルに変換する。`terminal_write` / `terminal_resize` / `terminal_focus` / `terminal_facts` / `terminal_ack` / `terminal_detach` の対象指定に使用する。 |
+| `subscriptionId` | `number` (`u32`) | `events_subscribe` で割り当てられるイベント購読 ID。アタッチと同様、Rust が接続ごとのチャンネルに変換する。                                                                                                                                                             |
 
 1 つの `SessionId` に対して複数回 `terminal_attach`（再接続や `observe: true` での監視）を行えるため、セッション識別子とアタッチストリーム識別子を分離している。
 
@@ -27,7 +27,7 @@ TypeScript 側の型定義・実装は [src/ipc/types.ts](../../src/ipc/types.ts
 
 ```ts
 export interface IpcError {
-  code: string;        // 例: "not_found", "unavailable", "core_disconnected", "invalid_args", "io_error"
+  code: string; // 例: "not_found", "unavailable", "core_disconnected", "invalid_args", "io_error"
   message: string;
   hint?: string | null;
 }
@@ -35,43 +35,43 @@ export interface IpcError {
 
 ### 2.1 コア接続・状態
 
-| コマンド名 | 引数 | 戻り値 | 説明 |
-| --- | --- | --- | --- |
-| `core_status` | なし | `CoreStatus` | 起動中 `herdr-core` のバージョン・PID・稼働時間・対応機能（`automaticInputSupported`, `resizeNotificationsSupported`）を返す。 |
+| コマンド名       | 引数 | 戻り値       | 説明                                                                                                                                                                              |
+| ---------------- | ---- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `core_status`    | なし | `CoreStatus` | 起動中 `herdr-core` のバージョン・PID・稼働時間・対応機能（`automaticInputSupported`, `resizeNotificationsSupported`）を返す。                                                    |
 | `core_reconnect` | なし | `CoreStatus` | 稼働中の接続を再利用する。コアが稼働したまま接続が切断された場合、同じ隔離コアに再接続して Framed Mode ハンドシェイクをやり直す。コア停止時はエラーを返し、自動再起動は行わない。 |
 
 ### 2.2 ターミナル管理
 
-| コマンド名 | 引数 | 戻り値 | 説明 |
-| --- | --- | --- | --- |
-| `terminal_create` | `{ params: TerminalCreateParams }` | `TerminalInfo` | `herdr-core` の `terminal.run` を呼び出して新規セッションを作成する。`argv` と `line` を省略するとデフォルトシェルを起動する。 |
-| `terminal_list` | `{ all: boolean }` | `TerminalInfo[]` | 実行中（`all: true` なら終了済み含む）のセッション一覧を返す。 |
-| `terminal_attach` | `{ params: TerminalAttachParams, onOutput: Channel<ArrayBuffer> }` | `TerminalAttachResult` | 指定 `sessionId` にアタッチし、`onOutput` チャンネルでバイナリストリームの配信を開始する。 |
-| `terminal_detach` | `{ attachId: AttachId }` | `void` | `herdr-core` へ `CLOSE` フレームを送り、アタッチを解除する（シェルプロセスは維持される）。 |
-| `terminal_kill` | `{ sessionId: SessionId }` | `void` | `herdr-core` の `terminal.kill` を呼び出してプロセスを終了する。 |
+| コマンド名        | 引数                                                               | 戻り値                 | 説明                                                                                                                           |
+| ----------------- | ------------------------------------------------------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `terminal_create` | `{ params: TerminalCreateParams }`                                 | `TerminalInfo`         | `herdr-core` の `terminal.run` を呼び出して新規セッションを作成する。`argv` と `line` を省略するとデフォルトシェルを起動する。 |
+| `terminal_list`   | `{ all: boolean }`                                                 | `TerminalInfo[]`       | 実行中（`all: true` なら終了済み含む）のセッション一覧を返す。                                                                 |
+| `terminal_attach` | `{ params: TerminalAttachParams, onOutput: Channel<ArrayBuffer> }` | `TerminalAttachResult` | 指定 `sessionId` にアタッチし、`onOutput` チャンネルでバイナリストリームの配信を開始する。                                     |
+| `terminal_detach` | `{ attachId: AttachId }`                                           | `void`                 | `herdr-core` へ `CLOSE` フレームを送り、アタッチを解除する（シェルプロセスは維持される）。                                     |
+| `terminal_kill`   | `{ sessionId: SessionId }`                                         | `void`                 | `herdr-core` の `terminal.kill` を呼び出してプロセスを終了する。                                                               |
 
 ### 2.3 ターミナル入出力・制御
 
-| コマンド名 | 引数 | 戻り値 | 説明 |
-| --- | --- | --- | --- |
-| `terminal_write` | **Raw Binary Body** (`Uint8Array`) + Headers | `void` | 端末への入力を送信する（詳細は 4 章）。 |
-| `terminal_resize` | `{ attachId: AttachId, cols: number, rows: number }` | `void` | `herdr-core` へ `RESIZE` フレーム（kind 3）を送信する。 |
-| `terminal_focus` | `{ attachId: AttachId, focused: boolean }` | `void` | `herdr-core` へ `FOCUS` フレーム（kind 4）を送信する。アクティブビューア切替・フォーカスイベント送信に使用。 |
-| `terminal_facts` | `{ attachId: AttachId, display: DisplayFacts }` | `void` | `herdr-core` へ `FACTS` フレーム（kind 5）を送信する（前景色・背景色・カーソル色・セルサイズ）。 |
-| `terminal_ack` | `{ attachId: AttachId, bytes: number }` | `void` | フロントエンドが消費したバイト数を `herdr-core` へ `CREDIT` フレーム（kind 1）として返す。 |
+| コマンド名        | 引数                                                 | 戻り値 | 説明                                                                                                         |
+| ----------------- | ---------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------ |
+| `terminal_write`  | **Raw Binary Body** (`Uint8Array`) + Headers         | `void` | 端末への入力を送信する（詳細は 4 章）。                                                                      |
+| `terminal_resize` | `{ attachId: AttachId, cols: number, rows: number }` | `void` | `herdr-core` へ `RESIZE` フレーム（kind 3）を送信する。                                                      |
+| `terminal_focus`  | `{ attachId: AttachId, focused: boolean }`           | `void` | `herdr-core` へ `FOCUS` フレーム（kind 4）を送信する。アクティブビューア切替・フォーカスイベント送信に使用。 |
+| `terminal_facts`  | `{ attachId: AttachId, display: DisplayFacts }`      | `void` | `herdr-core` へ `FACTS` フレーム（kind 5）を送信する（前景色・背景色・カーソル色・セルサイズ）。             |
+| `terminal_ack`    | `{ attachId: AttachId, bytes: number }`              | `void` | フロントエンドが消費したバイト数を `herdr-core` へ `CREDIT` フレーム（kind 1）として返す。                   |
 
 ### 2.4 イベント購読
 
-| コマンド名 | 引数 | 戻り値 | 説明 |
-| --- | --- | --- | --- |
-| `events_subscribe` | `{ onEvent: Channel<{ subscriptionId: number, events: CoreEvent[], bytes: number }> }` | `EventsSubscribeResult` | `herdr-core` の `events.subscribe` を開始し、初期スナップショット（`seq`, `terminals`）を返しつつ差分イベントを配信する。 |
-| `events_ack` | `{ subscriptionId: number, bytes: number }` | `void` | クライアントがイベントを受け取った後、JSON の分割分も含めた受信バイト数を CREDIT で返す。 |
-| `events_unsubscribe` | `{ subscriptionId: number }` | `void` | イベント購読チャンネルを閉じる。 |
+| コマンド名           | 引数                                                                                   | 戻り値                  | 説明                                                                                                                      |
+| -------------------- | -------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `events_subscribe`   | `{ onEvent: Channel<{ subscriptionId: number, events: CoreEvent[], bytes: number }> }` | `EventsSubscribeResult` | `herdr-core` の `events.subscribe` を開始し、初期スナップショット（`seq`, `terminals`）を返しつつ差分イベントを配信する。 |
+| `events_ack`         | `{ subscriptionId: number, bytes: number }`                                            | `void`                  | クライアントがイベントを受け取った後、JSON の分割分も含めた受信バイト数を CREDIT で返す。                                 |
+| `events_unsubscribe` | `{ subscriptionId: number }`                                                           | `void`                  | イベント購読チャンネルを閉じる。                                                                                          |
 
 ### 2.5 TypeScript 設定ランタイム検証用
 
-| コマンド名 | 引数 | 戻り値 | 説明 |
-| --- | --- | --- | --- |
+| コマンド名        | 引数                           | 戻り値             | 説明                                                                                                                                      |
+| ----------------- | ------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `config_eval_poc` | `{ params: ConfigEvalParams }` | `ConfigEvalResult` | 外部 Node.js プロセスを起動し、JSON-RPC over stdio で リポジトリ内の PoC サンプル設定を評価する。WebView から渡された任意パスは拒否する。 |
 
 ---
@@ -88,11 +88,11 @@ export interface IpcError {
 +---------------+----------------------------------------+
 ```
 
-| `tag` | 定数名 | ペイロード形式 | 説明 |
-| --- | --- | --- | --- |
-| `0x00` | `OUTPUT_FRAME_DATA` | 生 VT / PTY 出力バイト列 | 初回は `herdr-core` による現在画面の再描画（+ オプションの履歴 + OSC 7501 状態 + タイトル + `CSI ?9001h/l`）、以降はライブ出力。`wterm` へそのまま流し込む。 |
-| `0x01` | `OUTPUT_FRAME_RESIZE` | `[cols: u16 LE][rows: u16 LE]` (4 bytes) | `resizeNotifications: true` 指定時に送信される。後続の `DATA` を処理する前に描画グリッドをリサイズすること。 |
-| `0x02` | `OUTPUT_FRAME_CLOSE` | UTF-8 JSON（省略可） | ストリーム終了通知。例: `{"reason":"exited","exit_code":0,"signal":null}`。 |
+| `tag`  | 定数名                | ペイロード形式                           | 説明                                                                                                                                                         |
+| ------ | --------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0x00` | `OUTPUT_FRAME_DATA`   | 生 VT / PTY 出力バイト列                 | 初回は `herdr-core` による現在画面の再描画（+ オプションの履歴 + OSC 7501 状態 + タイトル + `CSI ?9001h/l`）、以降はライブ出力。`wterm` へそのまま流し込む。 |
+| `0x01` | `OUTPUT_FRAME_RESIZE` | `[cols: u16 LE][rows: u16 LE]` (4 bytes) | `resizeNotifications: true` 指定時に送信される。後続の `DATA` を処理する前に描画グリッドをリサイズすること。                                                 |
+| `0x02` | `OUTPUT_FRAME_CLOSE`  | UTF-8 JSON（省略可）                     | ストリーム終了通知。例: `{"reason":"exited","exit_code":0,"signal":null}`。                                                                                  |
 
 フロントエンドは `decodeOutputFrame(buffer: ArrayBuffer)`（[src/ipc/types.ts](../../src/ipc/types.ts)）でデコードできる。
 

@@ -1,9 +1,5 @@
 import type { TerminalBackendId } from "../validation/settingsSchemas.ts";
-import type {
-  TerminalAdapter,
-  TerminalAdapterCallbacks,
-  TerminalAdapterOptions,
-} from "./types.ts";
+import type { TerminalAdapter, TerminalAdapterCallbacks, TerminalAdapterOptions } from "./types.ts";
 import { WTermGhosttyAdapter } from "./wtermAdapter.ts";
 
 export function createTerminalAdapter(

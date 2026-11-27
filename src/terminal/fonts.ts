@@ -74,7 +74,10 @@ export const EMOJI_FONT_FALLBACK_FAMILIES: readonly string[] = [
 ];
 
 function normalizeFamilyToken(token: string): string {
-  return token.trim().replace(/^["']|["']$/g, "").toLowerCase();
+  return token
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .toLowerCase();
 }
 
 function splitFontList(fontFamily: string): string[] {

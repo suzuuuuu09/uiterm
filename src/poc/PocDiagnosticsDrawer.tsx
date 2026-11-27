@@ -184,8 +184,7 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
         pocStore.getState().pushLog("system", `Benchmark aborted: ${String(err)}`);
       } finally {
         disposeBenchSessions(Array.from(createdBenchIds));
-        const restorePaneId =
-          appStore.getState().selection.activePaneId ?? previousActivePaneId;
+        const restorePaneId = appStore.getState().selection.activePaneId ?? previousActivePaneId;
         if (restorePaneId && appRuntime.sessionManager.get(restorePaneId)) {
           appRuntime.sessionManager.setActive(restorePaneId);
         }
@@ -378,7 +377,9 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
             <span>{t(locale, "poc.suppressReplies")}</span>
             <Switch.Root
               checked={suppressAutoReplies}
-              onCheckedChange={(v) => appStore.getState().updateSettings({ suppressAutoReplies: v })}
+              onCheckedChange={(v) =>
+                appStore.getState().updateSettings({ suppressAutoReplies: v })
+              }
               className="relative inline-flex h-4 w-7 items-center rounded-full bg-zinc-700 data-[checked]:bg-emerald-600"
             >
               <Switch.Thumb className="block h-3 w-3 translate-x-0.5 rounded-full bg-white transition-transform data-[checked]:translate-x-3.5" />
@@ -477,7 +478,12 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
                 }}
                 onBlur={() => {
                   const val = Number(fontSizeInput);
-                  if (fontSizeInput.trim() !== "" && Number.isFinite(val) && val >= 8 && val <= 48) {
+                  if (
+                    fontSizeInput.trim() !== "" &&
+                    Number.isFinite(val) &&
+                    val >= 8 &&
+                    val <= 48
+                  ) {
                     applyFont({ fontSize: val });
                   } else {
                     setFontSizeInput(String(fontSize));
@@ -510,7 +516,12 @@ export function PocDiagnosticsDrawer({ onSpawnTabs, onCloseAll }: PocDiagnostics
                 }}
                 onBlur={() => {
                   const val = Number(lineHeightInput);
-                  if (lineHeightInput.trim() !== "" && Number.isFinite(val) && val >= 1.0 && val <= 2.0) {
+                  if (
+                    lineHeightInput.trim() !== "" &&
+                    Number.isFinite(val) &&
+                    val >= 1.0 &&
+                    val <= 2.0
+                  ) {
                     applyFont({ lineHeight: val });
                   } else {
                     setLineHeightInput(String(lineHeight));

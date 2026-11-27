@@ -19,17 +19,21 @@ export const en: Record<TranslationKey, string> = {
   "action.terminal.create.title": "New Terminal",
   "action.terminal.create.description": "Create a new terminal tab in the current workspace.",
   "action.terminal.close.title": "Close Terminal",
-  "action.terminal.close.description": "Close the specified or active terminal tab and terminate its session.",
+  "action.terminal.close.description":
+    "Close the specified or active terminal tab and terminate its session.",
   "action.terminal.focus.title": "Focus Terminal",
   "action.terminal.focus.description": "Move keyboard focus to the active terminal.",
   "action.terminal.resync.title": "Resync Terminal",
-  "action.terminal.resync.description": "Re-attach to herdr-core to resynchronize the terminal screen.",
+  "action.terminal.resync.description":
+    "Re-attach to herdr-core to resynchronize the terminal screen.",
   "action.terminal.copySelection.title": "Copy Selection",
-  "action.terminal.copySelection.description": "Copy selected text from the active terminal to the clipboard.",
+  "action.terminal.copySelection.description":
+    "Copy selected text from the active terminal to the clipboard.",
   "action.terminal.paste.title": "Paste from Clipboard",
   "action.terminal.paste.description": "Paste clipboard text into the active terminal.",
   "action.terminal.selectAll.title": "Select All",
-  "action.terminal.selectAll.description": "Select the entire scrollback and viewport in the active terminal.",
+  "action.terminal.selectAll.description":
+    "Select the entire scrollback and viewport in the active terminal.",
   "action.terminal.clearSelection.title": "Clear Selection",
   "action.terminal.clearSelection.description": "Clear the active terminal text selection.",
   "action.terminal.restart.title": "Restart Terminal",
@@ -53,7 +57,8 @@ export const en: Record<TranslationKey, string> = {
   "action.app.toggleSidebar.title": "Toggle Sidebar",
   "action.app.toggleSidebar.description": "Show or hide the sidebar.",
   "action.app.toggleDiagnostics.title": "Toggle Diagnostics Panel",
-  "action.app.toggleDiagnostics.description": "Show or hide the developer diagnostics and benchmark panel.",
+  "action.app.toggleDiagnostics.description":
+    "Show or hide the developer diagnostics and benchmark panel.",
 
   // Action unavailability reasons
   "action.unavailable.noActiveTab": "No active tab is selected.",
@@ -117,7 +122,8 @@ export const en: Record<TranslationKey, string> = {
   "poc.repliesBlocked": "Replies Blocked",
   "poc.imeComposing": "IME Composing",
   "poc.imeIdle": "IME Idle",
-  "poc.noBenchYet": "Click Benchmark to measure 1/5/10 terminals, burst throughput, switching, and disposal.",
+  "poc.noBenchYet":
+    "Click Benchmark to measure 1/5/10 terminals, burst throughput, switching, and disposal.",
   "poc.backendWtermDom": "wterm + libghostty (DOM)",
   "poc.backendWtermWebgl": "wterm + libghostty (WebGL)",
   "poc.diagnosticsLog": "Log Diagnostics",

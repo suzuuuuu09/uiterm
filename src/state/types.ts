@@ -1,10 +1,5 @@
 import type { AppError } from "../errors/appError.ts";
-import type {
-  CoreStatus,
-  ForegroundProcess,
-  SessionId,
-  StatusRecord,
-} from "../ipc/types.ts";
+import type { CoreStatus, ForegroundProcess, SessionId, StatusRecord } from "../ipc/types.ts";
 import type { UserSettings } from "../validation/settingsSchemas.ts";
 
 export type WindowId = string;

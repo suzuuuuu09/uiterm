@@ -217,7 +217,11 @@ export class Logger {
     return this.log("error", scope, message, data);
   }
 
-  logError(scope: string, error: AppError, extra?: Readonly<Record<string, unknown>>): LogEntry | null {
+  logError(
+    scope: string,
+    error: AppError,
+    extra?: Readonly<Record<string, unknown>>,
+  ): LogEntry | null {
     const level: LogLevel =
       error.severity === "info" ? "info" : error.severity === "warn" ? "warn" : "error";
     return this.log(level, scope, error.formatDeveloperSummary(), {

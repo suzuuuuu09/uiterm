@@ -152,14 +152,15 @@ src/
 
 Vitest（Vite+ 1.8.0 / Vitest 5.1.1）で単体・統合・Phase 0 回帰テストを実行し、全項目通過を確認した。
 
-| 項目 | コマンド | 結果 |
-| --- | --- | --- |
-| TypeScript 型検査 | `pnpm typecheck` | **合格**（0 errors） |
-| Lint | `pnpm lint` | **合格**（0 warnings, 0 errors） |
-| テスト全体 | `pnpm test -- --run` | **合格**（9 files / 39 passed） |
-| フロントエンドビルド | `pnpm build` | **合格**（0 warnings） |
+| 項目                 | コマンド             | 結果                             |
+| -------------------- | -------------------- | -------------------------------- |
+| TypeScript 型検査    | `pnpm typecheck`     | **合格**（0 errors）             |
+| Lint                 | `pnpm lint`          | **合格**（0 warnings, 0 errors） |
+| テスト全体           | `pnpm test -- --run` | **合格**（9 files / 39 passed）  |
+| フロントエンドビルド | `pnpm build`         | **合格**（0 warnings）           |
 
 テスト内訳：
+
 - 状態管理: `src/state/__tests__/appStore.test.ts`（7 件）
 - Action Registry: `src/actions/__tests__/registry.test.ts`（3 件）
 - データ検証: `src/validation/__tests__/validation.test.ts`（4 件）

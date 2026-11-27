@@ -255,11 +255,9 @@ export function formatValidationIssues(
  * Parses an unknown value against a Valibot schema and throws a structured `AppError`
  * (`code: "VALIDATION_FAILED"`) on failure instead of leaking raw Valibot errors.
  */
-export function parseExternalInput<TSchema extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>>(
-  schema: TSchema,
-  input: unknown,
-  context: string,
-): v.InferOutput<TSchema> {
+export function parseExternalInput<
+  TSchema extends v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>,
+>(schema: TSchema, input: unknown, context: string): v.InferOutput<TSchema> {
   const result = v.safeParse(schema, input);
   if (result.success) {
     return result.output;

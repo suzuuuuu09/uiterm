@@ -142,11 +142,17 @@ export function registerBuiltinActions(
         addedTab = true;
 
         try {
-          const session = await deps.sessionManager.createSession(tabId, renderer, host, !activate, {
-            cwd: args.cwd,
-            cols: args.cols,
-            rows: args.rows,
-          });
+          const session = await deps.sessionManager.createSession(
+            tabId,
+            renderer,
+            host,
+            !activate,
+            {
+              cwd: args.cwd,
+              cols: args.cols,
+              rows: args.rows,
+            },
+          );
           const selectedPaneId = deps.store.getState().selection.activePaneId;
           if (selectedPaneId === tabId) {
             deps.sessionManager.setActive(tabId);

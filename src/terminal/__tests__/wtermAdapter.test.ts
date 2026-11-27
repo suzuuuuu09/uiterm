@@ -41,12 +41,13 @@ it("guards the mounted Option handler during IME and consumes a regular Option k
     onResize() {},
     isComposing: () => composing,
   });
-  const optionB = () => Object.assign(new Event("keydown", { cancelable: true }), {
-    key: "∫",
-    code: "KeyB",
-    altKey: true,
-    isComposing: false,
-  });
+  const optionB = () =>
+    Object.assign(new Event("keydown", { cancelable: true }), {
+      key: "∫",
+      code: "KeyB",
+      altKey: true,
+      isComposing: false,
+    });
 
   try {
     await adapter.mount({ appendChild() {} } as unknown as HTMLElement);
@@ -65,7 +66,10 @@ it("guards the mounted Option handler during IME and consumes a regular Option k
     expect(input.mock.calls).toEqual([["\x1bb"]]);
 
     clearSelection.mockClear();
-    const ctrlC = Object.assign(new Event("keydown", { cancelable: true }), { key: "c", ctrlKey: true });
+    const ctrlC = Object.assign(new Event("keydown", { cancelable: true }), {
+      key: "c",
+      ctrlKey: true,
+    });
     expect(host.dispatchEvent(ctrlC)).toBe(true);
     expect(clearSelection).toHaveBeenCalledOnce();
     expect(input).toHaveBeenCalledOnce();

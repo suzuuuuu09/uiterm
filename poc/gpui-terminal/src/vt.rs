@@ -458,7 +458,8 @@ impl VtTerminal {
     }
 
     pub fn sync_hold_remaining(&self, timeout: Duration) -> Option<Duration> {
-        self.sync_hold_since.map(|since| timeout.saturating_sub(since.elapsed()))
+        self.sync_hold_since
+            .map(|since| timeout.saturating_sub(since.elapsed()))
     }
 
     pub fn uses_pixel_mouse_coordinates(&self) -> bool {
@@ -549,8 +550,7 @@ impl VtTerminal {
         any_pressed: bool,
         size: MouseEncoderSize,
     ) -> Vec<u8> {
-        self.mouse_encoder
-            .set_options_from_terminal(&self.terminal);
+        self.mouse_encoder.set_options_from_terminal(&self.terminal);
         self.mouse_encoder.set_size(size);
         self.mouse_encoder.set_any_button_pressed(any_pressed);
         self.mouse_encoder.set_track_last_cell(true);
@@ -653,10 +653,12 @@ impl VtTerminal {
 
     pub fn selection_release(&mut self, cell: Option<(u16, u16)>) {
         let grid_ref = cell.and_then(|(col, row)| {
-            self.terminal.grid_ref(Point::Viewport(PointCoordinate {
-                x: col.min(self.cols.saturating_sub(1)),
-                y: u32::from(row.min(self.rows.saturating_sub(1))),
-            })).ok()
+            self.terminal
+                .grid_ref(Point::Viewport(PointCoordinate {
+                    x: col.min(self.cols.saturating_sub(1)),
+                    y: u32::from(row.min(self.rows.saturating_sub(1))),
+                }))
+                .ok()
         });
         let _ = self
             .selection_release
@@ -743,13 +745,14 @@ impl VtTerminal {
                 .update(snap)
                 .map_err(|e| format!("RowIterator::update: {e}"))?;
             while let Some(row) = row_it.next() {
-                let sel = row
-                    .selection()
-                    .ok()
-                    .flatten()
-                    .map(|s| (s.start_x, s.end_x));
+                let sel = row.selection().ok().flatten().map(|s| (s.start_x, s.end_x));
                 row_selections.push(sel);
-                lines.push(extract_row_cells(row, cell_iter, &meta.colors, &mut grapheme_buf)?);
+                lines.push(extract_row_cells(
+                    row,
+                    cell_iter,
+                    &meta.colors,
+                    &mut grapheme_buf,
+                )?);
             }
             out = Some(ScreenSnapshot {
                 cols: meta.cols,
@@ -827,7 +830,9 @@ pub fn extract_row_cells(
                 }
                 StyleColor::Rgb(c) => Some((c.r, c.g, c.b)),
             };
-            let has_decor = !matches!(style.underline, Underline::None) || style.strikethrough || style.overline;
+            let has_decor = !matches!(style.underline, Underline::None)
+                || style.strikethrough
+                || style.overline;
             if !grapheme_buf.is_empty() || bg_rgb.is_some() || style.inverse || has_decor {
                 row_cells.push(StyledCell {
                     col,
@@ -939,8 +944,10 @@ pub fn run_headless_vt_benchmark() {
         let rss_after = current_rss_mib();
 
         let rss_delta = |sample: Option<f64>| {
-            sample.zip(rss0).map_or_else(|| "unavailable".to_string(),
-                |(sample, base)| format!("{:+.2}MiB", sample - base))
+            sample.zip(rss0).map_or_else(
+                || "unavailable".to_string(),
+                |(sample, base)| format!("{:+.2}MiB", sample - base),
+            )
         };
         println!(
             "count={:<2} create={:5.2}ms write10k={:5.2}ms ({:6.1} MiB/s) snap={:5.3}ms drop={:5.2}ms replies={} grid={}x{} (lines={}) cursor=({},{}) fg=#{:06x} sel={} rss_idle_delta={} rss_loaded_delta={} rss_after_drop_delta={}",
@@ -985,7 +992,13 @@ mod tests {
         };
         let (x, y) = vt.mouse_encoder_position(100.5 * 8.43, 9.0, 8.43, 18.0, size);
         let report = vt.encode_mouse(
-            MouseAction::Press, Some(MouseButton::Left), Mods::empty(), x, y, true, size,
+            MouseAction::Press,
+            Some(MouseButton::Left),
+            Mods::empty(),
+            x,
+            y,
+            true,
+            size,
         );
         assert_eq!(report, b"\x1b[<0;101;1M");
     }
@@ -1183,9 +1196,15 @@ mod tests {
             b"\x1b\x7f"
         );
         assert_eq!(vt.encode_key(Key::Tab, Mods::SHIFT, None, None), b"\x1b[Z");
-        assert_eq!(vt.encode_key(Key::ArrowUp, Mods::empty(), None, None), b"\x1b[A");
+        assert_eq!(
+            vt.encode_key(Key::ArrowUp, Mods::empty(), None, None),
+            b"\x1b[A"
+        );
         vt.feed(b"\x1b[?1h");
-        assert_eq!(vt.encode_key(Key::ArrowUp, Mods::empty(), None, None), b"\x1bOA");
+        assert_eq!(
+            vt.encode_key(Key::ArrowUp, Mods::empty(), None, None),
+            b"\x1bOA"
+        );
 
         vt.feed(b"\x1b[?1000h\x1b[?1006h");
         assert!(vt.is_mouse_tracking());

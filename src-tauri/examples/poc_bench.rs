@@ -366,7 +366,14 @@ async fn main() {
                     let s = String::from_utf8_lossy(&b);
                     tail.push_str(&s);
                     if tail.len() > 256 {
-                        tail = tail.chars().rev().take(128).collect::<String>().chars().rev().collect();
+                        tail = tail
+                            .chars()
+                            .rev()
+                            .take(128)
+                            .collect::<String>()
+                            .chars()
+                            .rev()
+                            .collect();
                     }
                     if tail.contains("BURST_DONE") {
                         saw_done = true;

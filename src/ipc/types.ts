@@ -109,19 +109,13 @@ export interface UitermBackendClient {
     onFrame: (frame: OutputFrame) => void,
   ): Promise<TerminalAttachResult>;
   terminalDetach(attachId: AttachId): Promise<void>;
-  terminalWrite(
-    attachId: AttachId,
-    data: Uint8Array | string,
-    kind?: InputKind,
-  ): Promise<void>;
+  terminalWrite(attachId: AttachId, data: Uint8Array | string, kind?: InputKind): Promise<void>;
   terminalResize(attachId: AttachId, cols: number, rows: number): Promise<void>;
   terminalFocus(attachId: AttachId, focused: boolean): Promise<void>;
   terminalFacts(attachId: AttachId, display: DisplayFacts): Promise<void>;
   terminalAck(attachId: AttachId, bytes: number): Promise<void>;
   terminalKill(sessionId: SessionId): Promise<void>;
-  eventsSubscribe(
-    onEvent: (event: CoreEvent) => void,
-  ): Promise<EventsSubscribeResult>;
+  eventsSubscribe(onEvent: (event: CoreEvent) => void): Promise<EventsSubscribeResult>;
   eventsUnsubscribe(subscriptionId: number): Promise<void>;
   configEvalPoc(params: ConfigEvalParams): Promise<ConfigEvalResult>;
 }

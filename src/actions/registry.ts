@@ -28,11 +28,9 @@ export class ActionRegistry {
     this.logger = logger;
   }
 
-  register<
-    TId extends ActionId,
-    TArgs = ActionArgsOf<TId>,
-    TResult = ActionResultOf<TId>,
-  >(definition: ActionDefinition<TId, TArgs, TResult>): () => void {
+  register<TId extends ActionId, TArgs = ActionArgsOf<TId>, TResult = ActionResultOf<TId>>(
+    definition: ActionDefinition<TId, TArgs, TResult>,
+  ): () => void {
     if (this.actions.has(definition.id)) {
       throw new AppError({
         code: "ACTION_INVALID_ARGS",

@@ -178,7 +178,11 @@ mod tests {
             unrelated
         );
 
-        let plain = vec!["/bin/sh".to_string(), "-c".to_string(), "echo hi".to_string()];
+        let plain = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "echo hi".to_string(),
+        ];
         assert_eq!(
             strip_pty_iutf8_wrapper_for_exe(plain.clone(), Some(exe)),
             plain

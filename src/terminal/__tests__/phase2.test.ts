@@ -169,8 +169,12 @@ describe("Phase 2 keyboard shortcuts, Option-as-Meta, and IME protection", () =>
   });
 
   it("never triggers shortcuts or Option-as-Meta during IME composition", () => {
-    expect(isImeComposingEvent({ key: "Enter", keyCode: 229, isComposing: false }, false)).toBe(true);
-    expect(isImeComposingEvent({ key: "Process", keyCode: 0, isComposing: false }, false)).toBe(true);
+    expect(isImeComposingEvent({ key: "Enter", keyCode: 229, isComposing: false }, false)).toBe(
+      true,
+    );
+    expect(isImeComposingEvent({ key: "Process", keyCode: 0, isComposing: false }, false)).toBe(
+      true,
+    );
     expect(isImeComposingEvent({ key: "a", keyCode: 65, isComposing: false }, true)).toBe(true);
 
     expect(
@@ -198,39 +202,46 @@ describe("Phase 2 keyboard shortcuts, Option-as-Meta, and IME protection", () =>
   it("separates macOS app shortcuts from terminal control keys", () => {
     const macOpts = { isMac: true, isComposing: false, hasSelection: true };
 
-    expect(matchAppShortcut({ ...baseKey, key: "c", code: "KeyC", metaKey: true }, macOpts)?.actionId).toBe(
-      "terminal.copySelection",
-    );
+    expect(
+      matchAppShortcut({ ...baseKey, key: "c", code: "KeyC", metaKey: true }, macOpts)?.actionId,
+    ).toBe("terminal.copySelection");
     expect(
       matchAppShortcut(
         { ...baseKey, key: "c", code: "KeyC", metaKey: true },
         { ...macOpts, hasSelection: false },
       ),
     ).toBeNull();
-    expect(matchAppShortcut({ ...baseKey, key: "a", code: "KeyA", metaKey: true }, macOpts)?.actionId).toBe(
-      "terminal.selectAll",
-    );
-    expect(matchAppShortcut({ ...baseKey, key: "t", code: "KeyT", metaKey: true }, macOpts)?.actionId).toBe(
-      "terminal.create",
-    );
-    expect(matchAppShortcut({ ...baseKey, key: "w", code: "KeyW", metaKey: true }, macOpts)).toBeNull();
     expect(
-      matchAppShortcut({ ...baseKey, key: "W", code: "KeyW", metaKey: true, shiftKey: true }, macOpts)?.actionId,
+      matchAppShortcut({ ...baseKey, key: "a", code: "KeyA", metaKey: true }, macOpts)?.actionId,
+    ).toBe("terminal.selectAll");
+    expect(
+      matchAppShortcut({ ...baseKey, key: "t", code: "KeyT", metaKey: true }, macOpts)?.actionId,
+    ).toBe("terminal.create");
+    expect(
+      matchAppShortcut({ ...baseKey, key: "w", code: "KeyW", metaKey: true }, macOpts),
+    ).toBeNull();
+    expect(
+      matchAppShortcut(
+        { ...baseKey, key: "W", code: "KeyW", metaKey: true, shiftKey: true },
+        macOpts,
+      )?.actionId,
     ).toBe("terminal.close");
-    expect(matchAppShortcut({ ...baseKey, key: "=", code: "Equal", metaKey: true }, macOpts)?.actionId).toBe(
-      "terminal.zoomIn",
-    );
+    expect(
+      matchAppShortcut({ ...baseKey, key: "=", code: "Equal", metaKey: true }, macOpts)?.actionId,
+    ).toBe("terminal.zoomIn");
     // JIS keyboard Cmd+= is Shift+Minus (shiftKey: true, key: "=", code: "Minus")
     expect(
-      matchAppShortcut({ ...baseKey, key: "=", code: "Minus", metaKey: true, shiftKey: true }, macOpts)
-        ?.actionId,
+      matchAppShortcut(
+        { ...baseKey, key: "=", code: "Minus", metaKey: true, shiftKey: true },
+        macOpts,
+      )?.actionId,
     ).toBe("terminal.zoomIn");
-    expect(matchAppShortcut({ ...baseKey, key: "-", code: "Minus", metaKey: true }, macOpts)?.actionId).toBe(
-      "terminal.zoomOut",
-    );
-    expect(matchAppShortcut({ ...baseKey, key: "0", code: "Digit0", metaKey: true }, macOpts)?.actionId).toBe(
-      "terminal.resetFontSize",
-    );
+    expect(
+      matchAppShortcut({ ...baseKey, key: "-", code: "Minus", metaKey: true }, macOpts)?.actionId,
+    ).toBe("terminal.zoomOut");
+    expect(
+      matchAppShortcut({ ...baseKey, key: "0", code: "Digit0", metaKey: true }, macOpts)?.actionId,
+    ).toBe("terminal.resetFontSize");
     expect(
       matchAppShortcut(
         { ...baseKey, key: "d", code: "KeyD", metaKey: true, shiftKey: true },
@@ -254,12 +265,16 @@ describe("Phase 2 keyboard shortcuts, Option-as-Meta, and IME protection", () =>
     // Non-Latin layout on Linux falls back to physical Key* code when event.key is non-ASCII
     const linuxOpts = { isMac: false, isComposing: false, hasSelection: true };
     expect(
-      matchAppShortcut({ ...baseKey, key: "Е", code: "KeyT", ctrlKey: true, shiftKey: true }, linuxOpts)
-        ?.actionId,
+      matchAppShortcut(
+        { ...baseKey, key: "Е", code: "KeyT", ctrlKey: true, shiftKey: true },
+        linuxOpts,
+      )?.actionId,
     ).toBe("terminal.create");
     expect(
-      matchAppShortcut({ ...baseKey, key: "С", code: "KeyC", ctrlKey: true, shiftKey: true }, linuxOpts)
-        ?.actionId,
+      matchAppShortcut(
+        { ...baseKey, key: "С", code: "KeyC", ctrlKey: true, shiftKey: true },
+        linuxOpts,
+      )?.actionId,
     ).toBe("terminal.copySelection");
   });
 
@@ -279,10 +294,16 @@ describe("Phase 2 keyboard shortcuts, Option-as-Meta, and IME protection", () =>
       translateMacOptionKey({ ...baseKey, key: "≥", code: "Period", altKey: true }, opts),
     ).toBe("\x1b.");
     expect(
-      translateMacOptionKey({ ...baseKey, key: "ı", code: "KeyB", altKey: true, shiftKey: true }, opts),
+      translateMacOptionKey(
+        { ...baseKey, key: "ı", code: "KeyB", altKey: true, shiftKey: true },
+        opts,
+      ),
     ).toBe("\x1bB");
     expect(
-      translateMacOptionKey({ ...baseKey, key: "Backspace", code: "Backspace", altKey: true }, opts),
+      translateMacOptionKey(
+        { ...baseKey, key: "Backspace", code: "Backspace", altKey: true },
+        opts,
+      ),
     ).toBe("\x1b\x7f");
 
     // Disabled when Kitty keyboard protocol owns keys or macOptionAsMeta is false
@@ -365,7 +386,9 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
       expect(pasted).toEqual(["貼り付けテスト"]);
 
       // Select all & clear selection
-      expect(await runtime.actions.execute("terminal.selectAll", {}, { caller: "keybind" })).toEqual({
+      expect(
+        await runtime.actions.execute("terminal.selectAll", {}, { caller: "keybind" }),
+      ).toEqual({
         ok: true,
         value: { selected: true },
       });
@@ -407,20 +430,33 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
         ]),
       );
 
-      const resetZoom = await runtime.actions.execute("terminal.resetFontSize", {}, { caller: "keybind" });
+      const resetZoom = await runtime.actions.execute(
+        "terminal.resetFontSize",
+        {},
+        { caller: "keybind" },
+      );
       expect(resetZoom).toEqual({ ok: true, value: { fontSize: DEFAULT_FONT_SIZE } });
 
       // A delayed clipboard read belongs to the original terminal instance.
       let finishClipboardRead!: (text: string) => void;
-      readClipboard = () => new Promise((resolve) => {
-        finishClipboardRead = resolve;
-      });
+      readClipboard = () =>
+        new Promise((resolve) => {
+          finishClipboardRead = resolve;
+        });
       const delayedPaste = runtime.actions.execute("terminal.paste", {}, { caller: "keybind" });
 
       // Restart session in same tab
       client.emitTestEvent({ type: "disconnected", reason: "test" });
-      const restartedPromise = runtime.actions.execute("terminal.restart", { tabId }, { caller: "gui" });
-      const duplicate = await runtime.actions.execute("terminal.restart", { tabId }, { caller: "gui" });
+      const restartedPromise = runtime.actions.execute(
+        "terminal.restart",
+        { tabId },
+        { caller: "gui" },
+      );
+      const duplicate = await runtime.actions.execute(
+        "terminal.restart",
+        { tabId },
+        { caller: "gui" },
+      );
       expect(duplicate.ok).toBe(false);
       const restarted = await restartedPromise;
       expect(runtime.store.getState().coreConnection.status).toBe("connected");
@@ -437,7 +473,11 @@ describe("Phase 2 built-in terminal & appearance actions", () => {
 
       // Diagnostics drawer defaults to hidden and toggles cleanly
       expect(runtime.store.getState().ui.diagnosticsPanelVisible).toBe(false);
-      const toggled = await runtime.actions.execute("app.toggleDiagnostics", {}, { caller: "keybind" });
+      const toggled = await runtime.actions.execute(
+        "app.toggleDiagnostics",
+        {},
+        { caller: "keybind" },
+      );
       expect(toggled).toEqual({ ok: true, value: { diagnosticsPanelVisible: true } });
     } finally {
       runtime?.dispose();

@@ -15,17 +15,17 @@ description: "ADR-0010 GPUI PoC（Stage 1〜3）実装・描画最適化・3者�
 
 Stage 1・2 で検証した GPUI フォントシェーピング・IME 状態管理・ネイティブ `libghostty-vt` ベンチマークを基盤とし、Stage 3 では実際に `fish`・Neovim・Codex 等の対話型 CLI を操作できるライブターミナルと最適化レンダラを `poc/gpui-terminal/` に実装した。
 
-| モジュール | 主な責務・実装記号 |
-| --- | --- |
-| [`poc/gpui-terminal/src/main.rs`](../../poc/gpui-terminal/src/main.rs) | `--uiterm-pty-init` 最速エントリ、シグナル監視（`SIGTERM`/`SIGINT` self-pipe による `herdr-core` クリーンアップ）、`LiveTerminalView`、PTY 非同期ポンプ、`sync_resize_if_needed`、`TerminalInputHandler`（`apple_press_and_hold_enabled() -> false`）、`BenchScenario` / `--bench-window`、`GpuiPocView` |
-| [`poc/gpui-terminal/src/renderer.rs`](../../poc/gpui-terminal/src/renderer.rs) | `RowShapeCache`（`RenderState::next_dirty()` + `RowId` + `hash_styled_cells`、`MAX_CACHED_ROWS = 128`）、`shape_extracted_row`（複数 `TextRun` 統合、一様背景行右端延長、SGR 2/8/7）、`paint_terminal_frame`（選択ハイライト、カーソル描画、IME オーバーレイ、スクロールバー） |
-| [`poc/gpui-terminal/src/vt.rs`](../../poc/gpui-terminal/src/vt.rs) | `VtTerminal`（`ghostty-vt 0.9.0` / `libghostty-vt 1.0.1`、2,000 行 / 10 MiB 履歴、`DEFAULT_TERMINAL_THEME`）、`Osc133Normalizer`（`redraw=0` 補完）、Mode 2026（`render_hold` + 100ms 解除）、Mode 2048（リサイズ応答）、`KeyEncoder`/`MouseEncoder`/`paste::encode`/`SelectionGesture`、`--bench-vt` |
-| [`poc/gpui-terminal/src/herdr.rs`](../../poc/gpui-terminal/src/herdr.rs) | `herdr-core` v0.1.22（`CORE_VERSION`）隔離起動、`DirCleanupGuard`、`HerdrHandle`（`FRAME_DATA` と `FRAME_AUTOMATIC_INPUT` の厳密分離）、`HerdrOutputStream`（VT 処理後の `FRAME_CREDIT` 返却）、`CloseInfo`、`HerdrGuard::stop_blocking` |
-| [`poc/gpui-terminal/src/input.rs`](../../poc/gpui-terminal/src/input.rs) | `classify_keydown`・`match_app_action`・`gpui_key_to_ghostty`（通常印字キー/Space は IME (`NSTextInputContext`) へ委譲、`Cmd` 各種 / `Option-as-Meta` / Ctrl / 特殊キー分離、IME 変換中ショートカット抑止） |
-| [`poc/gpui-terminal/src/ime.rs`](../../poc/gpui-terminal/src/ime.rs) | `TerminalImeState`（Cmd+Tab / focus-blur 間の未確定文字列維持、`Commit` 直接返却、`"あ"` → `"あ"` 連続確定、Esc/unmark 安全消去、`--probe-ui` 用 `ImeBuffer` 維持） |
-| [`poc/gpui-terminal/src/os.rs`](../../poc/gpui-terminal/src/os.rs) | `PTY_IUTF8_INIT_FLAG`、`enable_pty_iutf8`、`wrap_argv_with_pty_iutf8_init`、`resolve_os_default_shell`（`getpwuid_r`）、`build_child_shell_env`（隔離 XDG の子シェル復元） |
-| [`poc/gpui-terminal/src/fonts.rs`](../../poc/gpui-terminal/src/fonts.rs) | `FontPreset`（Default / `UDEV Gothic 35NF` / Menlo）、`build_terminal_font_styled`、Unicode / PUA / 結合文字 / ZWJ セル幅計算 |
-| [`poc/gpui-terminal/tests/compatibility.rs`](../../poc/gpui-terminal/tests/compatibility.rs) | 実 `herdr-core` + `--uiterm-pty-init` + `fish` + `nvim` + `codex` 互換性統合テスト |
+| モジュール                                                                                   | 主な責務・実装記号                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`poc/gpui-terminal/src/main.rs`](../../poc/gpui-terminal/src/main.rs)                       | `--uiterm-pty-init` 最速エントリ、シグナル監視（`SIGTERM`/`SIGINT` self-pipe による `herdr-core` クリーンアップ）、`LiveTerminalView`、PTY 非同期ポンプ、`sync_resize_if_needed`、`TerminalInputHandler`（`apple_press_and_hold_enabled() -> false`）、`BenchScenario` / `--bench-window`、`GpuiPocView` |
+| [`poc/gpui-terminal/src/renderer.rs`](../../poc/gpui-terminal/src/renderer.rs)               | `RowShapeCache`（`RenderState::next_dirty()` + `RowId` + `hash_styled_cells`、`MAX_CACHED_ROWS = 128`）、`shape_extracted_row`（複数 `TextRun` 統合、一様背景行右端延長、SGR 2/8/7）、`paint_terminal_frame`（選択ハイライト、カーソル描画、IME オーバーレイ、スクロールバー）                           |
+| [`poc/gpui-terminal/src/vt.rs`](../../poc/gpui-terminal/src/vt.rs)                           | `VtTerminal`（`ghostty-vt 0.9.0` / `libghostty-vt 1.0.1`、2,000 行 / 10 MiB 履歴、`DEFAULT_TERMINAL_THEME`）、`Osc133Normalizer`（`redraw=0` 補完）、Mode 2026（`render_hold` + 100ms 解除）、Mode 2048（リサイズ応答）、`KeyEncoder`/`MouseEncoder`/`paste::encode`/`SelectionGesture`、`--bench-vt`    |
+| [`poc/gpui-terminal/src/herdr.rs`](../../poc/gpui-terminal/src/herdr.rs)                     | `herdr-core` v0.1.22（`CORE_VERSION`）隔離起動、`DirCleanupGuard`、`HerdrHandle`（`FRAME_DATA` と `FRAME_AUTOMATIC_INPUT` の厳密分離）、`HerdrOutputStream`（VT 処理後の `FRAME_CREDIT` 返却）、`CloseInfo`、`HerdrGuard::stop_blocking`                                                                 |
+| [`poc/gpui-terminal/src/input.rs`](../../poc/gpui-terminal/src/input.rs)                     | `classify_keydown`・`match_app_action`・`gpui_key_to_ghostty`（通常印字キー/Space は IME (`NSTextInputContext`) へ委譲、`Cmd` 各種 / `Option-as-Meta` / Ctrl / 特殊キー分離、IME 変換中ショートカット抑止）                                                                                              |
+| [`poc/gpui-terminal/src/ime.rs`](../../poc/gpui-terminal/src/ime.rs)                         | `TerminalImeState`（Cmd+Tab / focus-blur 間の未確定文字列維持、`Commit` 直接返却、`"あ"` → `"あ"` 連続確定、Esc/unmark 安全消去、`--probe-ui` 用 `ImeBuffer` 維持）                                                                                                                                      |
+| [`poc/gpui-terminal/src/os.rs`](../../poc/gpui-terminal/src/os.rs)                           | `PTY_IUTF8_INIT_FLAG`、`enable_pty_iutf8`、`wrap_argv_with_pty_iutf8_init`、`resolve_os_default_shell`（`getpwuid_r`）、`build_child_shell_env`（隔離 XDG の子シェル復元）                                                                                                                               |
+| [`poc/gpui-terminal/src/fonts.rs`](../../poc/gpui-terminal/src/fonts.rs)                     | `FontPreset`（Default / `UDEV Gothic 35NF` / Menlo）、`build_terminal_font_styled`、Unicode / PUA / 結合文字 / ZWJ セル幅計算                                                                                                                                                                            |
+| [`poc/gpui-terminal/tests/compatibility.rs`](../../poc/gpui-terminal/tests/compatibility.rs) | 実 `herdr-core` + `--uiterm-pty-init` + `fish` + `nvim` + `codex` 互換性統合テスト                                                                                                                                                                                                                       |
 
 ### 主要な設計ポイント
 
@@ -80,26 +80,27 @@ Stage 1・2 で検証した GPUI フォントシェーピング・IME 状態管�
 
 ※ `Burst5MiB` は v1 計測時にコマンドエコー内の `GPUI_BURST_END` 文字列と自己一致し `0.4 KiB` で早期終了するベンチマーク上の不具合があったため、v2 で `printf '%s%s\n' GPUI_ BURST_END` に修正し実データ `5,250.6 KiB` で再計測した。
 
-| シナリオ | 方式 | `prepaint` p50 / p95 (µs) | `shape_line` 回数 | キャッシュヒット率 | 推定キャッシュ上限 (KiB) | フレーム間隔 p95 / >16.67ms (n) | RSS 合計 (MiB) | 主な効果・備考 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `single-row`（1行連続更新） | `uncached` | 856 / 1,122 | 56,160 | 0.0% | 0.0 | 18.65 ms / 179 (360) | 67.47 | 全 32 行を毎回シェーピング |
-| `single-row`（同） | `cached` | **233 / 295** | **515** | **96.6%** | 3.43 | 18.65 ms / 170 (360) | 62.59 | **`prepaint` -72.8% / シェーピング -99.1%** |
-| `scroll-stream`（ライブ出力流） | `uncached` | 1,132 / 1,499 | 53,940 | 0.0% | 0.0 | 18.66 ms / 168 (360) | 84.48 | 毎フレーム全行再生成 |
-| `scroll-stream`（同） | `cached` | **810 / 1,078** | **1,864** | **93.2%** | 1,997.27 | 18.67 ms / 169 (360) | 82.81 | **`prepaint` -28.4% / シェーピング -96.5%** |
-| `scroll-history-1`（履歴 ±1行） | `uncached` | 1,012 / 1,512 | 34,551 | 0.0% | 0.0 | 18.67 ms / 172 (360) | 68.86 | 996.1 KiB (10k行) 履歴 |
-| `scroll-history-1`（同） | `cached` | **473 / 879** | **681** | **98.0%** | 1,232.50 | 18.66 ms / 175 (360) | 67.75 | **`prepaint` -53.3% / シェーピング -98.0%** |
-| `scroll-history-6`（履歴 ±6行） | `uncached` | 1,394 / 1,864 | 34,551 | 0.0% | 0.0 | 18.64 ms / 179 (360) | 69.22 | 各フレーム 6 行新規出現 |
-| `scroll-history-6`（同） | `cached` | **1,297 / 1,859** | **6,036** | **82.5%** | 1,232.50 | 18.62 ms / 174 (360) | 71.06 | **シェーピング -82.5%**, `prepaint` -7.0% |
-| `nvim-ctrl-du`（AltScreen 60往復） | `uncached` | 1,390 / 1,605 | 12,840 | 0.0% | 0.0 | 18.61 ms / 55 (120) | 72.84 | アクションRTT中央値 3.97 ms |
-| `nvim-ctrl-du`（同） | `cached` | **1,381 / 1,625** | 12,635 | 1.6% | **0.25** | 18.66 ms / 58 (120) | 73.52 | **v1 の +45% 遅延/+30 MiB 悪化を解消** |
-| `burst-5mib`（5,250.6 KiB 流入） | `uncached` | 482 / 10,843 | 6,306 | 0.0% | 0.0 | 29.11 ms / 11 (22) | 87.05 | `aux_ms = 414.91 ms` |
-| `burst-5mib`（同） | `cached` | 557 / 11,095 | 6,306 | 4.1% | 3,909.90 | 29.93 ms / 9 (22) | 92.14 | `aux_ms = 422.59 ms`（全行更新のため差なし） |
-| `input-latency`（旧方式・100回同期打鍵） | `uncached` | — | — | — | 0.0 | — | 47.36 | PTY+VT+prepare p50 **0.14 ms** / p95 **0.17 ms** |
-| `input-latency`（同） | `cached` | — | — | — | 0.0 | — | 46.50 | PTY+VT+prepare p50 **0.06 ms (-57%)** / p95 **0.09 ms** |
+| シナリオ                                 | 方式       | `prepaint` p50 / p95 (µs) | `shape_line` 回数 | キャッシュヒット率 | 推定キャッシュ上限 (KiB) | フレーム間隔 p95 / >16.67ms (n) | RSS 合計 (MiB) | 主な効果・備考                                          |
+| ---------------------------------------- | ---------- | ------------------------: | ----------------: | -----------------: | -----------------------: | ------------------------------: | -------------: | ------------------------------------------------------- |
+| `single-row`（1行連続更新）              | `uncached` |               856 / 1,122 |            56,160 |               0.0% |                      0.0 |            18.65 ms / 179 (360) |          67.47 | 全 32 行を毎回シェーピング                              |
+| `single-row`（同）                       | `cached`   |             **233 / 295** |           **515** |          **96.6%** |                     3.43 |            18.65 ms / 170 (360) |          62.59 | **`prepaint` -72.8% / シェーピング -99.1%**             |
+| `scroll-stream`（ライブ出力流）          | `uncached` |             1,132 / 1,499 |            53,940 |               0.0% |                      0.0 |            18.66 ms / 168 (360) |          84.48 | 毎フレーム全行再生成                                    |
+| `scroll-stream`（同）                    | `cached`   |           **810 / 1,078** |         **1,864** |          **93.2%** |                 1,997.27 |            18.67 ms / 169 (360) |          82.81 | **`prepaint` -28.4% / シェーピング -96.5%**             |
+| `scroll-history-1`（履歴 ±1行）          | `uncached` |             1,012 / 1,512 |            34,551 |               0.0% |                      0.0 |            18.67 ms / 172 (360) |          68.86 | 996.1 KiB (10k行) 履歴                                  |
+| `scroll-history-1`（同）                 | `cached`   |             **473 / 879** |           **681** |          **98.0%** |                 1,232.50 |            18.66 ms / 175 (360) |          67.75 | **`prepaint` -53.3% / シェーピング -98.0%**             |
+| `scroll-history-6`（履歴 ±6行）          | `uncached` |             1,394 / 1,864 |            34,551 |               0.0% |                      0.0 |            18.64 ms / 179 (360) |          69.22 | 各フレーム 6 行新規出現                                 |
+| `scroll-history-6`（同）                 | `cached`   |         **1,297 / 1,859** |         **6,036** |          **82.5%** |                 1,232.50 |            18.62 ms / 174 (360) |          71.06 | **シェーピング -82.5%**, `prepaint` -7.0%               |
+| `nvim-ctrl-du`（AltScreen 60往復）       | `uncached` |             1,390 / 1,605 |            12,840 |               0.0% |                      0.0 |             18.61 ms / 55 (120) |          72.84 | アクションRTT中央値 3.97 ms                             |
+| `nvim-ctrl-du`（同）                     | `cached`   |         **1,381 / 1,625** |            12,635 |               1.6% |                 **0.25** |             18.66 ms / 58 (120) |          73.52 | **v1 の +45% 遅延/+30 MiB 悪化を解消**                  |
+| `burst-5mib`（5,250.6 KiB 流入）         | `uncached` |              482 / 10,843 |             6,306 |               0.0% |                      0.0 |              29.11 ms / 11 (22) |          87.05 | `aux_ms = 414.91 ms`                                    |
+| `burst-5mib`（同）                       | `cached`   |              557 / 11,095 |             6,306 |               4.1% |                 3,909.90 |               29.93 ms / 9 (22) |          92.14 | `aux_ms = 422.59 ms`（全行更新のため差なし）            |
+| `input-latency`（旧方式・100回同期打鍵） | `uncached` |                         — |                 — |                  — |                      0.0 |                               — |          47.36 | PTY+VT+prepare p50 **0.14 ms** / p95 **0.17 ms**        |
+| `input-latency`（同）                    | `cached`   |                         — |                 — |                  — |                      0.0 |                               — |          46.50 | PTY+VT+prepare p50 **0.06 ms (-57%)** / p95 **0.09 ms** |
 
 ### 最適化の採否判断
 
 測定結果から、以下を **採用** し、不要な複雑化は **不採用** とした:
+
 - **採用**: (1) `TextRun` 統合による `ShapedLine` 削減（全シナリオでシェーピング回数 60〜80% 減・メモリ大幅削減）、(2) `RenderState::next_dirty()`（旧方式で入力遅延の p50 は 0.14 ms から 0.06 ms、部分更新の `prepaint` は 72.8% 短縮）、(3) `Screen::Primary` 限定・128 行上限の `RowId` + `content_hash` キャッシュ（スクロール時の CoreText シェーピングを -82〜-98% 削減、キャッシュメモリ 1.2〜2.0 MiB 以内）。
 - **不採用**: `Screen::Alternate` の `Dirty::Full` に対する `RowId` ハッシュキャッシュは +44.6% 遅延と +30.5 MiB RSS 悪化を招き効果がマイナスであったため不採用とした。なお、`prepaint` 時間は 0.2〜1.3 ms と 16.67 ms (60Hz VSync) 予算に対して十分小さいため、`frame_interval` 中央値は全条件で VSync 律速（`16.67 ms`）となっているが、省電力・CPU 負荷抑制の観点で最適化維持が妥当である。
 
@@ -111,26 +112,27 @@ Stage 1・2 で検証した GPUI フォントシェーピング・IME 状態管�
 
 GPUI の値は PR #4 最終修正前の測定値。マージ後のアイドル計測は §4.3 を参照。
 
-| 比較項目 | GPUI PoC（Stage 3 `cached`） | `baseline/phase2-tauri`（`5ef4abb`） | Ghostty `1.4.0` |
-| --- | --- | --- | --- |
-| **実端末サイズ** (`stty size`) | 84 列 × 48 行（ベンチ時 106×32） | 82 列 × 46 行（1000×700 ウィンドウ） | 85 列 × 53 行（設定 106×32） |
-| **1. 起動時間: Window 可視化** (3 試行中央値) | 211.19 ms (`196.39〜223.40`) | 178.94 ms (`169.32〜192.65`) | 294.41 ms (`283.60〜297.22`, `open -n`) |
-| **1'. シェルコマンド実行準備完了** | **167.03 ms** | 476.15 ms（WKWebView+WASM初期化待ち） | 248.11 ms |
-| **2a. アイドル時 Physical Footprint** | **71.12 MiB** | 121.47 MiB | 126.69 MiB |
-| **2a'. アイドル時 合計 RSS** | **88.58 MiB** | 245.55 MiB (WebKit 3プロセス含) | 128.59 MiB |
-| **2a''. アイドル時 CPU 使用率** (5s 積算) | 6.26% | 3.33% | **1.38%** |
-| **2b. 30秒 256 KiB/s 負荷ピーク Footprint** | 154.51 MiB（終了1.5s後 **93.74 MiB**） | 435.44 MiB（終了1.5s後 307.80 MiB） | **144.76 MiB**（終了1.5s後 128.83 MiB） |
-| **2b'. 同 ピーク RSS** | 156.45 MiB | 437.47 MiB (`WebContent` 260.42 MiB) | **155.28 MiB** |
-| **2b''. 同 負荷平均 CPU 使用率** | 6.62% (+0.36pt) | 27.30% (+23.97pt) | **5.20%** (+3.82pt) |
-| **3. 入力→画面準備遅延** | 旧方式（100 回同期）の参考値は p50 0.06 ms / p95 0.09 ms / p99 13.23 ms（PTY・VT・シェーピングまで）。現行方式は §4.3 を参照 | 外部非改変バイナリからは内部描画完了時刻を非侵入計測不可（※制約注記） | 同左（外部非改変バイナリから内部フレーム完了時刻は非計測） |
-| **4. Neovim `Ctrl+D`/`Ctrl+U`** (60 往復) | 総計 **2,342.82 ms** (`120 frames`, アクションRTT **p50 3.97ms / p95 5.30ms**, frame **p95 18.66ms**) | 未自動計測（`docs/status.md` で「追従性の改善がまだ十分でない場合あり」として残存記録） | 本計測ではキー合成送信を見送り未計測 |
-| **5. 大量出力 5 MiB PTY ドレイン** (3 試行) | 116.00 ms（描画含む 5.13 MiB 完走 `422.59 ms`） | 128.15 ms（30s 負荷で WebContent 260 MiB 増） | **113.84 ms** |
-| **6. スクロールフレーム間隔** (360 フレーム) | `scroll-stream`: **p50 16.66 / p95 18.67 / p99 18.73 ms**<br>`scroll-history-1`: **p50 16.67 / p95 18.66 / p99 18.87 ms**<br>(超過 `>25ms`: それぞれ 3/360) | Phase 2 参考値 (`e05fd66`, `scrollTop` 23px 減算): **p95 17–18 ms / max 19 ms** (`>25ms`: 0/360。JS計測で WebKit 合成時間を除く) | 外部非改変バイナリのためフレーム単位間隔は未計測 |
-| **7a. 前景端末内 `macism` 実行時間** (4 試行) | **29.23 ms** (`[40.56, 30.01, 25.64, 28.45]`) | **4,556.96 ms** (`[5123.53, 4465.66, 4648.26, 1645.07]`) | 39.28 ms (`[52.40, 39.64, 38.93, 36.13]`) |
-| **7b. 実設定 Neovim 起動・`:qa` 終了** (実 TTY, 4 回) | Wall **97.33 ms** (`--startuptime` **28.17 ms**) | Wall **88.69 ms** (`--startuptime` **28.79 ms**) | Wall 106.79 ms (`--startuptime` **28.23 ms**) |
-| **8. 配布容量（論理バイト）** | 単体 **6,312,432 B (6.02 MiB)**<br>`herdr-core` (6.30 MiB) 合算 **12,915,664 B (12.32 MiB)** | `.app` **3,833,876 B (3.66 MiB)**<br>`herdr-core` 合算 **10,437,108 B (9.95 MiB)**（※OS WebKit 利用） | `.app` **67,299,199 B (64.18 MiB)**<br>バイナリ **45,165,232 B (43.07 MiB)** |
+| 比較項目                                              | GPUI PoC（Stage 3 `cached`）                                                                                                                                | `baseline/phase2-tauri`（`5ef4abb`）                                                                                             | Ghostty `1.4.0`                                                              |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **実端末サイズ** (`stty size`)                        | 84 列 × 48 行（ベンチ時 106×32）                                                                                                                            | 82 列 × 46 行（1000×700 ウィンドウ）                                                                                             | 85 列 × 53 行（設定 106×32）                                                 |
+| **1. 起動時間: Window 可視化** (3 試行中央値)         | 211.19 ms (`196.39〜223.40`)                                                                                                                                | 178.94 ms (`169.32〜192.65`)                                                                                                     | 294.41 ms (`283.60〜297.22`, `open -n`)                                      |
+| **1'. シェルコマンド実行準備完了**                    | **167.03 ms**                                                                                                                                               | 476.15 ms（WKWebView+WASM初期化待ち）                                                                                            | 248.11 ms                                                                    |
+| **2a. アイドル時 Physical Footprint**                 | **71.12 MiB**                                                                                                                                               | 121.47 MiB                                                                                                                       | 126.69 MiB                                                                   |
+| **2a'. アイドル時 合計 RSS**                          | **88.58 MiB**                                                                                                                                               | 245.55 MiB (WebKit 3プロセス含)                                                                                                  | 128.59 MiB                                                                   |
+| **2a''. アイドル時 CPU 使用率** (5s 積算)             | 6.26%                                                                                                                                                       | 3.33%                                                                                                                            | **1.38%**                                                                    |
+| **2b. 30秒 256 KiB/s 負荷ピーク Footprint**           | 154.51 MiB（終了1.5s後 **93.74 MiB**）                                                                                                                      | 435.44 MiB（終了1.5s後 307.80 MiB）                                                                                              | **144.76 MiB**（終了1.5s後 128.83 MiB）                                      |
+| **2b'. 同 ピーク RSS**                                | 156.45 MiB                                                                                                                                                  | 437.47 MiB (`WebContent` 260.42 MiB)                                                                                             | **155.28 MiB**                                                               |
+| **2b''. 同 負荷平均 CPU 使用率**                      | 6.62% (+0.36pt)                                                                                                                                             | 27.30% (+23.97pt)                                                                                                                | **5.20%** (+3.82pt)                                                          |
+| **3. 入力→画面準備遅延**                              | 旧方式（100 回同期）の参考値は p50 0.06 ms / p95 0.09 ms / p99 13.23 ms（PTY・VT・シェーピングまで）。現行方式は §4.3 を参照                                | 外部非改変バイナリからは内部描画完了時刻を非侵入計測不可（※制約注記）                                                            | 同左（外部非改変バイナリから内部フレーム完了時刻は非計測）                   |
+| **4. Neovim `Ctrl+D`/`Ctrl+U`** (60 往復)             | 総計 **2,342.82 ms** (`120 frames`, アクションRTT **p50 3.97ms / p95 5.30ms**, frame **p95 18.66ms**)                                                       | 未自動計測（`docs/status.md` で「追従性の改善がまだ十分でない場合あり」として残存記録）                                          | 本計測ではキー合成送信を見送り未計測                                         |
+| **5. 大量出力 5 MiB PTY ドレイン** (3 試行)           | 116.00 ms（描画含む 5.13 MiB 完走 `422.59 ms`）                                                                                                             | 128.15 ms（30s 負荷で WebContent 260 MiB 増）                                                                                    | **113.84 ms**                                                                |
+| **6. スクロールフレーム間隔** (360 フレーム)          | `scroll-stream`: **p50 16.66 / p95 18.67 / p99 18.73 ms**<br>`scroll-history-1`: **p50 16.67 / p95 18.66 / p99 18.87 ms**<br>(超過 `>25ms`: それぞれ 3/360) | Phase 2 参考値 (`e05fd66`, `scrollTop` 23px 減算): **p95 17–18 ms / max 19 ms** (`>25ms`: 0/360。JS計測で WebKit 合成時間を除く) | 外部非改変バイナリのためフレーム単位間隔は未計測                             |
+| **7a. 前景端末内 `macism` 実行時間** (4 試行)         | **29.23 ms** (`[40.56, 30.01, 25.64, 28.45]`)                                                                                                               | **4,556.96 ms** (`[5123.53, 4465.66, 4648.26, 1645.07]`)                                                                         | 39.28 ms (`[52.40, 39.64, 38.93, 36.13]`)                                    |
+| **7b. 実設定 Neovim 起動・`:qa` 終了** (実 TTY, 4 回) | Wall **97.33 ms** (`--startuptime` **28.17 ms**)                                                                                                            | Wall **88.69 ms** (`--startuptime` **28.79 ms**)                                                                                 | Wall 106.79 ms (`--startuptime` **28.23 ms**)                                |
+| **8. 配布容量（論理バイト）**                         | 単体 **6,312,432 B (6.02 MiB)**<br>`herdr-core` (6.30 MiB) 合算 **12,915,664 B (12.32 MiB)**                                                                | `.app` **3,833,876 B (3.66 MiB)**<br>`herdr-core` 合算 **10,437,108 B (9.95 MiB)**（※OS WebKit 利用）                            | `.app` **67,299,199 B (64.18 MiB)**<br>バイナリ **45,165,232 B (43.07 MiB)** |
 
 **補足分析**:
+
 - **Tauri のメモリと負荷時 CPU**: 30 秒間の 256 KiB/s ストリーミングで Tauri 版は `WebContent` 単体が `260.42 MiB` まで増え、ピーク Footprint `435.44 MiB`（GPUI の約 **2.8 倍**、Ghostty の約 **3.0 倍**）、負荷 CPU `27.30%`（GPUI の **4.1 倍**）に達し、負荷終了 1.5 秒後も `307.80 MiB`（RSS `420.50 MiB`）が高止まりした。対して GPUI PoC は負荷中 `154.51 MiB`・CPU `6.62%` に収まり、終了 1.5 秒後に `93.74 MiB` まで即座に解放された。
 - **`macism` 遅延の再現**: `baseline/phase2-tauri`（`5ef4abb`）では起動直後〜前景状態での `macism` 実行が **1.65〜5.12 秒（中央値 4,556.96 ms）** に悪化する事象を直接再現した。一方、同じ端末・環境でネイティブ AppKit/Metal を持つ GPUI PoC は **29.23 ms**（Ghostty 相当の 39.28 ms）で安定しており、WKWebView 環境とネイティブアプリ環境で入力ソース問い合わせ（TIS）の挙動に大きな差があることが確認された。
 - **Neovim 起動と DSR/OSC 11**: 標準入出力をパイプ接続し端末応答が返らない場合、ユーザー実設定の `nvim --startuptime +qa` は `E1568: Terminal did not respond to DSR request for 'background' color`（実時間 約 1.12 秒）を起こす場合があるが、実 PTY 接続した GPUI・Tauri・Ghostty の 3 者ではいずれも警告なし・実時間 `88.7〜106.8 ms`（内部 startup `28.2〜28.8 ms`）で完了した。
@@ -140,11 +142,11 @@ GPUI の値は PR #4 最終修正前の測定値。マージ後のアイドル�
 
 実画面描画とは分離し、同じ 10,000 行ペイロード（`996.1 KiB`、120×40、履歴 2,000 行）を各 VT コアへ投入した純粋パーサ性能は以下。
 
-| 条件 | ネイティブ `libghostty-vt` (`--bench-vt`) | `@wterm/ghostty` WASM (`scripts/bench-terminals.mjs`) | ネイティブ優位比 |
-| --- | ---: | ---: | ---: |
-| 1 端末生成・書込速度 | **0.01 ms** / **2.52 ms** (**386.7 MiB/s**) | 0.2 ms / 9.5 ms (102.0 MiB/s) | 約 **3.8 倍** |
-| 10 端末生成・書込速度 | **0.04 ms** / **2.41 ms** (**403.6 MiB/s**) | 1.2 ms / 9.3 ms (104.8 MiB/s) | 約 **3.9 倍** |
-| 10 端末負荷時 RSS 増分 | **+23.50 MiB** | +49.84 MiB | **-52.8%** |
+| 条件                   |   ネイティブ `libghostty-vt` (`--bench-vt`) | `@wterm/ghostty` WASM (`scripts/bench-terminals.mjs`) | ネイティブ優位比 |
+| ---------------------- | ------------------------------------------: | ----------------------------------------------------: | ---------------: |
+| 1 端末生成・書込速度   | **0.01 ms** / **2.52 ms** (**386.7 MiB/s**) |                         0.2 ms / 9.5 ms (102.0 MiB/s) |    約 **3.8 倍** |
+| 10 端末生成・書込速度  | **0.04 ms** / **2.41 ms** (**403.6 MiB/s**) |                         1.2 ms / 9.3 ms (104.8 MiB/s) |    約 **3.9 倍** |
+| 10 端末負荷時 RSS 増分 |                              **+23.50 MiB** |                                            +49.84 MiB |       **-52.8%** |
 
 ### 4.3 PR #4 マージ後のアイドル計測
 
@@ -156,12 +158,12 @@ GPUI の値は PR #4 最終修正前の測定値。マージ後のアイドル�
 
 CPU はプロセスごとのユーザー・カーネル CPU 時間の差分を実時間で割った値で、単一論理コアを 100% とする。`proc_pid_rusage` の CPU 時間は `mach_timebase_info` で換算した。GPUI では本体、専用ソケットから確認した core と holder、PTY の子プロセスを合算した。Ghostty では本体とその子プロセスを合算した。`login` は権限制約により `ps` の CPU 時間と RSS を用いた。Physical Footprint の合計には Ghostty の `login` を含まない。メモリは各試行内の平均、表は試行間の中央値。システム全体や WindowServer の負荷は集計外。
 
-| 状態 | GPUI CPU | Ghostty CPU | 差 | 有効試行数（各アプリ） | Physical Footprint（GPUI / Ghostty） | RSS（GPUI / Ghostty） | 本体ウェイクアップ（GPUI / Ghostty） |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| シェル | 1.198% | 0.619% | +0.579 pt | 2 / 2 | 102.3 / 116.0 MiB | 71.5 / 114.2 MiB | 62.6 / 15.7 回/秒 |
-| Neovim | 0.708% | 0.567% | +0.141 pt | 3 / 3 | 68.7 / 124.4 MiB | 89.7 / 130.7 MiB | 60.3 / 15.4 回/秒 |
-| フォーカス離脱（可視） | 0.696% | 0.014% | +0.682 pt | 3 / 3 | 50.3 / 68.7 MiB | 66.0 / 112.7 MiB | 60.3 / 0.3 回/秒 |
-| 最小化 | 0.215% | 0.057% | +0.158 pt | 2 / 2 | 59.5 / 34.7 MiB | 71.2 / 104.5 MiB | 0.3 / 0.4 回/秒 |
+| 状態                   | GPUI CPU | Ghostty CPU |        差 | 有効試行数（各アプリ） | Physical Footprint（GPUI / Ghostty） | RSS（GPUI / Ghostty） | 本体ウェイクアップ（GPUI / Ghostty） |
+| ---------------------- | -------: | ----------: | --------: | ---------------------: | -----------------------------------: | --------------------: | -----------------------------------: |
+| シェル                 |   1.198% |      0.619% | +0.579 pt |                  2 / 2 |                    102.3 / 116.0 MiB |      71.5 / 114.2 MiB |                    62.6 / 15.7 回/秒 |
+| Neovim                 |   0.708% |      0.567% | +0.141 pt |                  3 / 3 |                     68.7 / 124.4 MiB |      89.7 / 130.7 MiB |                    60.3 / 15.4 回/秒 |
+| フォーカス離脱（可視） |   0.696% |      0.014% | +0.682 pt |                  3 / 3 |                      50.3 / 68.7 MiB |      66.0 / 112.7 MiB |                     60.3 / 0.3 回/秒 |
+| 最小化                 |   0.215% |      0.057% | +0.158 pt |                  2 / 2 |                      59.5 / 34.7 MiB |      71.2 / 104.5 MiB |                      0.3 / 0.4 回/秒 |
 
 GPUI 本体の CPU 中央値は、シェル 1.06%、Neovim 0.58%、フォーカス離脱 0.55%、最小化 0.07%。core・holder・PTY の子プロセスの合計は全条件で 0.13〜0.15% だった。実装変更を行っていないため、この表は現行ビルド 1 種の評価である。§4.1 の 5 秒計測は歴史値であり、計測時間と条件が異なる。
 
@@ -181,21 +183,21 @@ PTY 側では、ソケットの読み取りと `recv_uncredited().await` がイ�
 
 両アプリで `scripts/bench-app.py workload` の 256 KiB/s 出力を 30 秒間流し、出力開始から 31 秒間を各 3 回計測した。以下は中央値。メモリのピークは 1 秒間隔で取得したプロセス合計の最大値。
 
-| アプリ | CPU | 平均 / ピーク Physical Footprint | 平均 / ピーク RSS |
-| --- | ---: | ---: | ---: |
-| GPUI | 7.12% | 137.2 / 139.9 MiB | 126.7 / 136.2 MiB |
-| Ghostty | 6.21% | 131.1 / 135.2 MiB | 166.7 / 183.6 MiB |
+| アプリ  |   CPU | 平均 / ピーク Physical Footprint | 平均 / ピーク RSS |
+| ------- | ----: | -------------------------------: | ----------------: |
+| GPUI    | 7.12% |                137.2 / 139.9 MiB | 126.7 / 136.2 MiB |
+| Ghostty | 6.21% |                131.1 / 135.2 MiB | 166.7 / 183.6 MiB |
 
 GPUI の負荷時 CPU は、本体が中央値 4.07%、core・holder・出力生成プロセスが合計 3.05%。Ghostty は本体 5.87%、子プロセス 0.34% だった。
 
 GPUI の `--bench-window` は Menlo 14、106 × 32、行キャッシュ有効で各 3 回完走した。以下は各試行の指標の中央値。入力遅延はベンチマークからの入力送信から PTY 応答・VT 処理・描画準備までを測り、物理打鍵から画面への提示までの値は含まない。
 
-| シナリオ | 観測結果 |
-| --- | --- |
-| `input-latency`（100 入力） | p50 0.68 ms、p95 0.96 ms、p99 12.41 ms |
-| `nvim-ctrl-du`（60 往復） | 総計 2,254.37 ms、操作 RTT p95 4.81 ms、フレーム間隔 p95 18.67 ms |
-| `burst-5mib`（約 5,251 KiB） | 出力完了 472.28 ms、フレーム間隔 p95 42.60 ms |
-| `scroll-stream`（360 フレーム） | フレーム間隔 p95 18.66 ms |
+| シナリオ                        | 観測結果                                                          |
+| ------------------------------- | ----------------------------------------------------------------- |
+| `input-latency`（100 入力）     | p50 0.68 ms、p95 0.96 ms、p99 12.41 ms                            |
+| `nvim-ctrl-du`（60 往復）       | 総計 2,254.37 ms、操作 RTT p95 4.81 ms、フレーム間隔 p95 18.67 ms |
+| `burst-5mib`（約 5,251 KiB）    | 出力完了 472.28 ms、フレーム間隔 p95 42.60 ms                     |
+| `scroll-stream`（360 フレーム） | フレーム間隔 p95 18.66 ms                                         |
 
 実装変更はないため、現行ビルドの計測値を基準値として記録した。上記の `--bench-window` と同等の内部指標は Ghostty では未計測。
 
@@ -209,17 +211,17 @@ GPUI の `--bench-window` は Menlo 14、106 × 32、行キャッシュ有効で
 
 ### 5.1 検証結果の区別（自動検証 vs 実機手動検証必要）
 
-| 項目 | 自動検証の結果 | 実機手動確認の状況（GUI / 実キーボード） |
-| --- | --- | --- |
-| **1. `IUTF8` と日本語 Backspace** | `os::tests` 3件 ＋ `tests/compatibility.rs::pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty` 合格（実 `herdr-core` PTY で `--uiterm-pty-init` 経由の `iutf8` 有効化・`あいうえお`+DEL×5→削除・`A日本`+DEL+`B`→`A日B` 確認） | **未実施（要実機確認）**: ライブウィンドウ内の `stty -a` と実打鍵確認 |
-| **2. macSKK 未確定文字と Cmd+Tab 往復** | `ime::tests` 5件合格（`blur`/`focus` 往復で未確定 `▽じぶん` 保持・確定後 `""` + `"自分"` 1回送信・連続 `"あ"`→`"あ"` 確定の回帰テスト） | **未実施（要実機確認）**: 実際の macSKK 2.23+ と `Cmd+Tab` 往復動作 |
-| **3. 変換中の Enter・Esc と候補ウィンドウ追従** | `ime::tests` + `input::tests` 3件合格（変換中のショートカット/`Option-as-Meta` 抑止、Esc 取消後 `unmark_text` でフォーカス復帰時に復活しないこと、カーソル基準 `bounds_for_range` 算出） | **未実施（要実機確認）**: 変換中 Enter/Esc、画面中央・右端・最下行での OS/macSKK 候補ウィンドウ位置追従 |
-| **4. 日本語・絵文字・結合文字のセル幅** | `fonts::tests::cell_width_aligns_ascii_40_and_cjk_20_and_pua_and_zwj` ＋ `--probe-fonts` 合格（ASCII40桁=`337.148px` と CJK20字=`337.148px` の誤差 `0.000px`、`🦀`/`👨‍👩‍👧‍👦`/`か\u{3099}`/`ｱ` 計測） | **未実施（要実機確認）**: ライブウィンドウ上での目視レイアウト確認 |
-| **5. Nerd Font PUA 文字** | `fonts::tests` + `--probe-fonts` 合格（`Symbols Nerd Font Mono` 未導入環境でも `UDEV Gothic 35NF` フォールバックにより `U+E0B0`, `U+E0A0`, `U+E718`, `U+F015`, `U+F024B` 全描画、幅 `8.39px`・`delta=0.000px`） | **未実施（要実機確認）**: fish プロンプト・Neovim アイコンの目視確認 |
-| **6. Neovim リサイズと Alternate Screen / CLI 互換** | `tests/compatibility.rs::installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty` 合格（`fish -l` `32 106`、実 `nvim --clean` の `\x1b[?1049h/l`・`FRAME_RESIZE` + Mode 2048 による `106x32` 追従、`codex --version`） | **未実施（要実機確認）**: 対話 Neovim・対話 Codex でのライブ入力/ドラッグリサイズ |
-| **7. Bracketed Paste** | `vt::tests::verifies_inverse_color_behavior_and_bracketed_paste_sanitization` 合格（Mode 2004 OFF で `\r` 変換、ON で `\x1b[200~...\x1b[201~` ラップおよび内部 `\x1b` サニタイズ確認） | **未実施（要実機確認）**: 実際のクリップボードからの複数行 `Cmd+V` |
-| **8. SGR 2（淡色）・SGR 8（隠し）・SGR 7（反転）背景色** | `vt::tests` + `renderer::tests::resolves_sgr2_faint_sgr8_invisible_and_sgr7_inverse_backgrounds` 合格（SGR 2/8 の `bg_rgb` 保持・SGR 7 の fg/bg 反転確認、一様行右端延長ロジック確認） | **未実施（要実機確認）**: Codex/再現コマンドの画素色差・右端描画の目視確認 |
-| **9. 選択中の文字描画とコピー** | `vt::tests`（`RowId`/Selection 結合テストで `selected_text() == Some("L2")` および `row.selection() == Some((0, 1))` 確認）+ `input::tests`（選択有無での `Cmd+C` 分岐・`Ctrl+C` 非奪取）+ `paint_terminal_frame` 内の `end_x - start_x + 1` 幅ハイライト描画実装 | **未実施（要実機確認）**: 実マウスドラッグ/ダブル/トリプルクリック選択と `Cmd+C` コピー中の文字崩れ有無 |
+| 項目                                                     | 自動検証の結果                                                                                                                                                                                                                                                    | 実機手動確認の状況（GUI / 実キーボード）                                                                |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **1. `IUTF8` と日本語 Backspace**                        | `os::tests` 3件 ＋ `tests/compatibility.rs::pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty` 合格（実 `herdr-core` PTY で `--uiterm-pty-init` 経由の `iutf8` 有効化・`あいうえお`+DEL×5→削除・`A日本`+DEL+`B`→`A日B` 確認）                               | **未実施（要実機確認）**: ライブウィンドウ内の `stty -a` と実打鍵確認                                   |
+| **2. macSKK 未確定文字と Cmd+Tab 往復**                  | `ime::tests` 5件合格（`blur`/`focus` 往復で未確定 `▽じぶん` 保持・確定後 `""` + `"自分"` 1回送信・連続 `"あ"`→`"あ"` 確定の回帰テスト）                                                                                                                           | **未実施（要実機確認）**: 実際の macSKK 2.23+ と `Cmd+Tab` 往復動作                                     |
+| **3. 変換中の Enter・Esc と候補ウィンドウ追従**          | `ime::tests` + `input::tests` 3件合格（変換中のショートカット/`Option-as-Meta` 抑止、Esc 取消後 `unmark_text` でフォーカス復帰時に復活しないこと、カーソル基準 `bounds_for_range` 算出）                                                                          | **未実施（要実機確認）**: 変換中 Enter/Esc、画面中央・右端・最下行での OS/macSKK 候補ウィンドウ位置追従 |
+| **4. 日本語・絵文字・結合文字のセル幅**                  | `fonts::tests::cell_width_aligns_ascii_40_and_cjk_20_and_pua_and_zwj` ＋ `--probe-fonts` 合格（ASCII40桁=`337.148px` と CJK20字=`337.148px` の誤差 `0.000px`、`🦀`/`👨‍👩‍👧‍👦`/`か\u{3099}`/`ｱ` 計測）                                                                   | **未実施（要実機確認）**: ライブウィンドウ上での目視レイアウト確認                                      |
+| **5. Nerd Font PUA 文字**                                | `fonts::tests` + `--probe-fonts` 合格（`Symbols Nerd Font Mono` 未導入環境でも `UDEV Gothic 35NF` フォールバックにより `U+E0B0`, `U+E0A0`, `U+E718`, `U+F015`, `U+F024B` 全描画、幅 `8.39px`・`delta=0.000px`）                                                   | **未実施（要実機確認）**: fish プロンプト・Neovim アイコンの目視確認                                    |
+| **6. Neovim リサイズと Alternate Screen / CLI 互換**     | `tests/compatibility.rs::installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty` 合格（`fish -l` `32 106`、実 `nvim --clean` の `\x1b[?1049h/l`・`FRAME_RESIZE` + Mode 2048 による `106x32` 追従、`codex --version`）                           | **未実施（要実機確認）**: 対話 Neovim・対話 Codex でのライブ入力/ドラッグリサイズ                       |
+| **7. Bracketed Paste**                                   | `vt::tests::verifies_inverse_color_behavior_and_bracketed_paste_sanitization` 合格（Mode 2004 OFF で `\r` 変換、ON で `\x1b[200~...\x1b[201~` ラップおよび内部 `\x1b` サニタイズ確認）                                                                            | **未実施（要実機確認）**: 実際のクリップボードからの複数行 `Cmd+V`                                      |
+| **8. SGR 2（淡色）・SGR 8（隠し）・SGR 7（反転）背景色** | `vt::tests` + `renderer::tests::resolves_sgr2_faint_sgr8_invisible_and_sgr7_inverse_backgrounds` 合格（SGR 2/8 の `bg_rgb` 保持・SGR 7 の fg/bg 反転確認、一様行右端延長ロジック確認）                                                                            | **未実施（要実機確認）**: Codex/再現コマンドの画素色差・右端描画の目視確認                              |
+| **9. 選択中の文字描画とコピー**                          | `vt::tests`（`RowId`/Selection 結合テストで `selected_text() == Some("L2")` および `row.selection() == Some((0, 1))` 確認）+ `input::tests`（選択有無での `Cmd+C` 分岐・`Ctrl+C` 非奪取）+ `paint_terminal_frame` 内の `end_x - start_x + 1` 幅ハイライト描画実装 | **未実施（要実機確認）**: 実マウスドラッグ/ダブル/トリプルクリック選択と `Cmd+C` コピー中の文字崩れ有無 |
 
 ---
 
@@ -306,16 +308,17 @@ nix develop .#gpui --command cargo test --locked --manifest-path poc/gpui-termin
 
 本評価結果から得られる利点・懸念・前提条件を中立的に整理する。最終判断は上記実機検証チェックリストの結果を踏まえて行う。
 
-| 判断観点 | GPUI + ネイティブ `libghostty-vt` 路線 | 現行 Tauri + WKWebView + WASM 路線 (`5ef4abb`) |
-| --- | --- | --- |
-| **メモリ効率（負荷時/ピーク）** | 30s 負荷ピーク **154.51 MiB**（終了後 **93.74 MiB** に即回復）。Ghostty 1.4.0 (`144.76 MiB`) と同等水準 | 30s 負荷ピーク **435.44 MiB**（`WebContent` `260.42 MiB`、終了後 `307.80 MiB` 滞留） |
-| **CPU・VT 処理性能** | 負荷平均 CPU **6.62%**、VT 単体 **387〜404 MiB/s**。コア共有の Rust 単一バイナリ（6.02 MiB） | 負荷平均 CPU **27.30%**、VT WASM **102〜105 MiB/s** |
-| **`macism` 遅延問題** | 前景端末内で **29.23 ms**（Ghostty 39.28 ms と同等、遅延非発生） | 本評価で **4,556.96 ms** の遅延を再検証（WebKit/TIS 周りの固有リスクあり） |
-| **実装複雑度・開発体制** | IME・選択・クリップボード・マルチタブ・ショートカット・設定 UI 等の UI 基盤を自前で GPUI 実装する必要あり。Rust エコシステム・GPUI 上流追従コストが増す | HTML/CSS/React の豊富な UI 資産・ブラウザ標準の IME/選択/フォントフォールバックを活用可能。ただし WebKit プロセス肥大化とパッチ保守（`@wterm/dom`）が課題 |
-| **内蔵ブラウザ要件（Phase 3+）** | GPUI 単体では汎用 Web ブラウザを内蔵できず、必要時は外部ブラウザ連携または別 WebView 統合設計が必要 | WKWebView / WebKitGTK 上の製品構造上、将来的な Web UI 拡張と親和性が高い |
-| **NixOS / Hyprland 対応** | `ghostty-vt-sys` の Zig ビルド統合 + Vulkan 依存解決 + Linux 実機検証が先行ゲート | 既存の Nix Flake で静的評価済み（ただし実機での Wayland + WebKitGTK + Fcitx5 検証は同様に未実施） |
+| 判断観点                         | GPUI + ネイティブ `libghostty-vt` 路線                                                                                                                  | 現行 Tauri + WKWebView + WASM 路線 (`5ef4abb`)                                                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **メモリ効率（負荷時/ピーク）**  | 30s 負荷ピーク **154.51 MiB**（終了後 **93.74 MiB** に即回復）。Ghostty 1.4.0 (`144.76 MiB`) と同等水準                                                 | 30s 負荷ピーク **435.44 MiB**（`WebContent` `260.42 MiB`、終了後 `307.80 MiB` 滞留）                                                                      |
+| **CPU・VT 処理性能**             | 負荷平均 CPU **6.62%**、VT 単体 **387〜404 MiB/s**。コア共有の Rust 単一バイナリ（6.02 MiB）                                                            | 負荷平均 CPU **27.30%**、VT WASM **102〜105 MiB/s**                                                                                                       |
+| **`macism` 遅延問題**            | 前景端末内で **29.23 ms**（Ghostty 39.28 ms と同等、遅延非発生）                                                                                        | 本評価で **4,556.96 ms** の遅延を再検証（WebKit/TIS 周りの固有リスクあり）                                                                                |
+| **実装複雑度・開発体制**         | IME・選択・クリップボード・マルチタブ・ショートカット・設定 UI 等の UI 基盤を自前で GPUI 実装する必要あり。Rust エコシステム・GPUI 上流追従コストが増す | HTML/CSS/React の豊富な UI 資産・ブラウザ標準の IME/選択/フォントフォールバックを活用可能。ただし WebKit プロセス肥大化とパッチ保守（`@wterm/dom`）が課題 |
+| **内蔵ブラウザ要件（Phase 3+）** | GPUI 単体では汎用 Web ブラウザを内蔵できず、必要時は外部ブラウザ連携または別 WebView 統合設計が必要                                                     | WKWebView / WebKitGTK 上の製品構造上、将来的な Web UI 拡張と親和性が高い                                                                                  |
+| **NixOS / Hyprland 対応**        | `ghostty-vt-sys` の Zig ビルド統合 + Vulkan 依存解決 + Linux 実機検証が先行ゲート                                                                       | 既存の Nix Flake で静的評価済み（ただし実機での Wayland + WebKitGTK + Fcitx5 検証は同様に未実施）                                                         |
 
 **正式採用前に確認すべきゲート条件**:
+
 1. ユーザー実機での macSKK・標準日本語 IME・トラックパッド操作に重大な違和感がないこと。
 2. §4.3 のアイドル時 CPU とウェイクアップ頻度が採用条件を満たすか判断すること。
 3. NixOS / Hyprland 環境で `ghostty-vt-sys` の Zig ビルドおよび Vulkan + `zwp_text_input_v3`（Fcitx5）の動作確認の見通しが立つこと。

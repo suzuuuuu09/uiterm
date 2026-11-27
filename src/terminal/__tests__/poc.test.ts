@@ -153,7 +153,9 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
     let emitFrame!: (frame: OutputFrame) => void;
     let resolveAttach!: (res: TerminalAttachResult) => void;
     let markAttachStarted!: () => void;
-    const attachStarted = new Promise<void>((resolve) => { markAttachStarted = resolve; });
+    const attachStarted = new Promise<void>((resolve) => {
+      markAttachStarted = resolve;
+    });
 
     mock.terminalAck = async (attachId, bytes) => {
       ackCalls.push({ attachId, bytes });
@@ -311,7 +313,11 @@ describe("Phase 0 Integration guards (attachId=0 race, resize loop, IPC errors)"
       const mock = new MockIpcClient();
       const dispose = vi.fn();
       const store = createAppStore();
-      const mgr = new TerminalSessionManager(mock, sessionAdapter(() => {}, dispose), { store });
+      const mgr = new TerminalSessionManager(
+        mock,
+        sessionAdapter(() => {}, dispose),
+        { store },
+      );
       mock.terminalAttach = vi.fn().mockRejectedValue(new Error("attach failed"));
       const host = createFakeElement();
       await expect(mgr.createSession("failed", "wterm-ghostty-dom", host, false)).rejects.toThrow(

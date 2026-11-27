@@ -23,7 +23,10 @@ export interface UitermConfig {
   actions?: Record<string, (args: unknown, ctx: ActionContext) => unknown | Promise<unknown>>;
   hooks?: {
     onAgentStatus?: (event: AgentStatusEvent, ctx: ActionContext) => unknown | Promise<unknown>;
-    onTerminalCreated?: (event: { terminal: string }, ctx: ActionContext) => unknown | Promise<unknown>;
+    onTerminalCreated?: (
+      event: { terminal: string },
+      ctx: ActionContext,
+    ) => unknown | Promise<unknown>;
   };
 }
 

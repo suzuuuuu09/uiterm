@@ -14,16 +14,16 @@ IPC 通信仕様については [docs/poc/interface.md](./interface.md) を参�
 
 ## 1. 検証環境・測定条件
 
-| 項目 | 値 |
-| --- | --- |
-| OS / Arch | macOS 15.5 (Darwin 24.5.0, arm64 / Apple Silicon) |
-| Nix | Nix 2.35.6 (`flake.nix` + `flake.lock` 固定) |
-| Rust / Cargo | `rustc 1.99.1` / `cargo 1.99.0` (Nix devShell 提供) |
-| Tauri | `tauri 2.12.7` / `@tauri-apps/api 2.12.5` / `@tauri-apps/cli 2.12.6` |
-| Node.js / pnpm | `Node.js v24.22.2` (LTS) / `pnpm 12.9.0` |
-| Vite+ | `vite-plus 1.8.0` |
-| `herdr-core` | `v0.1.22` (プロトコル世代 1, OpenRPC 1.3.2, Nix `fetchurl` + SHA-256 固定) |
-| 互換性検証 CLI | `fish`, `nvim --clean`, `codex --version` |
+| 項目           | 値                                                                         |
+| -------------- | -------------------------------------------------------------------------- |
+| OS / Arch      | macOS 15.5 (Darwin 24.5.0, arm64 / Apple Silicon)                          |
+| Nix            | Nix 2.35.6 (`flake.nix` + `flake.lock` 固定)                               |
+| Rust / Cargo   | `rustc 1.99.1` / `cargo 1.99.0` (Nix devShell 提供)                        |
+| Tauri          | `tauri 2.12.7` / `@tauri-apps/api 2.12.5` / `@tauri-apps/cli 2.12.6`       |
+| Node.js / pnpm | `Node.js v24.22.2` (LTS) / `pnpm 12.9.0`                                   |
+| Vite+          | `vite-plus 1.8.0`                                                          |
+| `herdr-core`   | `v0.1.22` (プロトコル世代 1, OpenRPC 1.3.2, Nix `fetchurl` + SHA-256 固定) |
+| 互換性検証 CLI | `fish`, `nvim --clean`, `codex --version`                                  |
 
 すべての `herdr-core` 検証は `/tmp/ut-<prefix>-<pid>-<seq>/` 配下に隔離した `HC_SESSION`・`HC_SOCKET`・`XDG_STATE_HOME`・`XDG_CONFIG_HOME`・`XDG_RUNTIME_DIR` を用いて実行し、ユーザーの既存 Herdr セッション・設定には一切触れていない。
 
@@ -61,42 +61,42 @@ IPC 通信仕様については [docs/poc/interface.md](./interface.md) を参�
 
 ### 3.2 `herdr-core` 性能・互換性・リソース実測（`poc_bench`）
 
-| 検証項目 | 実測値 | 判定 |
-| --- | --- | --- |
-| `herdr-core` デーモン起動時間（ソケット受付まで） | **45.68 ms** | 良好 |
-| Unix Socket 接続 + Framed `hello` ハンドシェイク | **0.32 ms** | 良好 |
-| アイドル時 `herdr-core` RSS | **5.48 MiB** (5,616 KiB) | 非常に軽量 |
-| `fish -i` 起動・コマンド実行・終了 | 成功 (`ok=true`) | 合格 |
-| `nvim --clean` PTY 起動・`:q!` 正常終了 | 成功 (`exit_code=0`, 12,506 bytes 受信) | 合格 |
-| `codex --version` PTY 実行 | 成功 (`ok=true`) | 合格 |
-| 10 端末同時作成・アタッチ・エコー往復 | **76.67 ms**（全 10 端末成功） | 良好 |
-| 10 端末同時稼働時 RSS (`herdr-core` / `holder`) | **14.22 MiB** / **7.47 MiB**（計 21.69 MiB） | 軽量 |
-| 10 端末 kill 後（`live=0`）RSS (`herdr-core` / `holder`) | **10.22 MiB** / **7.00 MiB** | 解放確認 |
-| 5 MiB バースト出力（5,308,506 bytes, CREDIT 32 KiB 単位） | **87.09 ms** / **58.13 MiB/s** | 十分高速 |
-| 5 MiB バースト直後 RSS (`herdr-core` / `holder`) | **11.64 MiB** / **9.05 MiB** | メモリ膨張なし |
-| ストール中ビューア（6 MiB 出力・CREDIT 0）存在時の Ch.0 RPC | **0.38 ms**（ブロックなし） | 隔離確認 |
-| `server.stop` 後の残存プロセス（`herdr-core` / `holder`） | **0 件** (`false` / `false`) | リークなし |
+| 検証項目                                                    | 実測値                                       | 判定           |
+| ----------------------------------------------------------- | -------------------------------------------- | -------------- |
+| `herdr-core` デーモン起動時間（ソケット受付まで）           | **45.68 ms**                                 | 良好           |
+| Unix Socket 接続 + Framed `hello` ハンドシェイク            | **0.32 ms**                                  | 良好           |
+| アイドル時 `herdr-core` RSS                                 | **5.48 MiB** (5,616 KiB)                     | 非常に軽量     |
+| `fish -i` 起動・コマンド実行・終了                          | 成功 (`ok=true`)                             | 合格           |
+| `nvim --clean` PTY 起動・`:q!` 正常終了                     | 成功 (`exit_code=0`, 12,506 bytes 受信)      | 合格           |
+| `codex --version` PTY 実行                                  | 成功 (`ok=true`)                             | 合格           |
+| 10 端末同時作成・アタッチ・エコー往復                       | **76.67 ms**（全 10 端末成功）               | 良好           |
+| 10 端末同時稼働時 RSS (`herdr-core` / `holder`)             | **14.22 MiB** / **7.47 MiB**（計 21.69 MiB） | 軽量           |
+| 10 端末 kill 後（`live=0`）RSS (`herdr-core` / `holder`)    | **10.22 MiB** / **7.00 MiB**                 | 解放確認       |
+| 5 MiB バースト出力（5,308,506 bytes, CREDIT 32 KiB 単位）   | **87.09 ms** / **58.13 MiB/s**               | 十分高速       |
+| 5 MiB バースト直後 RSS (`herdr-core` / `holder`)            | **11.64 MiB** / **9.05 MiB**                 | メモリ膨張なし |
+| ストール中ビューア（6 MiB 出力・CREDIT 0）存在時の Ch.0 RPC | **0.38 ms**（ブロックなし）                  | 隔離確認       |
+| `server.stop` 後の残存プロセス（`herdr-core` / `holder`）   | **0 件** (`false` / `false`)                 | リークなし     |
 
 ### 3.3 TypeScript 設定ランタイム（外部 Node.js 24 + JSON-RPC over stdio）
 
 Node.js 24 LTS のネイティブ TypeScript 型除去機能（`import("./sample.config.ts")`）により、**バンドラ・トランスパイラ（`tsx` / `ts-node` / `esbuild`）依存ゼロ** で `.ts` 設定ファイルの読み込み・型付きヘルパー関数・ユーザー定義関数・非同期イベントフックを実行できた。
 
 | 実行回 | コールドスタート時間（`ping` 応答まで） | 設定ロード + Action + Hook + Metrics 合計 RPC 時間 | Node.js ワーカー RSS |
-| --- | --- | --- | --- |
-| Run 1 | **50.47 ms** | **23.18 ms** | **36.05 MiB** |
-| Run 2 | **34.01 ms** | **21.80 ms** | **34.60 MiB** |
-| Run 3 | **32.34 ms** | **21.33 ms** | **33.44 MiB** |
+| ------ | --------------------------------------- | -------------------------------------------------- | -------------------- |
+| Run 1  | **50.47 ms**                            | **23.18 ms**                                       | **36.05 MiB**        |
+| Run 2  | **34.01 ms**                            | **21.80 ms**                                       | **34.60 MiB**        |
+| Run 3  | **32.34 ms**                            | **21.33 ms**                                       | **33.44 MiB**        |
 
 - **評価**: 起動時 1 回だけ設定を読み込んでワーカーを終了する方式なら常駐メモリ消費は **0 MiB**。イベントフックやカスタムアクション用に常駐させても約 **33〜36 MiB** かつ 1 回あたりの RPC は数 ms オーダーで実用十分。
 
 ### 3.4 ディスク容量・依存関係容量
 
-| 対象 | サイズ | 備考 |
-| --- | --- | --- |
-| `herdr-core` v0.1.22 バイナリ（macOS arm64） | **6.3 MiB** | tarball 5.40 MB。Linux x86_64 静的ビルドは tarball 3.30 MB、Linux aarch64 は 3.04 MB |
-| `src-tauri/target/release/uiterm`（デフォルト release） | **11 MiB** | LTO・strip 未適用。Phase 1 以降で `lto = true, strip = true` 適用によりさらに削減可能 |
-| `node_modules`（開発依存 + フロントエンド検証用 4 種描画器含む） | **343 MiB** | 開発時のみ。アプリバンドルには同梱されない |
-| `src-tauri/target`（debug + release キャッシュ） | **3.7 GiB** | 開発ビルドキャッシュのみ |
+| 対象                                                             | サイズ      | 備考                                                                                  |
+| ---------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------- |
+| `herdr-core` v0.1.22 バイナリ（macOS arm64）                     | **6.3 MiB** | tarball 5.40 MB。Linux x86_64 静的ビルドは tarball 3.30 MB、Linux aarch64 は 3.04 MB  |
+| `src-tauri/target/release/uiterm`（デフォルト release）          | **11 MiB**  | LTO・strip 未適用。Phase 1 以降で `lto = true, strip = true` 適用によりさらに削減可能 |
+| `node_modules`（開発依存 + フロントエンド検証用 4 種描画器含む） | **343 MiB** | 開発時のみ。アプリバンドルには同梱されない                                            |
+| `src-tauri/target`（debug + release キャッシュ）                 | **3.7 GiB** | 開発ビルドキャッシュのみ                                                              |
 
 ---
 
@@ -133,15 +133,15 @@ Node.js 24 LTS のネイティブ TypeScript 型除去機能（`import("./sample
 
 ## 5. 採用技術の継続・変更判断と根拠
 
-| 技術 | 判断 | 根拠 |
-| --- | --- | --- |
-| **Tauri 2** | **継続** | `tauri 2.12.7` の `Channel<Response>` + `Request` (`InvokeBody::Raw`) により Base64 なしのバイナリ双方向 IPC が簡潔に実装可能。リリースバイナリも 11 MiB（未 strip）と非常に軽量。 |
-| **`herdr-core` (v0.1.22)** | **継続** | アイドル 5.5 MiB、10 端末 21.7 MiB、58 MiB/s の高スループット、OpenRPC による厳格な後方互換保証、`AUTOMATIC_INPUT` (kind 6) による端末自動応答のネイティブ分離、256 KiB クレジットフロー制御と 4 MiB 超過時リペイント再同期、OSC 7501 状態管理まで要件をすべて満たす。独自 PTY 管理（`portable-pty` 等）への置換は不要。 |
-| **Tokio / Serde** | **継続** | 非同期 Unix Socket 多重化と JSON-RPC 処理に過不足なく適合。 |
-| **外部 Node.js 24 LTS（TypeScript 設定）** | **継続** | ネイティブ型除去により外部トランスパイラ不要で `.ts` 設定・関数・非同期フックを実行可能。起動 32〜50 ms・RSS 約 35 MiB でアプリへのランタイム同梱も不要。なお、設定のみ静的に読む場面と常駐フックが必要な場面でオンデマンド起動を使い分ける設計が望ましい。 |
-| **Nix Flakes** | **継続** | `herdr-core` v0.1.22 を SHA-256 固定で取り込み、macOS（arm64/x86_64）と NixOS（x86_64/arm64, Wayland/WebKitGTK）の再現可能な開発環境を単一 `flake.nix` で構築できた。 |
-| **Vite+ (`vite-plus`)** | **条件付き継続** | `vite-plus 1.8.0` は pnpm と正常動作するが、`vp` ラッパーがパッケージマネージャを透過管理する仕様上、Tauri CLI（`beforeDevCommand` / `beforeBuildCommand`）および Nix 環境では `pnpm dev` / `pnpm build` 経由で呼び出す構成を明示維持する必要がある。 |
-| **ts-rs** | **Phase 1 以降で導入検討** | Phase 0 では型数が少なく手動同期で十分だったが、Phase 1 で IPC コマンドが増える段階で `ts-rs` による Rust → TypeScript 自動型生成を導入すると型ドリフトを防げる。 |
+| 技術                                       | 判断                       | 根拠                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Tauri 2**                                | **継続**                   | `tauri 2.12.7` の `Channel<Response>` + `Request` (`InvokeBody::Raw`) により Base64 なしのバイナリ双方向 IPC が簡潔に実装可能。リリースバイナリも 11 MiB（未 strip）と非常に軽量。                                                                                                                                       |
+| **`herdr-core` (v0.1.22)**                 | **継続**                   | アイドル 5.5 MiB、10 端末 21.7 MiB、58 MiB/s の高スループット、OpenRPC による厳格な後方互換保証、`AUTOMATIC_INPUT` (kind 6) による端末自動応答のネイティブ分離、256 KiB クレジットフロー制御と 4 MiB 超過時リペイント再同期、OSC 7501 状態管理まで要件をすべて満たす。独自 PTY 管理（`portable-pty` 等）への置換は不要。 |
+| **Tokio / Serde**                          | **継続**                   | 非同期 Unix Socket 多重化と JSON-RPC 処理に過不足なく適合。                                                                                                                                                                                                                                                              |
+| **外部 Node.js 24 LTS（TypeScript 設定）** | **継続**                   | ネイティブ型除去により外部トランスパイラ不要で `.ts` 設定・関数・非同期フックを実行可能。起動 32〜50 ms・RSS 約 35 MiB でアプリへのランタイム同梱も不要。なお、設定のみ静的に読む場面と常駐フックが必要な場面でオンデマンド起動を使い分ける設計が望ましい。                                                              |
+| **Nix Flakes**                             | **継続**                   | `herdr-core` v0.1.22 を SHA-256 固定で取り込み、macOS（arm64/x86_64）と NixOS（x86_64/arm64, Wayland/WebKitGTK）の再現可能な開発環境を単一 `flake.nix` で構築できた。                                                                                                                                                    |
+| **Vite+ (`vite-plus`)**                    | **条件付き継続**           | `vite-plus 1.8.0` は pnpm と正常動作するが、`vp` ラッパーがパッケージマネージャを透過管理する仕様上、Tauri CLI（`beforeDevCommand` / `beforeBuildCommand`）および Nix 環境では `pnpm dev` / `pnpm build` 経由で呼び出す構成を明示維持する必要がある。                                                                    |
+| **ts-rs**                                  | **Phase 1 以降で導入検討** | Phase 0 では型数が少なく手動同期で十分だったが、Phase 1 で IPC コマンドが増える段階で `ts-rs` による Rust → TypeScript 自動型生成を導入すると型ドリフトを防げる。                                                                                                                                                        |
 
 ---
 

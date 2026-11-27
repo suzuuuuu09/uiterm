@@ -42,7 +42,8 @@ fn reattach_replays_the_same_pty_and_preserves_its_running_command() {
         argv: Some(vec![
             "/bin/sh".into(),
             "-c".into(),
-            "printf '%s\\n' INITIAL_SCREEN; read value; printf 'REATTACHED:%s\\n' \"$value\"".into(),
+            "printf '%s\\n' INITIAL_SCREEN; read value; printf 'REATTACHED:%s\\n' \"$value\""
+                .into(),
         ]),
         wrap_iutf8: false,
         ..HerdrStartOptions::default()
@@ -62,21 +63,33 @@ fn reattach_replays_the_same_pty_and_preserves_its_running_command() {
                     }
                 }
                 panic!("stream ended before the expected terminal output");
-            }).await.expect("terminal output arrived");
+            })
+            .await
+            .expect("terminal output arrived");
         });
     };
     collect_until(&mut stream, b"INITIAL_SCREEN");
     let previous_handle = handle;
     let mut previous_stream = stream;
-    let (handle, mut stream) = guard.reattach(HerdrStartOptions::default()).expect("reattach");
-    assert!(previous_handle.try_send_user(b"old connection".to_vec()).is_err());
+    let (handle, mut stream) = guard
+        .reattach(HerdrStartOptions::default())
+        .expect("reattach");
+    assert!(
+        previous_handle
+            .try_send_user(b"old connection".to_vec())
+            .is_err()
+    );
     rt.block_on(async {
         tokio::time::timeout(Duration::from_secs(3), async {
             while previous_stream.recv_uncredited().await.is_some() {}
-        }).await.expect("old attachment reached EOF");
+        })
+        .await
+        .expect("old attachment reached EOF");
     });
     collect_until(&mut stream, b"INITIAL_SCREEN");
-    handle.try_send_user(b"same command\n".to_vec()).expect("write to original PTY");
+    handle
+        .try_send_user(b"same command\n".to_vec())
+        .expect("write to original PTY");
     collect_until(&mut stream, b"REATTACHED:same command");
     guard.stop_blocking();
 }
@@ -154,13 +167,19 @@ fn pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty() {
 #[ignore = "requires fish, nvim, and codex on PATH"]
 fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
     for cli in ["fish", "nvim", "codex"] {
-        assert!(has_cmd(cli), "install {cli} before running CLI compatibility checks");
+        assert!(
+            has_cmd(cli),
+            "install {cli} before running CLI compatibility checks"
+        );
     }
     let bin = env!("CARGO_BIN_EXE_uiterm-gpui-poc");
 
     // 1. Fish shell + resize check
     {
-        let wrapped = os::wrap_argv_with_pty_iutf8_init(vec!["fish".into(), "-l".into(), "--no-config".into()], bin);
+        let wrapped = os::wrap_argv_with_pty_iutf8_init(
+            vec!["fish".into(), "-l".into(), "--no-config".into()],
+            bin,
+        );
         let opts = HerdrStartOptions {
             tag: "fish".into(),
             argv: Some(wrapped),
@@ -176,7 +195,11 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         let _ = rt.block_on(async {
             tokio::time::timeout(Duration::from_millis(300), recv_output(&mut stream)).await
         });
-        assert!(handle.try_resize_with_reports(106, 32, || Ok(Vec::new())).unwrap());
+        assert!(
+            handle
+                .try_resize_with_reports(106, 32, || Ok(Vec::new()))
+                .unwrap()
+        );
         std::thread::sleep(Duration::from_millis(60));
         handle
             .try_send_user(b"stty size; printf '%s%s\\n' FISH_COMPAT_ OK; exit 0\n".to_vec())
@@ -234,7 +257,10 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
                 tokio::time::timeout(Duration::from_millis(200), recv_output(&mut stream)).await
             }) {
                 raw_bytes.extend_from_slice(&bytes);
-                if raw_bytes.windows(b"NVIM_BOOT_OK".len()).any(|w| w == b"NVIM_BOOT_OK") {
+                if raw_bytes
+                    .windows(b"NVIM_BOOT_OK".len())
+                    .any(|w| w == b"NVIM_BOOT_OK")
+                {
                     break;
                 }
             }
@@ -249,13 +275,22 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         }
         let mut terminal = vt::VtTerminal::new(80, 24, 200).expect("VT terminal");
         let enter = b"\x1b[?1049h";
-        let switch = raw_bytes.windows(enter.len()).position(|part| part == enter)
+        let switch = raw_bytes
+            .windows(enter.len())
+            .position(|part| part == enter)
             .expect("Neovim enters the alternate screen");
         terminal.feed(&raw_bytes[..switch]);
         terminal.feed(b"\x1b[Hprimary screen");
         terminal.feed(&raw_bytes[switch..]);
-        assert_eq!(terminal.active_screen(), ghostty_vt::screen::Screen::Alternate);
-        assert!(handle.try_resize_with_reports(106, 32, || terminal.resize(106, 32, 8, 18)).unwrap());
+        assert_eq!(
+            terminal.active_screen(),
+            ghostty_vt::screen::Screen::Alternate
+        );
+        assert!(
+            handle
+                .try_resize_with_reports(106, 32, || terminal.resize(106, 32, 8, 18))
+                .unwrap()
+        );
         let resized = terminal.snapshot().expect("alternate screen snapshot");
         assert_eq!((resized.cols, resized.rows), (106, 32));
         let replayed = raw_bytes.len();
@@ -294,10 +329,15 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
 
         let tail = &raw_bytes[replayed..];
         let leave = b"\x1b[?1049l";
-        let switch = tail.windows(leave.len()).position(|part| part == leave)
+        let switch = tail
+            .windows(leave.len())
+            .position(|part| part == leave)
             .expect("Neovim leaves the alternate screen");
         terminal.feed(&tail[..switch + leave.len()]);
-        assert_eq!(terminal.active_screen(), ghostty_vt::screen::Screen::Primary);
+        assert_eq!(
+            terminal.active_screen(),
+            ghostty_vt::screen::Screen::Primary
+        );
         let primary = terminal.snapshot().expect("restored primary screen");
         assert!(primary.lines.iter().any(|row| {
             let text: String = row.iter().map(|cell| cell.text.as_str()).collect();
@@ -306,11 +346,15 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
 
         let text = String::from_utf8_lossy(&raw_bytes);
         assert!(
-            raw_bytes.windows(b"\x1b[?1049h".len()).any(|w| w == b"\x1b[?1049h"),
+            raw_bytes
+                .windows(b"\x1b[?1049h".len())
+                .any(|w| w == b"\x1b[?1049h"),
             "expected alt-screen enter sequence from nvim"
         );
         assert!(
-            raw_bytes.windows(b"\x1b[?1049l".len()).any(|w| w == b"\x1b[?1049l"),
+            raw_bytes
+                .windows(b"\x1b[?1049l".len())
+                .any(|w| w == b"\x1b[?1049l"),
             "expected alt-screen exit sequence from nvim"
         );
         assert!(

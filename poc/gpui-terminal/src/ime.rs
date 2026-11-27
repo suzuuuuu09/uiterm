@@ -158,7 +158,8 @@ impl ImeBuffer {
             .next_back()
             .map(|(idx, _)| idx)
             .unwrap_or(0);
-        self.content.replace_range(prev..self.selected_range.start, "");
+        self.content
+            .replace_range(prev..self.selected_range.start, "");
         self.selected_range = prev..prev;
         self.marked_range = None;
         self.record(ImeEventKind::Backspace);

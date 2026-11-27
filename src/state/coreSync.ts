@@ -342,12 +342,7 @@ export function applyCoreEvent(
         : current.sessions;
       const nextAgentStates = {
         ...current.agentStates,
-        [event.terminal]: agentStateFromStatusRecord(
-          event.terminal,
-          data.status,
-          turn,
-          nowMs,
-        ),
+        [event.terminal]: agentStateFromStatusRecord(event.terminal, data.status, turn, nowMs),
       };
       return { sessions: nextSessions, agentStates: nextAgentStates, lastSeq: nextSeq };
     }

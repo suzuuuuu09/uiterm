@@ -14,9 +14,7 @@ use gpui::{
 };
 
 use crate::fonts::{DEFAULT_LINE_HEIGHT, FontPreset, build_terminal_font_styled};
-use crate::vt::{
-    RenderFrameMeta, ScreenColorsSnapshot, StyledCell, VtTerminal, extract_row_cells,
-};
+use crate::vt::{RenderFrameMeta, ScreenColorsSnapshot, StyledCell, VtTerminal, extract_row_cells};
 
 const MAX_CACHED_ROWS: usize = 128;
 const SELECTION_BG_HSLA: fn() -> Hsla = || hsla(217.0 / 360.0, 0.91, 0.60, 0.30);
@@ -186,17 +184,26 @@ pub fn hash_styled_cells(cells: &[StyledCell]) -> u64 {
             | (((c.underline as u32) & 0xf) << 8);
         h = fnv1a_u32(h, flags);
         if let Some((r, g, b)) = c.fg_rgb {
-            h = fnv1a_u32(h, 0x0100_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32);
+            h = fnv1a_u32(
+                h,
+                0x0100_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
+            );
         } else {
             h = fnv1a_mix(h, 0);
         }
         if let Some((r, g, b)) = c.bg_rgb {
-            h = fnv1a_u32(h, 0x0100_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32);
+            h = fnv1a_u32(
+                h,
+                0x0100_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
+            );
         } else {
             h = fnv1a_mix(h, 0);
         }
         if let Some((r, g, b)) = c.underline_rgb {
-            h = fnv1a_u32(h, 0x0100_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32);
+            h = fnv1a_u32(
+                h,
+                0x0100_0000 | ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
+            );
         } else {
             h = fnv1a_mix(h, 0);
         }
@@ -253,7 +260,10 @@ impl RowShapeCache {
 
     pub fn estimated_bytes(&self) -> usize {
         let mut seen = HashSet::new();
-        let payload_bytes: usize = self.by_row_id.values().map(|entry| &entry.row)
+        let payload_bytes: usize = self
+            .by_row_id
+            .values()
+            .map(|entry| &entry.row)
             .chain(self.viewport_rows.iter().flatten())
             .filter(|row| seen.insert(Arc::as_ptr(row)))
             .map(|row| row.estimated_bytes)
@@ -462,12 +472,8 @@ impl RowShapeCache {
                     let sel = row.selection().ok().flatten().map(|s| (s.start_x, s.end_x));
                     self.viewport_selections[y] = sel;
 
-                    let cells = extract_row_cells(
-                        row,
-                        cell_iter,
-                        &meta.colors,
-                        &mut self.grapheme_buf,
-                    )?;
+                    let cells =
+                        extract_row_cells(row, cell_iter, &meta.colors, &mut self.grapheme_buf)?;
 
                     if use_row_id_cache {
                         let row_id = row.id().ok();
@@ -962,7 +968,9 @@ pub fn paint_terminal_frame(
         && sb.len > 0
     {
         let track_h = f32::from(content_bounds.size.height);
-        let thumb_h = ((sb.len as f32 / sb.total as f32) * track_h).max(18.0).min(track_h);
+        let thumb_h = ((sb.len as f32 / sb.total as f32) * track_h)
+            .max(18.0)
+            .min(track_h);
         let max_offset = (sb.total - sb.len).max(1) as f32;
         let ratio = (sb.offset as f32 / max_offset).clamp(0.0, 1.0);
         let thumb_y = f32::from(content_bounds.top()) + ratio * (track_h - thumb_h);
@@ -985,7 +993,10 @@ pub fn paint_terminal_frame(
         } else {
             cursor.col
         };
-        let cx_pos = point(origin.x + cw * cursor_col as f32, origin.y + rh * cursor.row as f32);
+        let cx_pos = point(
+            origin.x + cw * cursor_col as f32,
+            origin.y + rh * cursor.row as f32,
+        );
         let cw_cells = if cursor.at_wide_tail { cw * 2.0 } else { cw };
 
         if !window_active || matches!(cursor.visual_style, CursorVisualStyle::BlockHollow) {
@@ -999,7 +1010,10 @@ pub fn paint_terminal_frame(
                 CursorVisualStyle::Block => {
                     window.paint_quad(fill(
                         Bounds::new(cx_pos, size(cw_cells, rh)),
-                        Hsla { a: 0.45, ..rgb(cursor_color_u32).into() },
+                        Hsla {
+                            a: 0.45,
+                            ..rgb(cursor_color_u32).into()
+                        },
                     ));
                 }
                 CursorVisualStyle::Bar => {
@@ -1010,7 +1024,10 @@ pub fn paint_terminal_frame(
                 }
                 CursorVisualStyle::Underline => {
                     window.paint_quad(fill(
-                        Bounds::new(point(cx_pos.x, cx_pos.y + rh - px(2.0)), size(cw_cells, px(2.0))),
+                        Bounds::new(
+                            point(cx_pos.x, cx_pos.y + rh - px(2.0)),
+                            size(cw_cells, px(2.0)),
+                        ),
                         rgb(cursor_color_u32),
                     ));
                 }
@@ -1105,7 +1122,10 @@ pub fn paint_terminal_frame(
 
         let sel_x = shaped_preedit.x_for_index(ime_state.selected_range.end.min(preedit.len()));
         window.paint_quad(fill(
-            Bounds::new(point(draw_origin.x + sel_x, draw_origin.y), size(px(2.0), rh)),
+            Bounds::new(
+                point(draw_origin.x + sel_x, draw_origin.y),
+                size(px(2.0), rh),
+            ),
             rgb(0x22c55e),
         ));
 
@@ -1125,17 +1145,22 @@ mod tests {
     #[test]
     fn cache_estimate_counts_shared_and_viewport_only_rows_once() {
         let mut cache = RowShapeCache::new(RenderCacheMode::DirtyRowCache);
-        let row = |estimated_bytes| Arc::new(CachedShapedRow {
-            bg_quads: Vec::new(),
-            shaped_spans: Vec::new(),
-            estimated_bytes,
-        });
+        let row = |estimated_bytes| {
+            Arc::new(CachedShapedRow {
+                bg_quads: Vec::new(),
+                shaped_spans: Vec::new(),
+                estimated_bytes,
+            })
+        };
         let shared = row(100);
-        cache.by_row_id.insert(RowId([1, 0]), CachedRowEntry {
-            generation: 0,
-            content_hash: 0,
-            row: shared.clone(),
-        });
+        cache.by_row_id.insert(
+            RowId([1, 0]),
+            CachedRowEntry {
+                generation: 0,
+                content_hash: 0,
+                row: shared.clone(),
+            },
+        );
         cache.viewport_rows = vec![Some(shared), Some(row(200))];
         let overhead = std::mem::size_of::<(RowId, CachedRowEntry)>()
             + cache.viewport_rows.capacity() * std::mem::size_of::<Option<Arc<CachedShapedRow>>>();
@@ -1168,7 +1193,10 @@ mod tests {
             strikethrough: false,
             overline: false,
         };
-        assert_eq!(resolve_cell_colors(&dim, &colors), (0xf4f4f5, Some(0x406090)));
+        assert_eq!(
+            resolve_cell_colors(&dim, &colors),
+            (0xf4f4f5, Some(0x406090))
+        );
 
         let hidden = StyledCell {
             invisible: true,
@@ -1262,7 +1290,8 @@ mod tests {
             let mut it = ri.update(snap).unwrap();
             let mut y = 0;
             while let Some(r) = it.next() {
-                let cells = extract_row_cells(r, ci, &ScreenColorsSnapshot::from_snapshot(snap), &mut buf)?;
+                let cells =
+                    extract_row_cells(r, ci, &ScreenColorsSnapshot::from_snapshot(snap), &mut buf)?;
                 let h = hash_styled_cells(&cells);
                 if y == 2 {
                     row2_hash = h;
@@ -1284,10 +1313,16 @@ mod tests {
                 let cells = extract_row_cells(r, ci, &meta.colors, &mut buf)?;
                 let h = hash_styled_cells(&cells);
                 if y == 1 {
-                    assert_eq!(h, row2_hash, "unmodified scrolled row must keep identical content hash");
+                    assert_eq!(
+                        h, row2_hash,
+                        "unmodified scrolled row must keep identical content hash"
+                    );
                 } else if y == 2 {
                     assert_eq!(r.id().ok(), row3_id);
-                    assert_ne!(h, row3_hash, "edited-then-scrolled row must invalidate content hash");
+                    assert_ne!(
+                        h, row3_hash,
+                        "edited-then-scrolled row must invalidate content hash"
+                    );
                 }
                 y += 1;
             }
