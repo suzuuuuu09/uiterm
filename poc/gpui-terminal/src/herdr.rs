@@ -172,12 +172,8 @@ fn create_private_dir(tag: &str) -> io::Result<PathBuf> {
     let pid = std::process::id();
     // Keep Unix domain socket path well below macOS SUN_LEN (104 bytes).
     let dir = PathBuf::from(format!("/tmp/u-gp-{tag}-{pid}-{seq}"));
-    std::fs::create_dir_all(&dir)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
-    }
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
     Ok(dir)
 }
 
@@ -285,7 +281,7 @@ impl Default for HerdrStartOptions {
 pub struct HerdrHandle {
     pub attach_channel: u32,
     pub automatic_input_supported: bool,
-    writer_tx: mpsc::Sender<Frame>,
+    writer_tx: mpsc::Sender<Vec<Frame>>,
 }
 
 impl HerdrHandle {
@@ -293,8 +289,11 @@ impl HerdrHandle {
         if self.attach_channel == 0 || bytes.is_empty() {
             return Ok(());
         }
+        if bytes.len() > MAX_PAYLOAD_LEN {
+            return Err("terminal input exceeds frame size".to_string());
+        }
         self.writer_tx
-            .try_send(Frame::data(self.attach_channel, bytes))
+            .try_send(vec![Frame::data(self.attach_channel, bytes)])
             .map_err(|e| format!("herdr user send failed: {e}"))
     }
 
@@ -307,17 +306,30 @@ impl HerdrHandle {
             return Err("automatic_input not negotiated".to_string());
         }
         self.writer_tx
-            .try_send(Frame::automatic_input(self.attach_channel, bytes))
+            .try_send(vec![Frame::automatic_input(self.attach_channel, bytes)])
             .map_err(|e| format!("herdr automatic send failed: {e}"))
     }
 
-    pub fn try_send_resize(&self, cols: u16, rows: u16) -> Result<(), String> {
-        if self.attach_channel == 0 || cols == 0 || rows == 0 {
-            return Ok(());
+    pub fn try_resize_with_reports(
+        &self,
+        cols: u16,
+        rows: u16,
+        resize: impl FnOnce() -> Result<Vec<Vec<u8>>, String>,
+    ) -> Result<bool, String> {
+        let permit = match self.writer_tx.try_reserve() {
+            Ok(permit) => permit,
+            Err(mpsc::error::TrySendError::Full(())) => return Ok(false),
+            Err(mpsc::error::TrySendError::Closed(())) => {
+                return Err("herdr writer closed".to_string());
+            }
+        };
+        let reports = resize()?;
+        let mut frames = vec![Frame::resize(self.attach_channel, cols, rows)];
+        if self.automatic_input_supported {
+            frames.extend(reports.into_iter().map(|bytes| Frame::automatic_input(self.attach_channel, bytes)));
         }
-        self.writer_tx
-            .try_send(Frame::resize(self.attach_channel, cols, rows))
-            .map_err(|e| format!("herdr resize send failed: {e}"))
+        permit.send(frames);
+        Ok(true)
     }
 
     pub fn try_send_focus(&self, focused: bool) -> Result<(), String> {
@@ -325,7 +337,7 @@ impl HerdrHandle {
             return Ok(());
         }
         self.writer_tx
-            .try_send(Frame::focus(self.attach_channel, focused))
+            .try_send(vec![Frame::focus(self.attach_channel, focused)])
             .map_err(|e| format!("herdr focus send failed: {e}"))
     }
 
@@ -334,7 +346,7 @@ impl HerdrHandle {
             return Ok(());
         }
         self.writer_tx
-            .try_send(Frame::credit(self.attach_channel, bytes))
+            .try_send(vec![Frame::credit(self.attach_channel, bytes)])
             .map_err(|e| format!("herdr credit send failed: {e}"))
     }
 }
@@ -363,13 +375,35 @@ impl HerdrOutputStream {
         Some(ev)
     }
 
+    pub async fn recv_uncredited(&mut self) -> Option<SessionOutput> {
+        self.rx.recv().await
+    }
+
+    pub fn try_recv_uncredited(&mut self) -> Option<SessionOutput> {
+        self.rx.try_recv().ok()
+    }
+
+    pub async fn acknowledge(&self, bytes: u32, replies: Vec<Vec<u8>>) -> Result<(), String> {
+        let channel = self.handle.attach_channel;
+        let mut frames = Vec::new();
+        if self.handle.automatic_input_supported {
+            frames.extend(replies.into_iter().map(|reply| Frame::automatic_input(channel, reply)));
+        }
+        frames.push(Frame::credit(channel, bytes));
+        self.handle.writer_tx
+            .send(frames)
+            .await
+            .map_err(|_| "herdr writer closed".to_string())
+    }
+
     fn note_consumed(&mut self, len: usize) {
         self.pending_ack_bytes = self
             .pending_ack_bytes
             .saturating_add(len.min(u32::MAX as usize) as u32);
         if self.pending_ack_bytes >= CREDIT_ACK_THRESHOLD {
-            let credit = std::mem::take(&mut self.pending_ack_bytes);
-            let _ = self.handle.try_send_credit(credit);
+            if self.handle.try_send_credit(self.pending_ack_bytes).is_ok() {
+                self.pending_ack_bytes = 0;
+            }
         }
     }
 }
@@ -410,10 +444,6 @@ impl HerdrGuard {
         self.session.as_ref().map(|s| s.core_pid).unwrap_or(0)
     }
 
-    pub fn socket_path(&self) -> Option<&Path> {
-        self.session.as_ref().map(|s| s.socket_path.as_path())
-    }
-
     pub fn stop_blocking(&mut self) {
         if let Some(mut session) = self.session.take() {
             if let Some(rt) = &self.runtime {
@@ -443,7 +473,7 @@ pub struct IsolatedHerdrSession {
     pub core_pid: u32,
     pub attach_channel: u32,
     pub automatic_input_supported: bool,
-    writer_tx: mpsc::Sender<Frame>,
+    writer_tx: mpsc::Sender<Vec<Frame>>,
     output_rx: Option<mpsc::Receiver<SessionOutput>>,
     stopped: bool,
 }
@@ -469,7 +499,7 @@ impl IsolatedHerdrSession {
         .await
     }
 
-    pub async fn start_with_options(mut opts: HerdrStartOptions) -> Result<Self, String> {
+    pub async fn start_with_options(opts: HerdrStartOptions) -> Result<Self, String> {
         let binary = resolve_herdr_core_bin();
         let base_dir =
             create_private_dir(&opts.tag).map_err(|e| format!("create private dir: {e}"))?;
@@ -488,15 +518,46 @@ impl IsolatedHerdrSession {
             .map_err(|e| format!("spawn herdr-core ({}): {e}", binary.display()))?;
         let core_pid = child.id().unwrap_or(0);
 
+        let attached = tokio::time::timeout(Duration::from_secs(5), Self::attach(&socket_path, opts)).await;
+        let (attach_channel, automatic_input_supported, writer_tx, output_rx) = match attached {
+            Ok(Ok(attachment)) => attachment,
+            result => {
+                let mut child = child;
+                stop_core(&binary, &session_name, &base_dir, &socket_path, &mut child).await;
+                return Err(match result {
+                    Ok(Err(error)) => error,
+                    _ => "herdr startup timed out".to_string(),
+                });
+            }
+        };
+        dir_cleanup.disarm();
+        Ok(Self {
+            binary,
+            session_name,
+            base_dir,
+            socket_path,
+            child: Some(child),
+            core_pid,
+            attach_channel,
+            automatic_input_supported,
+            writer_tx,
+            output_rx: Some(output_rx),
+            stopped: false,
+        })
+    }
+
+    async fn attach(
+        socket_path: &Path,
+        mut opts: HerdrStartOptions,
+    ) -> Result<(u32, bool, mpsc::Sender<Vec<Frame>>, mpsc::Receiver<SessionOutput>), String> {
         let deadline = Instant::now() + Duration::from_secs(5);
         let stream = loop {
-            match UnixStream::connect(&socket_path).await {
+            match UnixStream::connect(socket_path).await {
                 Ok(s) => break s,
                 Err(_) if Instant::now() < deadline => {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
                 Err(e) => {
-                    let _ = std::fs::remove_dir_all(&base_dir);
                     return Err(format!("connect herdr-core socket: {e}"));
                 }
             }
@@ -644,13 +705,15 @@ impl IsolatedHerdrSession {
             }
         };
 
-        let (writer_tx, mut writer_rx) = mpsc::channel::<Frame>(512);
+        let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<Frame>>(512);
         let (output_tx, output_rx) = mpsc::channel::<SessionOutput>(4096);
 
         tokio::spawn(async move {
-            while let Some(frame) = writer_rx.recv().await {
-                if write_frame(&mut write_half, &frame).await.is_err() {
-                    break;
+            while let Some(frames) = writer_rx.recv().await {
+                for frame in frames {
+                    if write_frame(&mut write_half, &frame).await.is_err() {
+                        return;
+                    }
                 }
             }
         });
@@ -703,20 +766,7 @@ impl IsolatedHerdrSession {
             }
         });
 
-        dir_cleanup.disarm();
-        Ok(Self {
-            binary,
-            session_name,
-            base_dir,
-            socket_path,
-            child: Some(child),
-            core_pid,
-            attach_channel,
-            automatic_input_supported: automatic_input_supported && attach_auto_input,
-            writer_tx,
-            output_rx: Some(output_rx),
-            stopped: false,
-        })
+        Ok::<_, String>((attach_channel, automatic_input_supported && attach_auto_input, writer_tx, output_rx))
     }
 
     pub fn handle(&self) -> HerdrHandle {
@@ -761,7 +811,7 @@ impl IsolatedHerdrSession {
             return Ok(());
         }
         self.writer_tx
-            .send(Frame::data(self.attach_channel, bytes))
+            .send(vec![Frame::data(self.attach_channel, bytes)])
             .await
             .map_err(|_| "herdr writer closed".to_string())
     }
@@ -772,7 +822,7 @@ impl IsolatedHerdrSession {
             return Ok(());
         }
         self.writer_tx
-            .send(Frame::resize(self.attach_channel, cols, rows))
+            .send(vec![Frame::resize(self.attach_channel, cols, rows)])
             .await
             .map_err(|_| "herdr writer closed".to_string())
     }
@@ -783,7 +833,7 @@ impl IsolatedHerdrSession {
             return Ok(());
         }
         self.writer_tx
-            .send(Frame::focus(self.attach_channel, focused))
+            .send(vec![Frame::focus(self.attach_channel, focused)])
             .await
             .map_err(|_| "herdr writer closed".to_string())
     }
@@ -797,7 +847,7 @@ impl IsolatedHerdrSession {
             if credit > 0 {
                 let _ = self
                     .writer_tx
-                    .send(Frame::credit(self.attach_channel, credit))
+                    .send(vec![Frame::credit(self.attach_channel, credit)])
                     .await;
             }
         }
@@ -809,22 +859,24 @@ impl IsolatedHerdrSession {
             return;
         }
         self.stopped = true;
-        if self.socket_path.exists() {
-            let _ = Command::from(Self::build_core_cmd(
-                &self.binary,
-                &self.session_name,
-                &self.base_dir,
-                &self.socket_path,
-                &["--json", "server", "stop"],
-            ))
-            .output()
-            .await;
-        }
         if let Some(child) = &mut self.child {
-            let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
-            let _ = child.start_kill();
+            stop_core(&self.binary, &self.session_name, &self.base_dir, &self.socket_path, child).await;
         }
         let _ = std::fs::remove_dir_all(&self.base_dir);
+    }
+}
+
+async fn stop_core(binary: &Path, session: &str, base_dir: &Path, socket: &Path, child: &mut Child) {
+    if socket.exists() {
+        let mut command = Command::from(IsolatedHerdrSession::build_core_cmd(
+            binary, session, base_dir, socket, &["--json", "server", "stop"],
+        ));
+        command.kill_on_drop(true);
+        let _ = tokio::time::timeout(Duration::from_secs(2), command.status()).await;
+    }
+    if !matches!(tokio::time::timeout(Duration::from_secs(2), child.wait()).await, Ok(Ok(_))) {
+        let _ = child.start_kill();
+        let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
     }
 }
 
@@ -832,16 +884,6 @@ impl Drop for IsolatedHerdrSession {
     fn drop(&mut self) {
         if !self.stopped {
             self.stopped = true;
-            if self.socket_path.exists() {
-                let _ = Self::build_core_cmd(
-                    &self.binary,
-                    &self.session_name,
-                    &self.base_dir,
-                    &self.socket_path,
-                    &["--json", "server", "stop"],
-                )
-                .status();
-            }
             if let Some(child) = &mut self.child {
                 let _ = child.start_kill();
             }
@@ -853,6 +895,42 @@ impl Drop for IsolatedHerdrSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn resize_and_report_wait_for_space_and_keep_wire_order() {
+        let (writer_tx, mut writer_rx) = mpsc::channel(1);
+        let handle = HerdrHandle {
+            attach_channel: 7,
+            automatic_input_supported: true,
+            writer_tx,
+        };
+        handle.try_send_user(b"x".to_vec()).unwrap();
+        assert!(!handle.try_resize_with_reports(80, 24, || panic!("resize applied too early")).unwrap());
+        assert_eq!(writer_rx.recv().await.unwrap(), [Frame::data(7, b"x".to_vec())]);
+
+        let report = b"size report".to_vec();
+        assert!(handle.try_resize_with_reports(80, 24, || Ok(vec![report.clone()])).unwrap());
+        assert_eq!(
+            writer_rx.recv().await.unwrap(),
+            [Frame::resize(7, 80, 24), Frame::automatic_input(7, report)],
+        );
+    }
+
+    #[tokio::test]
+    async fn acknowledging_consumed_output_waits_for_space() {
+        let (writer_tx, mut writer_rx) = mpsc::channel(1);
+        let (_, rx) = mpsc::channel(1);
+        let handle = HerdrHandle { attach_channel: 7, automatic_input_supported: true, writer_tx };
+        let stream = HerdrOutputStream { rx, handle, pending_ack_bytes: 0 };
+        stream.handle.try_send_user(b"x".to_vec()).unwrap();
+
+        let ack = stream.acknowledge(42, Vec::new());
+        tokio::pin!(ack);
+        assert!(tokio::time::timeout(Duration::from_millis(1), &mut ack).await.is_err());
+        writer_rx.recv().await.unwrap();
+        ack.await.unwrap();
+        assert_eq!(writer_rx.recv().await.unwrap(), [Frame::credit(7, 42)]);
+    }
 
     #[test]
     fn close_info_handles_numeric_and_string_signals() {

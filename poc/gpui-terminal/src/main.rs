@@ -8,7 +8,6 @@ mod vt;
 
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fonts::{
@@ -69,15 +68,6 @@ const TERM_PAD_Y: f32 = 6.0;
 const SYNC_HOLD_TIMEOUT: Duration = Duration::from_millis(100);
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
-struct CleanupMeta {
-    binary: PathBuf,
-    session_name: String,
-    base_dir: PathBuf,
-    socket_path: PathBuf,
-    core_pid: u32,
-}
-
-static ACTIVE_CLEANUP: OnceLock<Mutex<Option<CleanupMeta>>> = OnceLock::new();
 #[cfg(unix)]
 static mut SIGNAL_PIPE_WR: libc::c_int = -1;
 
@@ -92,14 +82,18 @@ extern "C" fn handle_term_signal(sig: libc::c_int) {
 }
 
 #[cfg(unix)]
-fn install_signal_cleanup_watcher() {
+fn install_signal_cleanup_watcher() -> Option<tokio::sync::oneshot::Receiver<()>> {
     let mut fds = [0 as libc::c_int; 2];
     if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-        return;
+        return None;
     }
     let read_fd = fds[0];
     let write_fd = fds[1];
     unsafe {
+        for fd in fds {
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        }
+        libc::fcntl(write_fd, libc::F_SETFL, libc::O_NONBLOCK);
         SIGNAL_PIPE_WR = write_fd;
         let mut sa: libc::sigaction = std::mem::zeroed();
         sa.sa_sigaction = handle_term_signal as *const () as usize;
@@ -108,71 +102,17 @@ fn install_signal_cleanup_watcher() {
         libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
         libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
     }
+    let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::Builder::new()
         .name("sig-cleanup".into())
         .spawn(move || {
-            let mut sig_byte = 0u8;
-            let n = unsafe { libc::read(read_fd, (&raw mut sig_byte).cast(), 1) };
-            if n > 0 {
-                if let Some(lock) = ACTIVE_CLEANUP.get()
-                    && let Ok(mut guard) = lock.lock()
-                    && let Some(meta) = guard.take()
-                {
-                    if meta.socket_path.exists() {
-                        let _ = std::process::Command::new(&meta.binary)
-                            .args(["--json", "server", "stop"])
-                            .env_remove("HC_SCOPE")
-                            .env("HC_RUNTIME", "1")
-                            .env("HC_LAUNCHD_DIRECT", std::process::id().to_string())
-                            .env_remove("HC_LAUNCHD_DETACH")
-                            .env("HC_SESSION", &meta.session_name)
-                            .env("HC_SOCKET", &meta.socket_path)
-                            .env("XDG_STATE_HOME", meta.base_dir.join("st"))
-                            .env("XDG_CONFIG_HOME", meta.base_dir.join("cf"))
-                            .env("XDG_RUNTIME_DIR", meta.base_dir.join("rt"))
-                            .status();
-                    }
-                    if meta.core_pid > 0 {
-                        unsafe {
-                            libc::kill(meta.core_pid as libc::pid_t, libc::SIGTERM);
-                        }
-                    }
-                    let _ = std::fs::remove_dir_all(&meta.base_dir);
-                }
-                unsafe {
-                    libc::signal(sig_byte as libc::c_int, libc::SIG_DFL);
-                    libc::raise(sig_byte as libc::c_int);
-                }
+            let mut signal = 0u8;
+            if unsafe { libc::read(read_fd, (&raw mut signal).cast(), 1) } > 0 {
+                let _ = tx.send(());
             }
         })
-        .ok();
-}
-
-fn register_active_cleanup(guard: &HerdrGuard) {
-    let Some(socket_path) = guard.socket_path().map(PathBuf::from) else {
-        return;
-    };
-    let Some(base_dir) = socket_path.parent().map(PathBuf::from) else {
-        return;
-    };
-    let lock = ACTIVE_CLEANUP.get_or_init(|| Mutex::new(None));
-    if let Ok(mut slot) = lock.lock() {
-        *slot = Some(CleanupMeta {
-            binary: herdr::resolve_herdr_core_bin(),
-            session_name: format!("gpui-sig-{}", std::process::id()),
-            base_dir,
-            socket_path,
-            core_pid: guard.core_pid(),
-        });
-    }
-}
-
-fn clear_active_cleanup() {
-    if let Some(lock) = ACTIVE_CLEANUP.get()
-        && let Ok(mut slot) = lock.lock()
-    {
-        *slot = None;
-    }
+        .expect("start signal cleanup watcher");
+    Some(rx)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -429,8 +369,10 @@ impl LiveTerminalView {
                 } else {
                     this.ime.on_window_blur();
                 }
-                if let Some(handle) = &this.herdr_handle {
-                    let _ = handle.try_send_focus(active);
+                if let Some(handle) = &this.herdr_handle
+                    && let Err(error) = handle.try_send_focus(active)
+                {
+                    this.session_error = Some(error);
                 }
                 cx.notify();
             }
@@ -486,12 +428,11 @@ impl LiveTerminalView {
 
         match HerdrGuard::start_live(opts) {
             Ok((guard, handle, mut output_stream)) => {
-                register_active_cleanup(&guard);
                 let _ = handle.try_send_focus(self.window_active);
                 self.herdr_guard = Some(guard);
                 self.herdr_handle = Some(handle.clone());
                 let task = cx.spawn(async move |this, cx| {
-                    Self::pump_pty_output(this, &mut output_stream, handle, cx).await;
+                    Self::pump_pty_output(this, &mut output_stream, cx).await;
                 });
                 self._output_task = Some(task);
             }
@@ -504,12 +445,11 @@ impl LiveTerminalView {
     async fn pump_pty_output(
         this: gpui::WeakEntity<Self>,
         stream: &mut HerdrOutputStream,
-        handle: HerdrHandle,
         cx: &mut gpui::AsyncApp,
     ) {
         const MAX_BATCH_BYTES: usize = 256 * 1024;
         loop {
-            let Some(first) = stream.recv().await else {
+            let Some(first) = stream.recv_uncredited().await else {
                 break;
             };
             let mut data_buf: Vec<u8> = Vec::new();
@@ -522,7 +462,7 @@ impl LiveTerminalView {
 
             if closed.is_none() {
                 while data_buf.len() < MAX_BATCH_BYTES {
-                    match stream.try_recv() {
+                    match stream.try_recv_uncredited() {
                         Some(SessionOutput::Data(bytes)) => data_buf.extend_from_slice(&bytes),
                         Some(SessionOutput::Closed(info)) => {
                             closed = Some(info);
@@ -533,12 +473,11 @@ impl LiveTerminalView {
                 }
             }
 
-            let updated = this.update(cx, |view, cx| {
+            let Ok(replies) = this.update(cx, |view, cx| {
+                let mut replies = Vec::new();
                 if !data_buf.is_empty() {
                     let events = view.vt.feed(&data_buf);
-                    for reply in events.pty_writes {
-                        let _ = handle.try_send_automatic(reply);
-                    }
+                    replies = events.pty_writes;
                     if let Some(title) = events.title_changed
                         && !title.is_empty()
                     {
@@ -554,9 +493,17 @@ impl LiveTerminalView {
                     view.session_closed = Some(info);
                     cx.notify();
                 }
-            });
-            if updated.is_err() {
+                replies
+            }) else {
                 break;
+            };
+            if !data_buf.is_empty()
+                && let Err(error) = stream.acknowledge(data_buf.len() as u32, replies).await
+            {
+                let _ = this.update(cx, |view, cx| {
+                    view.session_error = Some(error);
+                    cx.notify();
+                });
             }
             if stream_closed(&this, cx) {
                 break;
@@ -608,7 +555,6 @@ impl LiveTerminalView {
         if let Some(mut guard) = self.herdr_guard.take() {
             guard.stop_blocking();
         }
-        clear_active_cleanup();
     }
 
     fn send_user_bytes(&mut self, bytes: Vec<u8>) {
@@ -617,7 +563,7 @@ impl LiveTerminalView {
         }
         self.cursor_blink_on = true;
         if let Some(handle) = &self.herdr_handle {
-            let _ = handle.try_send_user(bytes);
+            self.session_error = handle.try_send_user(bytes).err();
         }
     }
 
@@ -932,7 +878,7 @@ impl LiveTerminalView {
         build_terminal_font(self.style.preset, self.style.nerd_font_fallback)
     }
 
-    fn sync_resize_if_needed(&mut self, content_bounds: Bounds<Pixels>, cell_w: f32, row_h: f32) {
+    fn sync_resize_if_needed(&mut self, content_bounds: Bounds<Pixels>, cell_w: f32, row_h: f32) -> bool {
         let usable_w = f32::from(content_bounds.size.width).max(cell_w);
         let usable_h = f32::from(content_bounds.size.height).max(row_h);
         let new_cols = (usable_w / cell_w).floor().max(1.0) as u16;
@@ -940,18 +886,21 @@ impl LiveTerminalView {
         let cell_w_u32 = (cell_w.round() as u32).max(1);
         let cell_h_u32 = (row_h.round() as u32).max(1);
 
-        if (new_cols != self.vt.cols() || new_rows != self.vt.rows())
-            && let Ok(pty_writes) = self.vt.resize(new_cols, new_rows, cell_w_u32, cell_h_u32)
-        {
-            self.cache.clear();
-            if let Some(handle) = &self.herdr_handle {
-                // Always deliver FRAME_RESIZE before Mode 2048 automatic reports.
-                let _ = handle.try_send_resize(new_cols, new_rows);
-                for report in pty_writes {
-                    let _ = handle.try_send_automatic(report);
-                }
-            }
+        if new_cols == self.vt.cols() && new_rows == self.vt.rows() {
+            return false;
         }
+
+        let mut resize = || self.vt.resize(new_cols, new_rows, cell_w_u32, cell_h_u32);
+        let result = match &self.herdr_handle {
+            Some(handle) => handle.try_resize_with_reports(new_cols, new_rows, resize),
+            None => resize().map(|_| true),
+        };
+        match result {
+            Ok(true) => self.cache.clear(),
+            Ok(false) => return true,
+            Err(error) => self.session_error = Some(error),
+        }
+        false
     }
 }
 
@@ -1239,7 +1188,12 @@ impl Element for LiveTerminalElement {
             view.last_content_bounds = Some(content_bounds);
             view.last_cell_w = cell_w;
             view.last_row_h = row_h;
-            view.sync_resize_if_needed(content_bounds, cell_w, row_h);
+            if view.sync_resize_if_needed(content_bounds, cell_w, row_h) {
+                let view = self.view.downgrade();
+                window.on_next_frame(move |_, cx| {
+                    let _ = view.update(cx, |_, cx| cx.notify());
+                });
+            }
             let ts = window.text_system();
             let mut cache = std::mem::replace(&mut view.cache, RowShapeCache::new(RenderCacheMode::Uncached));
             let res = cache.prepare_frame(&mut view.vt, &view.style, scale_factor, ts).ok();
@@ -1639,6 +1593,15 @@ impl GpuiPocView {
             }
         })
         .detach();
+
+        cx.on_app_quit(|this, _cx| {
+            if let Some(bench) = &mut this.bench
+                && let Some(mut guard) = bench.herdr_guard.take()
+            {
+                guard.stop_blocking();
+            }
+            std::future::ready(())
+        }).detach();
 
         let bench = if cfg.mode == RunMode::BenchWindow {
             Some(Self::init_bench_state(cfg, started_at))
@@ -2194,7 +2157,6 @@ impl GpuiPocView {
         if qa_home.exists() {
             let _ = std::fs::remove_dir_all(qa_home);
         }
-        clear_active_cleanup();
         cx.quit();
     }
 
@@ -3010,12 +2972,21 @@ fn main() {
     }
 
     #[cfg(unix)]
-    install_signal_cleanup_watcher();
+    let quit_signal = install_signal_cleanup_watcher();
 
     let cfg = CliConfig::parse(&args);
     let started_at = Instant::now();
 
     Application::new().run(move |cx: &mut App| {
+        #[cfg(unix)]
+        if let Some(signal) = quit_signal {
+            cx.spawn(async move |cx| {
+                if signal.await.is_ok() {
+                    let _ = cx.update(|cx| cx.quit());
+                }
+            }).detach();
+        }
+
         if cfg.mode == RunMode::ProbeUi {
             cx.bind_keys([
                 KeyBinding::new("backspace", ImeBackspace, Some("GpuiPoc")),

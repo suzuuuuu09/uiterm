@@ -118,7 +118,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         let _ = rt.block_on(async {
             tokio::time::timeout(Duration::from_millis(300), stream.recv()).await
         });
-        handle.try_send_resize(106, 32).expect("resize");
+        assert!(handle.try_resize_with_reports(106, 32, || Ok(Vec::new())).unwrap());
         std::thread::sleep(Duration::from_millis(60));
         handle
             .try_send_user(b"stty size; printf '%s%s\\n' FISH_COMPAT_ OK; exit 0\n".to_vec())
@@ -187,7 +187,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         while let Some(SessionOutput::Data(bytes)) = stream.try_recv() {
             raw_bytes.extend_from_slice(&bytes);
         }
-        handle.try_send_resize(106, 32).expect("resize nvim");
+        assert!(handle.try_resize_with_reports(106, 32, || Ok(Vec::new())).unwrap());
         if raw_bytes.windows(b"\x1b[?2048h".len()).any(|w| w == b"\x1b[?2048h") {
             let _ = handle.try_send_automatic(b"\x1b[48;32;106;576;848t".to_vec());
         }
