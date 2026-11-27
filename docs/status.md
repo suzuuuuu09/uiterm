@@ -1,6 +1,6 @@
 # 開発状況
 
-2026-11-27時点。mainのPhase 2実装と未マージの調査・修正を区別する。
+2026-11-28時点。mainのPhase 2実装と未マージの調査・修正を区別する。
 
 | Phase | 状態 |
 | --- | --- |
@@ -28,4 +28,4 @@ mainの基準実装は 5ff26e0。シェル、端末描画、内部設定、PTY�
 
 ## 次の判断
 
-[ADR-0010](adr/0010-evaluate-native-gpui-terminal.md) に従い、ネイティブGUI・描画基盤のPoCを検討する。採用は未確定であり、Phase 3は保留する。[ロードマップ](plan/roadmap.md) と [MVP完成条件](plan/mvp.md#完成条件) は維持する。
+[ADR-0010](adr/0010-evaluate-native-gpui-terminal.md) のGPUI PoCはPR #4でmainにマージ済み。マージ後のアイドル負荷は [GPUI PoC検証レポート](poc/gpui-terminal.md#43-pr-4-マージ後のアイドル計測) を参照。採用は未確定であり、Phase 3は保留する。[ロードマップ](plan/roadmap.md) と [MVP完成条件](plan/mvp.md#完成条件) は維持する。
