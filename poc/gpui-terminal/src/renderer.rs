@@ -330,13 +330,7 @@ impl RowShapeCache {
             }
 
             // DirtyRowCache mode
-            let config_changed = self.config != Some(next_key) || self.viewport_rows.len() != rows_len;
-            if config_changed {
-                self.by_row_id.clear();
-                self.viewport_rows = vec![None; rows_len];
-                self.viewport_selections = vec![None; rows_len];
-                self.config = Some(next_key);
-            }
+            let config_changed = self.update_config(next_key);
             self.generation = self.generation.wrapping_add(1);
             let frame_gen = self.generation;
 
@@ -569,6 +563,18 @@ impl RowShapeCache {
             rows: prepared_rows,
             selections: prepared_selections,
         })
+    }
+
+    fn update_config(&mut self, key: CacheConfigKey) -> bool {
+        let rows = usize::from(key.rows);
+        if self.config == Some(key) && self.viewport_rows.len() == rows {
+            return false;
+        }
+        self.by_row_id.clear();
+        self.viewport_rows = vec![None; rows];
+        self.viewport_selections = vec![None; rows];
+        self.config = Some(key);
+        true
     }
 
     fn evict_old_entries(&mut self) {
@@ -1179,6 +1185,18 @@ mod tests {
     #[test]
     fn cache_eviction_bounds_memory_and_clears_on_config_change() {
         let mut cache = RowShapeCache::new(RenderCacheMode::DirtyRowCache);
+        let mut key = CacheConfigKey {
+            preset: FontPreset::Default,
+            nerd_font_fallback: true,
+            font_size_bits: 14.0_f32.to_bits(),
+            line_height_bits: DEFAULT_LINE_HEIGHT.to_bits(),
+            scale_factor_bits: 1.0_f32.to_bits(),
+            cols: 40,
+            rows: 4,
+            active_screen: 0,
+            colors_hash: 0,
+        };
+        assert!(cache.update_config(key));
         for i in 0..320u64 {
             cache.by_row_id.insert(
                 RowId([i + 1, 0]),
@@ -1198,9 +1216,21 @@ mod tests {
         assert!(!cache.by_row_id.contains_key(&RowId([1, 0])));
         assert!(cache.by_row_id.contains_key(&RowId([320, 0])));
 
-        // Clear drops everything cleanly
-        cache.clear();
+        assert!(!cache.update_config(key));
+        assert_eq!(cache.by_row_id.len(), MAX_CACHED_ROWS);
+
+        let row = cache.by_row_id[&RowId([320, 0])].row.clone();
+        cache.viewport_rows[0] = Some(row.clone());
+        cache.viewport_selections[0] = Some((0, 2));
+        key.active_screen = 1;
+        assert!(cache.update_config(key));
         assert!(cache.by_row_id.is_empty());
+        assert!(cache.viewport_rows[0].is_none());
+        assert!(cache.viewport_selections[0].is_none());
+        cache.viewport_rows[0] = Some(row);
+        key.scale_factor_bits = 2.0_f32.to_bits();
+        assert!(cache.update_config(key));
+        assert!(cache.viewport_rows[0].is_none());
 
         // Sanity check VtTerminal render_update & content_hash invalidation across edit+scroll
         let mut vt = VtTerminal::new(40, 4, DEFAULT_SCROLLBACK_LINES).unwrap();

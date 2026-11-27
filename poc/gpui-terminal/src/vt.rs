@@ -457,6 +457,31 @@ impl VtTerminal {
         false
     }
 
+    pub fn sync_hold_remaining(&self, timeout: Duration) -> Option<Duration> {
+        self.sync_hold_since.map(|since| timeout.saturating_sub(since.elapsed()))
+    }
+
+    pub fn uses_pixel_mouse_coordinates(&self) -> bool {
+        self.terminal.mode(Mode::SGR_PIXELS_MOUSE).unwrap_or(false)
+    }
+
+    pub fn mouse_encoder_position(
+        &self,
+        x: f32,
+        y: f32,
+        cell_width: f32,
+        row_height: f32,
+        size: MouseEncoderSize,
+    ) -> (f32, f32) {
+        if self.uses_pixel_mouse_coordinates() {
+            return (x, y);
+        }
+        (
+            x / cell_width.max(1.0) * size.cell_width as f32,
+            y / row_height.max(1.0) * size.cell_height as f32,
+        )
+    }
+
     pub fn is_sync_held(&self) -> bool {
         self.sync_hold_since.is_some()
     }
@@ -947,6 +972,44 @@ pub fn run_headless_vt_benchmark() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mouse_report_column_matches_a_fractional_render_grid() {
+        let mut vt = VtTerminal::new(106, 32, DEFAULT_SCROLLBACK_LINES).unwrap();
+        vt.feed(b"\x1b[?1000h\x1b[?1006h");
+        let size = MouseEncoderSize {
+            screen_width: 848,
+            screen_height: 576,
+            cell_width: 8,
+            cell_height: 18,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+        };
+        let (x, y) = vt.mouse_encoder_position(100.5 * 8.43, 9.0, 8.43, 18.0, size);
+        let report = vt.encode_mouse(
+            MouseAction::Press, Some(MouseButton::Left), Mods::empty(), x, y, true, size,
+        );
+        assert_eq!(report, b"\x1b[<0;101;1M");
+    }
+
+    #[test]
+    fn synchronized_hold_timeout_tracks_the_new_hold() {
+        let mut vt = VtTerminal::new(40, 4, DEFAULT_SCROLLBACK_LINES).unwrap();
+        let timeout = Duration::from_secs(10);
+        vt.feed(b"\x1b[?2026h");
+        assert!(vt.sync_hold_remaining(timeout).is_some());
+
+        vt.sync_hold_since = Some(Instant::now() - timeout);
+        vt.feed(b"\x1b[?2026l\x1b[?2026h");
+        assert!(!vt.release_expired_sync_hold(timeout));
+        assert!(vt.sync_hold_remaining(timeout).unwrap() > Duration::ZERO);
+
+        vt.sync_hold_since = Some(Instant::now() - timeout);
+        assert!(vt.release_expired_sync_hold(timeout));
+        assert!(vt.sync_hold_remaining(timeout).is_none());
+    }
 
     #[test]
     fn preserves_faint_and_concealed_backgrounds_and_separates_auto_replies() {

@@ -82,7 +82,7 @@ extern "C" fn handle_term_signal(sig: libc::c_int) {
 }
 
 #[cfg(unix)]
-fn install_signal_cleanup_watcher() -> Option<tokio::sync::oneshot::Receiver<()>> {
+fn install_signal_cleanup_watcher() -> Option<tokio::sync::oneshot::Receiver<u8>> {
     let mut fds = [0 as libc::c_int; 2];
     if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
         return None;
@@ -108,7 +108,7 @@ fn install_signal_cleanup_watcher() -> Option<tokio::sync::oneshot::Receiver<()>
         .spawn(move || {
             let mut signal = 0u8;
             if unsafe { libc::read(read_fd, (&raw mut signal).cast(), 1) } > 0 {
-                let _ = tx.send(());
+                let _ = tx.send(signal);
             }
         })
         .expect("start signal cleanup watcher");
@@ -289,6 +289,7 @@ struct LiveTerminalView {
     style: RenderStyleConfig,
     vt: VtTerminal,
     cache: RowShapeCache,
+    presented_frame: Option<std::rc::Rc<PreparedTerminalFrame>>,
     ime: TerminalImeState,
     herdr_guard: Option<HerdrGuard>,
     herdr_handle: Option<HerdrHandle>,
@@ -300,6 +301,7 @@ struct LiveTerminalView {
     sync_timer_armed: bool,
     pending_title: Option<String>,
     last_content_bounds: Option<Bounds<Pixels>>,
+    last_requested_grid: Option<(u16, u16)>,
     last_cell_w: f32,
     last_row_h: f32,
     last_ime_anchor: Option<Bounds<Pixels>>,
@@ -336,6 +338,7 @@ impl LiveTerminalView {
             style,
             vt,
             cache,
+            presented_frame: None,
             ime: TerminalImeState::new(),
             herdr_guard: None,
             herdr_handle: None,
@@ -347,6 +350,7 @@ impl LiveTerminalView {
             sync_timer_armed: false,
             pending_title: Some("uiterm GPUI PoC".to_string()),
             last_content_bounds: None,
+            last_requested_grid: None,
             last_cell_w: 8.43,
             last_row_h: (config.font_size * DEFAULT_LINE_HEIGHT).ceil(),
             last_ime_anchor: None,
@@ -407,6 +411,8 @@ impl LiveTerminalView {
         )
         .expect("recreate VtTerminal");
         self.cache.clear();
+        self.presented_frame = None;
+        self.last_requested_grid = None;
 
         let argv = self
             .config
@@ -427,18 +433,44 @@ impl LiveTerminalView {
         };
 
         match HerdrGuard::start_live(opts) {
-            Ok((guard, handle, mut output_stream)) => {
-                let _ = handle.try_send_focus(self.window_active);
+            Ok((guard, handle, stream)) => {
                 self.herdr_guard = Some(guard);
-                self.herdr_handle = Some(handle.clone());
-                let task = cx.spawn(async move |this, cx| {
-                    Self::pump_pty_output(this, &mut output_stream, cx).await;
-                });
-                self._output_task = Some(task);
+                self.start_output_pump(handle, stream, cx);
             }
-            Err(err) => {
-                self.session_error = Some(err);
+            Err(err) => self.session_error = Some(err),
+        }
+    }
+
+    fn start_output_pump(&mut self, handle: HerdrHandle, mut stream: HerdrOutputStream, cx: &mut Context<Self>) {
+        self.session_error = handle.try_send_focus(self.window_active).err();
+        self.herdr_handle = Some(handle);
+        self._output_task = Some(cx.spawn(async move |this, cx| {
+            Self::pump_pty_output(this, &mut stream, cx).await;
+        }));
+    }
+
+    fn reattach(&mut self, cx: &mut Context<Self>) {
+        let Some(guard) = &mut self.herdr_guard else { return };
+        self._output_task = None;
+        self.herdr_handle = None;
+        let (cols, rows) = self.last_requested_grid.unwrap_or((self.vt.cols(), self.vt.rows()));
+        let opts = HerdrStartOptions {
+            cols,
+            rows,
+            history_lines: self.config.scrollback_lines,
+            ..HerdrStartOptions::default()
+        };
+        match guard.reattach(opts) {
+            Ok((handle, stream)) => {
+                self.vt = VtTerminal::new(cols, rows, self.config.scrollback_lines)
+                    .expect("reset VT before replay");
+                self.cache.clear();
+                self.presented_frame = None;
+                self.last_requested_grid = None;
+                self.session_closed = None;
+                self.start_output_pump(handle, stream, cx);
             }
+            Err(error) => self.session_error = Some(error),
         }
     }
 
@@ -448,29 +480,34 @@ impl LiveTerminalView {
         cx: &mut gpui::AsyncApp,
     ) {
         const MAX_BATCH_BYTES: usize = 256 * 1024;
+        let mut pending = None;
         loop {
-            let Some(first) = stream.recv_uncredited().await else {
-                break;
+            let first = match pending.take() {
+                Some(event) => event,
+                None => match stream.recv_uncredited().await {
+                    Some(event) => event,
+                    None => break,
+                },
             };
-            let mut data_buf: Vec<u8> = Vec::new();
-            let mut closed: Option<CloseInfo> = None;
 
+            let mut data_buf = Vec::new();
+            let mut resize = None;
+            let mut closed = None;
             match first {
-                SessionOutput::Data(bytes) => data_buf.extend_from_slice(&bytes),
-                SessionOutput::Closed(info) => closed = Some(info),
-            }
-
-            if closed.is_none() {
-                while data_buf.len() < MAX_BATCH_BYTES {
-                    match stream.try_recv_uncredited() {
-                        Some(SessionOutput::Data(bytes)) => data_buf.extend_from_slice(&bytes),
-                        Some(SessionOutput::Closed(info)) => {
-                            closed = Some(info);
-                            break;
+                SessionOutput::Data(bytes) => {
+                    data_buf = bytes;
+                    while data_buf.len() < MAX_BATCH_BYTES {
+                        match stream.try_recv_uncredited() {
+                            Some(SessionOutput::Data(bytes)) => data_buf.extend_from_slice(&bytes),
+                            event => {
+                                pending = event;
+                                break;
+                            }
                         }
-                        None => break,
                     }
                 }
+                SessionOutput::Resize { cols, rows } => resize = Some((cols, rows)),
+                SessionOutput::Closed(info) => closed = Some(info),
             }
 
             let Ok(replies) = this.update(cx, |view, cx| {
@@ -489,7 +526,23 @@ impl LiveTerminalView {
                         cx.notify();
                     }
                 }
+                if let Some((cols, rows)) = resize
+                    && (cols, rows) != (view.vt.cols(), view.vt.rows())
+                {
+                    let cell_w = (view.last_cell_w.round() as u32).max(1);
+                    let row_h = (view.last_row_h.round() as u32).max(1);
+                    match view.vt.resize(cols, rows, cell_w, row_h) {
+                        Ok(reports) => {
+                            replies = reports;
+                            view.cache.clear();
+                        }
+                        Err(error) => view.session_error = Some(error),
+                    }
+                    cx.notify();
+                }
                 if let Some(info) = closed {
+                    view.herdr_handle = None;
+                    view.session_error = None;
                     view.session_closed = Some(info);
                     cx.notify();
                 }
@@ -497,7 +550,7 @@ impl LiveTerminalView {
             }) else {
                 break;
             };
-            if !data_buf.is_empty()
+            if (!data_buf.is_empty() || !replies.is_empty())
                 && let Err(error) = stream.acknowledge(data_buf.len() as u32, replies).await
             {
                 let _ = this.update(cx, |view, cx| {
@@ -515,13 +568,18 @@ impl LiveTerminalView {
         if self.sync_timer_armed {
             return;
         }
+        let Some(remaining) = self.vt.sync_hold_remaining(SYNC_HOLD_TIMEOUT) else {
+            return;
+        };
         self.sync_timer_armed = true;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(SYNC_HOLD_TIMEOUT).await;
+            cx.background_executor().timer(remaining).await;
             let _ = this.update(cx, |view, cx| {
                 view.sync_timer_armed = false;
                 if view.vt.release_expired_sync_hold(SYNC_HOLD_TIMEOUT) {
                     cx.notify();
+                } else {
+                    view.arm_sync_hold_timer(cx);
                 }
             });
         })
@@ -699,16 +757,33 @@ impl LiveTerminalView {
         (col, row, local_x as f64, local_y as f64)
     }
 
+    fn mouse_encoder_position(&self, x: f64, y: f64) -> (f32, f32) {
+        self.vt.mouse_encoder_position(
+            x as f32,
+            y as f32,
+            self.last_cell_w,
+            self.last_row_h,
+            self.mouse_encoder_size(),
+        )
+    }
+
     fn mouse_encoder_size(&self) -> VtMouseSize {
         let (w, h) = self
             .last_content_bounds
             .map(|b| (f32::from(b.size.width).round() as u32, f32::from(b.size.height).round() as u32))
             .unwrap_or((800, 500));
+        let cell_width = (self.last_cell_w.round() as u32).max(1);
+        let cell_height = (self.last_row_h.round() as u32).max(1);
+        let (screen_width, screen_height) = if self.vt.uses_pixel_mouse_coordinates() {
+            (w.max(1), h.max(1))
+        } else {
+            (u32::from(self.vt.cols()) * cell_width, u32::from(self.vt.rows()) * cell_height)
+        };
         VtMouseSize {
-            screen_width: w.max(1),
-            screen_height: h.max(1),
-            cell_width: (self.last_cell_w.round() as u32).max(1),
-            cell_height: (self.last_row_h.round() as u32).max(1),
+            screen_width,
+            screen_height,
+            cell_width,
+            cell_height,
             padding_top: 0,
             padding_bottom: 0,
             padding_right: 0,
@@ -726,13 +801,14 @@ impl LiveTerminalView {
         let (col, row, lx, ly) = self.pointer_to_grid(event.position);
 
         if self.vt.is_mouse_tracking() && !event.modifiers.shift {
+            let (x, y) = self.mouse_encoder_position(lx, ly);
             if let Some(btn) = gpui_button_to_vt(event.button) {
                 let bytes = self.vt.encode_mouse(
                     VtMouseAction::Press,
                     Some(btn),
                     input::gpui_mods_to_ghostty(&event.modifiers),
-                    lx as f32,
-                    ly as f32,
+                    x,
+                    y,
                     true,
                     self.mouse_encoder_size(),
                 );
@@ -755,13 +831,14 @@ impl LiveTerminalView {
     ) {
         let (col, row, lx, ly) = self.pointer_to_grid(event.position);
         if self.vt.is_mouse_tracking() && !event.modifiers.shift {
+            let (x, y) = self.mouse_encoder_position(lx, ly);
             let btn = event.pressed_button.and_then(gpui_button_to_vt);
             let bytes = self.vt.encode_mouse(
                 VtMouseAction::Motion,
                 btn,
                 input::gpui_mods_to_ghostty(&event.modifiers),
-                lx as f32,
-                ly as f32,
+                x,
+                y,
                 btn.is_some(),
                 self.mouse_encoder_size(),
             );
@@ -794,13 +871,14 @@ impl LiveTerminalView {
     ) {
         let (col, row, lx, ly) = self.pointer_to_grid(event.position);
         if self.vt.is_mouse_tracking() && !event.modifiers.shift {
+            let (x, y) = self.mouse_encoder_position(lx, ly);
             if let Some(btn) = gpui_button_to_vt(event.button) {
                 let bytes = self.vt.encode_mouse(
                     VtMouseAction::Release,
                     Some(btn),
                     input::gpui_mods_to_ghostty(&event.modifiers),
-                    lx as f32,
-                    ly as f32,
+                    x,
+                    y,
                     false,
                     self.mouse_encoder_size(),
                 );
@@ -832,6 +910,7 @@ impl LiveTerminalView {
         self.scroll_px_accum -= lines as f32 * step_px;
 
         if self.vt.is_mouse_tracking() && !event.modifiers.shift {
+            let (x, y) = self.mouse_encoder_position(lx, ly);
             let btn = if lines > 0 {
                 VtMouseButton::Four
             } else {
@@ -845,8 +924,8 @@ impl LiveTerminalView {
                     VtMouseAction::Press,
                     Some(btn),
                     mods,
-                    lx as f32,
-                    ly as f32,
+                    x,
+                    y,
                     false,
                     sz,
                 );
@@ -886,7 +965,14 @@ impl LiveTerminalView {
         let cell_w_u32 = (cell_w.round() as u32).max(1);
         let cell_h_u32 = (row_h.round() as u32).max(1);
 
-        if new_cols == self.vt.cols() && new_rows == self.vt.rows() {
+        let grid = (new_cols, new_rows);
+        // The server can change its grid independently. Only a local layout change
+        // issues a new resize, so processing a remote notification cannot echo it.
+        if self.last_requested_grid == Some(grid) {
+            return false;
+        }
+        if grid == (self.vt.cols(), self.vt.rows()) {
+            self.last_requested_grid = Some(grid);
             return false;
         }
 
@@ -896,7 +982,10 @@ impl LiveTerminalView {
             None => resize().map(|_| true),
         };
         match result {
-            Ok(true) => self.cache.clear(),
+            Ok(true) => {
+                self.last_requested_grid = Some(grid);
+                self.cache.clear();
+            }
             Ok(false) => return true,
             Err(error) => self.session_error = Some(error),
         }
@@ -1123,7 +1212,7 @@ struct LiveTerminalElement {
 }
 
 struct LiveTerminalPrepaint {
-    prepared: Option<PreparedTerminalFrame>,
+    prepared: Option<std::rc::Rc<PreparedTerminalFrame>>,
     content_bounds: Bounds<Pixels>,
     hitbox: gpui::Hitbox,
 }
@@ -1194,11 +1283,12 @@ impl Element for LiveTerminalElement {
                     let _ = view.update(cx, |_, cx| cx.notify());
                 });
             }
-            let ts = window.text_system();
-            let mut cache = std::mem::replace(&mut view.cache, RowShapeCache::new(RenderCacheMode::Uncached));
-            let res = cache.prepare_frame(&mut view.vt, &view.style, scale_factor, ts).ok();
-            view.cache = cache;
-            res
+            if !view.vt.is_sync_held()
+                && let Ok(frame) = view.cache.prepare_frame(&mut view.vt, &view.style, scale_factor, window.text_system())
+            {
+                view.presented_frame = Some(std::rc::Rc::new(frame));
+            }
+            view.presented_frame.clone()
         });
 
         LiveTerminalPrepaint {
@@ -1442,6 +1532,7 @@ impl Render for LiveTerminalView {
         );
 
         if let Some(info) = &self.session_closed {
+            let can_reconnect = info.reason == "disconnected" && self.session_error.is_none();
             let summary = info.summary();
             root = root.child(
                 div()
@@ -1466,16 +1557,21 @@ impl Render for LiveTerminalView {
                             .bg(rgb(ACCENT_BLUE))
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(|this, _, window, cx| {
-                                    this.start_session(cx);
+                                cx.listener(move |this, _, window, cx| {
+                                    if can_reconnect {
+                                        this.reattach(cx);
+                                    } else {
+                                        this.start_session(cx);
+                                    }
                                     window.focus(&this.focus_handle);
                                     cx.notify();
                                 }),
                             )
-                            .child("Restart"),
+                            .child(if can_reconnect { "Reconnect" } else { "Restart" }),
                     ),
             );
-        } else if let Some(err) = &self.session_error {
+        }
+        if let Some(err) = &self.session_error {
             root = root.child(
                 div()
                     .px_3()
@@ -2980,11 +3076,31 @@ fn main() {
     Application::new().run(move |cx: &mut App| {
         #[cfg(unix)]
         if let Some(signal) = quit_signal {
+            let exit_signal = std::rc::Rc::new(std::cell::Cell::new(None));
+            cx.on_app_quit({
+                let exit_signal = exit_signal.clone();
+                move |_| {
+                    let signal = exit_signal.get();
+                    async move {
+                        // GPUI polls shutdown futures after running the synchronous cleanup callbacks.
+                        if let Some(signal) = signal {
+                            let signal = libc::c_int::from(signal);
+                            unsafe {
+                                libc::signal(signal, libc::SIG_DFL);
+                                libc::raise(signal);
+                            }
+                        }
+                    }
+                }
+            })
+            .detach();
             cx.spawn(async move |cx| {
-                if signal.await.is_ok() {
+                if let Ok(signal) = signal.await {
+                    exit_signal.set(Some(signal));
                     let _ = cx.update(|cx| cx.quit());
                 }
-            }).detach();
+            })
+            .detach();
         }
 
         if cfg.mode == RunMode::ProbeUi {

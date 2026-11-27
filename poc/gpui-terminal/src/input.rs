@@ -483,6 +483,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn cmd_c_copies_only_when_selection_active_and_cmd_w_is_not_hijacked() {
         let cmd_c = Keystroke {
@@ -499,4 +500,23 @@ mod tests {
             KeyDispatchDecision::PassToIme
         );
     }
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn ctrl_shift_c_copies_selection_and_ctrl_c_reaches_the_pty() {
+        let mut keystroke = Keystroke {
+            modifiers: Modifiers { control: true, shift: true, ..Default::default() },
+            key: "c".into(),
+            key_char: None,
+        };
+        assert_eq!(
+            classify_keydown(&keystroke, false, true, false),
+            KeyDispatchDecision::AppAction(TerminalAppAction::CopySelection),
+        );
+        keystroke.modifiers.shift = false;
+        assert!(matches!(
+            classify_keydown(&keystroke, false, true, false),
+            KeyDispatchDecision::SendToTerminal { .. },
+        ));
+    }
+
 }

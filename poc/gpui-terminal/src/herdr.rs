@@ -243,6 +243,7 @@ fn format_signal_number(num: i64) -> String {
 #[derive(Debug)]
 pub enum SessionOutput {
     Data(Vec<u8>),
+    Resize { cols: u16, rows: u16 },
     Closed(CloseInfo),
 }
 
@@ -389,7 +390,12 @@ impl HerdrOutputStream {
         if self.handle.automatic_input_supported {
             frames.extend(replies.into_iter().map(|reply| Frame::automatic_input(channel, reply)));
         }
-        frames.push(Frame::credit(channel, bytes));
+        if bytes > 0 {
+            frames.push(Frame::credit(channel, bytes));
+        }
+        if frames.is_empty() {
+            return Ok(());
+        }
         self.handle.writer_tx
             .send(frames)
             .await
@@ -400,12 +406,21 @@ impl HerdrOutputStream {
         self.pending_ack_bytes = self
             .pending_ack_bytes
             .saturating_add(len.min(u32::MAX as usize) as u32);
-        if self.pending_ack_bytes >= CREDIT_ACK_THRESHOLD {
-            if self.handle.try_send_credit(self.pending_ack_bytes).is_ok() {
-                self.pending_ack_bytes = 0;
-            }
+        if self.pending_ack_bytes >= CREDIT_ACK_THRESHOLD
+            && self.handle.try_send_credit(self.pending_ack_bytes).is_ok()
+        {
+            self.pending_ack_bytes = 0;
         }
     }
+}
+
+struct Attachment {
+    address: String,
+    channel: u32,
+    automatic_input: bool,
+    writer_tx: mpsc::Sender<Vec<Frame>>,
+    output_rx: mpsc::Receiver<SessionOutput>,
+    connection: tokio::task::JoinHandle<()>,
 }
 
 /// Owns the dedicated Tokio runtime and isolated `herdr-core` daemon lifetime.
@@ -424,20 +439,42 @@ impl HerdrGuard {
             .build()
             .map_err(|e| format!("tokio runtime: {e}"))?;
         let mut session = runtime.block_on(IsolatedHerdrSession::start_with_options(opts))?;
-        let handle = session.handle();
-        let rx = session
-            .take_output_rx()
-            .ok_or_else(|| "missing output receiver".to_string())?;
-        let stream = HerdrOutputStream {
-            rx,
-            handle: handle.clone(),
-            pending_ack_bytes: 0,
-        };
+        let (handle, stream) = Self::take_stream(&mut session)?;
         let guard = Self {
             runtime: Some(runtime),
             session: Some(session),
         };
         Ok((guard, handle, stream))
+    }
+
+    fn take_stream(session: &mut IsolatedHerdrSession) -> Result<(HerdrHandle, HerdrOutputStream), String> {
+        let handle = session.handle();
+        let rx = session.take_output_rx().ok_or_else(|| "missing output receiver".to_string())?;
+        let stream = HerdrOutputStream { rx, handle: handle.clone(), pending_ack_bytes: 0 };
+        Ok((handle, stream))
+    }
+
+    pub fn reattach(&mut self, opts: HerdrStartOptions) -> Result<(HerdrHandle, HerdrOutputStream), String> {
+        let runtime = self.runtime.as_ref().ok_or("herdr runtime is stopped")?;
+        let session = self.session.as_mut().ok_or("herdr session is stopped")?;
+        let attachment = runtime
+            .block_on(async {
+                if let Some(connection) = session.connection.take() {
+                    connection.abort();
+                    let _ = connection.await;
+                }
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    IsolatedHerdrSession::attach(&session.socket_path, opts, Some(&session.address), false),
+                ).await
+            })
+            .map_err(|_| "herdr reattach timed out".to_string())??;
+        session.attach_channel = attachment.channel;
+        session.automatic_input_supported = attachment.automatic_input;
+        session.writer_tx = attachment.writer_tx;
+        session.output_rx = Some(attachment.output_rx);
+        session.connection = Some(attachment.connection);
+        Self::take_stream(session)
     }
 
     pub fn core_pid(&self) -> u32 {
@@ -467,6 +504,7 @@ impl Drop for HerdrGuard {
 pub struct IsolatedHerdrSession {
     binary: PathBuf,
     session_name: String,
+    address: String,
     base_dir: PathBuf,
     pub socket_path: PathBuf,
     child: Option<Child>,
@@ -475,6 +513,7 @@ pub struct IsolatedHerdrSession {
     pub automatic_input_supported: bool,
     writer_tx: mpsc::Sender<Vec<Frame>>,
     output_rx: Option<mpsc::Receiver<SessionOutput>>,
+    connection: Option<tokio::task::JoinHandle<()>>,
     stopped: bool,
 }
 
@@ -518,8 +557,8 @@ impl IsolatedHerdrSession {
             .map_err(|e| format!("spawn herdr-core ({}): {e}", binary.display()))?;
         let core_pid = child.id().unwrap_or(0);
 
-        let attached = tokio::time::timeout(Duration::from_secs(5), Self::attach(&socket_path, opts)).await;
-        let (attach_channel, automatic_input_supported, writer_tx, output_rx) = match attached {
+        let attached = tokio::time::timeout(Duration::from_secs(5), Self::attach(&socket_path, opts, None, false)).await;
+        let attachment = match attached {
             Ok(Ok(attachment)) => attachment,
             result => {
                 let mut child = child;
@@ -534,14 +573,16 @@ impl IsolatedHerdrSession {
         Ok(Self {
             binary,
             session_name,
+            address: attachment.address,
             base_dir,
             socket_path,
             child: Some(child),
             core_pid,
-            attach_channel,
-            automatic_input_supported,
-            writer_tx,
-            output_rx: Some(output_rx),
+            attach_channel: attachment.channel,
+            automatic_input_supported: attachment.automatic_input,
+            writer_tx: attachment.writer_tx,
+            output_rx: Some(attachment.output_rx),
+            connection: Some(attachment.connection),
             stopped: false,
         })
     }
@@ -549,7 +590,9 @@ impl IsolatedHerdrSession {
     async fn attach(
         socket_path: &Path,
         mut opts: HerdrStartOptions,
-    ) -> Result<(u32, bool, mpsc::Sender<Vec<Frame>>, mpsc::Receiver<SessionOutput>), String> {
+        address: Option<&str>,
+        observe: bool,
+    ) -> Result<Attachment, String> {
         let deadline = Instant::now() + Duration::from_secs(5);
         let stream = loop {
             match UnixStream::connect(socket_path).await {
@@ -610,53 +653,58 @@ impl IsolatedHerdrSession {
             .unwrap_or_default();
         let automatic_input_supported = features.contains("automatic_input");
 
-        // 2. `terminal.run` over Framed Mode channel 0
-        if opts.wrap_iutf8
-            && let Some(argv) = opts.argv.take()
-        {
-            if let Ok(exe) = std::env::current_exe()
-                && let Some(exe_str) = exe.to_str()
+        let terminal_addr = if let Some(address) = address {
+            address.to_owned()
+        } else {
+            // 2. `terminal.run` over Framed Mode channel 0
+            if opts.wrap_iutf8
+                && let Some(argv) = opts.argv.take()
             {
-                opts.argv = Some(os::wrap_argv_with_pty_iutf8_init(argv, exe_str));
-            } else {
-                opts.argv = Some(argv);
+                if let Ok(exe) = std::env::current_exe()
+                    && let Some(exe_str) = exe.to_str()
+                {
+                    opts.argv = Some(os::wrap_argv_with_pty_iutf8_init(argv, exe_str));
+                } else {
+                    opts.argv = Some(argv);
+                }
             }
-        }
 
-        let mut run_params = serde_json::Map::new();
-        run_params.insert("size".into(), json!([opts.cols, opts.rows]));
-        if let Some(cmd_argv) = opts.argv {
-            run_params.insert("argv".into(), json!(cmd_argv));
-        }
-        if let Some(cwd) = opts.cwd {
-            run_params.insert("cwd".into(), json!(cwd));
-        }
-        if !opts.env.is_empty() {
-            run_params.insert("env".into(), json!(opts.env));
-        }
-        let run_req = json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "terminal.run",
-            "params": Value::Object(run_params),
-        });
-        write_frame(
-            &mut write_half,
-            &Frame::data(0, serde_json::to_vec(&run_req).map_err(|e| e.to_string())?),
-        )
-        .await
-        .map_err(|e| format!("write terminal.run: {e}"))?;
-
-        let run_reply_frame = read_frame(&mut reader)
+            let mut run_params = serde_json::Map::new();
+            run_params.insert("size".into(), json!([opts.cols, opts.rows]));
+            if let Some(cmd_argv) = opts.argv {
+                run_params.insert("argv".into(), json!(cmd_argv));
+            }
+            if let Some(cwd) = opts.cwd {
+                run_params.insert("cwd".into(), json!(cwd));
+            }
+            if !opts.env.is_empty() {
+                run_params.insert("env".into(), json!(opts.env));
+            }
+            let run_req = json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "terminal.run",
+                "params": Value::Object(run_params),
+            });
+            write_frame(
+                &mut write_half,
+                &Frame::data(0, serde_json::to_vec(&run_req).map_err(|e| e.to_string())?),
+            )
             .await
-            .map_err(|e| format!("read terminal.run reply: {e}"))?;
-        let run_reply: Value = serde_json::from_slice(&run_reply_frame.payload)
-            .map_err(|e| format!("parse terminal.run: {e}"))?;
-        let terminal_addr = run_reply
-            .pointer("/result/address")
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("missing terminal address: {run_reply}"))?
-            .to_string();
+            .map_err(|e| format!("write terminal.run: {e}"))?;
+
+            let run_reply_frame = read_frame(&mut reader)
+                .await
+                .map_err(|e| format!("read terminal.run reply: {e}"))?;
+            let run_reply: Value = serde_json::from_slice(&run_reply_frame.payload)
+                .map_err(|e| format!("parse terminal.run: {e}"))?;
+            run_reply
+                .pointer("/result/address")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("missing terminal address: {run_reply}"))?
+                .to_string()
+
+        };
 
         // 3. `terminal.attach` over Framed Mode channel 0
         let attach_req = json!({
@@ -667,7 +715,9 @@ impl IsolatedHerdrSession {
                 "terminal": terminal_addr,
                 "cols": opts.cols,
                 "rows": opts.rows,
-                "history": opts.history_lines
+                "history": opts.history_lines,
+                "observe": observe,
+                "resize_notifications": true
             }
         });
         write_frame(
@@ -678,6 +728,7 @@ impl IsolatedHerdrSession {
         .map_err(|e| format!("write terminal.attach: {e}"))?;
 
         let mut early_frames = Vec::new();
+        let mut early_frame_bytes = 0;
         let (attach_channel, attach_auto_input) = loop {
             let f = read_frame(&mut reader)
                 .await
@@ -701,6 +752,10 @@ impl IsolatedHerdrSession {
                     break (ch, auto);
                 }
             } else {
+                early_frame_bytes += HEADER_LEN + f.payload.len();
+                if early_frame_bytes > 512 * 1024 {
+                    return Err("herdr exceeded the pre-attach frame budget".to_string());
+                }
                 early_frames.push(f);
             }
         };
@@ -708,7 +763,7 @@ impl IsolatedHerdrSession {
         let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<Frame>>(512);
         let (output_tx, output_rx) = mpsc::channel::<SessionOutput>(4096);
 
-        tokio::spawn(async move {
+        let write = async move {
             while let Some(frames) = writer_rx.recv().await {
                 for frame in frames {
                     if write_frame(&mut write_half, &frame).await.is_err() {
@@ -716,57 +771,67 @@ impl IsolatedHerdrSession {
                     }
                 }
             }
-        });
+        };
 
-        tokio::spawn(async move {
-            for f in early_frames {
-                if f.channel == attach_channel {
-                    match f.kind {
-                        FRAME_DATA => {
-                            let _ = output_tx.send(SessionOutput::Data(f.payload)).await;
-                        }
-                        FRAME_CLOSE => {
-                            let _ = output_tx
-                                .send(SessionOutput::Closed(CloseInfo::from_payload(&f.payload)))
-                                .await;
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
-            }
+        let disconnected_tx = output_tx.clone();
+        let read = async move {
+            let mut early = early_frames.into_iter();
             loop {
-                match read_frame(&mut reader).await {
-                    Ok(f) if f.channel == attach_channel => match f.kind {
-                        FRAME_DATA => {
-                            if output_tx.send(SessionOutput::Data(f.payload)).await.is_err() {
+                let frame = match early.next() {
+                    Some(frame) => Ok(frame),
+                    None => read_frame(&mut reader).await,
+                };
+                let output = match frame {
+                    Ok(frame) if frame.channel != attach_channel => continue,
+                    Ok(frame) => match frame.kind {
+                        FRAME_DATA => SessionOutput::Data(frame.payload),
+                        FRAME_RESIZE => {
+                            let [c0, c1, r0, r1] = frame.payload.as_slice() else {
+                                break;
+                            };
+                            let cols = u16::from_le_bytes([*c0, *c1]);
+                            let rows = u16::from_le_bytes([*r0, *r1]);
+                            if !(1..=1000).contains(&cols) || !(1..=1000).contains(&rows) {
                                 break;
                             }
+                            SessionOutput::Resize { cols, rows }
                         }
-                        FRAME_CLOSE => {
-                            let _ = output_tx
-                                .send(SessionOutput::Closed(CloseInfo::from_payload(&f.payload)))
-                                .await;
-                            break;
-                        }
-                        _ => {}
+                        FRAME_CLOSE => SessionOutput::Closed(CloseInfo::from_payload(&frame.payload)),
+                        _ => continue,
                     },
-                    Ok(_) => {}
-                    Err(_) => {
-                        let _ = output_tx
-                            .send(SessionOutput::Closed(CloseInfo {
-                                exit_code: None,
-                                signal: None,
-                                reason: "eof".to_string(),
-                            }))
-                            .await;
-                        break;
-                    }
+                    Err(_) => break,
+                };
+                let closed = matches!(output, SessionOutput::Closed(_));
+                if output_tx.send(output).await.is_err() || closed {
+                    return true;
                 }
+            }
+            false
+        };
+
+        let connection = tokio::spawn(async move {
+            let closed = tokio::select! {
+                biased;
+                closed = read => closed,
+                () = write => false,
+            };
+            if !closed {
+                let _ = disconnected_tx.send(SessionOutput::Closed(CloseInfo {
+                    exit_code: None,
+                    signal: None,
+                    reason: "disconnected".to_string(),
+                })).await;
             }
         });
 
-        Ok::<_, String>((attach_channel, automatic_input_supported && attach_auto_input, writer_tx, output_rx))
+        Ok(Attachment {
+            address: terminal_addr,
+            channel: attach_channel,
+            automatic_input: automatic_input_supported && attach_auto_input,
+            writer_tx,
+            output_rx,
+            connection,
+        })
     }
 
     pub fn handle(&self) -> HerdrHandle {
@@ -859,6 +924,10 @@ impl IsolatedHerdrSession {
             return;
         }
         self.stopped = true;
+        if let Some(connection) = self.connection.take() {
+            connection.abort();
+            let _ = connection.await;
+        }
         if let Some(child) = &mut self.child {
             stop_core(&self.binary, &self.session_name, &self.base_dir, &self.socket_path, child).await;
         }
@@ -884,6 +953,9 @@ impl Drop for IsolatedHerdrSession {
     fn drop(&mut self) {
         if !self.stopped {
             self.stopped = true;
+            if let Some(connection) = self.connection.take() {
+                connection.abort();
+            }
             if let Some(child) = &mut self.child {
                 let _ = child.start_kill();
             }
@@ -895,6 +967,36 @@ impl Drop for IsolatedHerdrSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn receives_the_controlling_viewers_resize_as_an_observer() {
+        let mut session = IsolatedHerdrSession::start(
+            "resize-notice", Some(vec!["/bin/cat".to_string()]), 80, 24,
+        ).await.expect("start isolated core");
+        let opts = HerdrStartOptions {
+            cols: 80,
+            rows: 24,
+            ..HerdrStartOptions::default()
+        };
+        let mut observer = IsolatedHerdrSession::attach(&session.socket_path, opts, Some(&session.address), true)
+            .await.expect("attach observer");
+        session.resize(96, 28).await.expect("resize controlling viewer");
+        let notice = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match observer.output_rx.recv().await {
+                    Some(SessionOutput::Resize { cols, rows }) if (cols, rows) == (96, 28) => break,
+                    Some(SessionOutput::Data(bytes)) => observer.writer_tx.send(vec![
+                        Frame::credit(observer.channel, bytes.len() as u32),
+                    ]).await.unwrap(),
+                    Some(SessionOutput::Resize { .. }) => {}
+                    _ => panic!("observer closed before the controlling viewer's resize"),
+                }
+            }
+        }).await;
+        observer.connection.abort();
+        session.stop().await;
+        notice.expect("observer received resize");
+    }
 
     #[tokio::test]
     async fn resize_and_report_wait_for_space_and_keep_wire_order() {
@@ -972,7 +1074,7 @@ mod tests {
                     captured.push_str(&String::from_utf8_lossy(&bytes));
                 }
                 Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
-                Err(_) => {}
+                Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
             }
         }
         sess.stop().await;
@@ -1009,7 +1111,7 @@ mod tests {
                     ready_buf.push_str(&String::from_utf8_lossy(&bytes));
                 }
                 Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
-                Err(_) => {}
+                Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
             }
         }
         assert!(ready_buf.contains("READY"), "got: {ready_buf:?}");
@@ -1040,7 +1142,7 @@ mod tests {
                     out.push_str(&String::from_utf8_lossy(&bytes));
                 }
                 Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
-                Err(_) => {}
+                Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
             }
         }
         assert!(out.contains("READY"), "got: {out:?}");
@@ -1056,7 +1158,7 @@ mod tests {
                     out.push_str(&String::from_utf8_lossy(&bytes));
                 }
                 Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
-                Err(_) => {}
+                Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
             }
         }
         sess.stop().await;

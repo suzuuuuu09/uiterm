@@ -13,6 +13,10 @@ mod os;
 #[path = "../src/herdr.rs"]
 mod herdr;
 
+#[allow(dead_code)]
+#[path = "../src/vt.rs"]
+mod vt;
+
 use herdr::{HerdrGuard, HerdrStartOptions, SessionOutput};
 
 fn has_cmd(name: &str) -> bool {
@@ -20,6 +24,48 @@ fn has_cmd(name: &str) -> bool {
         .arg(name)
         .output()
         .is_ok_and(|o| o.status.success())
+}
+
+#[test]
+fn reattach_replays_the_same_pty_and_preserves_its_running_command() {
+    let opts = HerdrStartOptions {
+        tag: "reattach".to_string(),
+        argv: Some(vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "printf '%s\\n' INITIAL_SCREEN; read value; printf 'REATTACHED:%s\\n' \"$value\"".into(),
+        ]),
+        wrap_iutf8: false,
+        ..HerdrStartOptions::default()
+    };
+    let (mut guard, handle, mut stream) = HerdrGuard::start_live(opts).expect("start herdr");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let collect_until = |stream: &mut herdr::HerdrOutputStream, marker: &[u8]| {
+        rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                let mut output = Vec::new();
+                while let Some(event) = stream.recv().await {
+                    if let SessionOutput::Data(bytes) = event {
+                        output.extend(bytes);
+                        if output.windows(marker.len()).any(|part| part == marker) {
+                            return;
+                        }
+                    }
+                }
+                panic!("stream ended before the expected terminal output");
+            }).await.expect("terminal output arrived");
+        });
+    };
+    collect_until(&mut stream, b"INITIAL_SCREEN");
+    let previous_handle = handle;
+    let mut previous_stream = stream;
+    let (handle, mut stream) = guard.reattach(HerdrStartOptions::default()).expect("reattach");
+    assert!(previous_handle.try_send_user(b"old connection".to_vec()).is_err());
+    assert!(rt.block_on(previous_stream.recv()).is_none());
+    collect_until(&mut stream, b"INITIAL_SCREEN");
+    handle.try_send_user(b"same command\n".to_vec()).expect("write to original PTY");
+    collect_until(&mut stream, b"REATTACHED:same command");
+    guard.stop_blocking();
 }
 
 #[test]
@@ -81,7 +127,7 @@ fn pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty() {
                 out.push_str(&String::from_utf8_lossy(&bytes));
             }
             Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
-            Err(_) => {}
+            Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
         }
     }
     guard.stop_blocking();
@@ -134,7 +180,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
                     out.push_str(&String::from_utf8_lossy(&bytes));
                 }
                 Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
-                Err(_) => {}
+                Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
             }
         }
         guard.stop_blocking();
@@ -187,10 +233,18 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         while let Some(SessionOutput::Data(bytes)) = stream.try_recv() {
             raw_bytes.extend_from_slice(&bytes);
         }
-        assert!(handle.try_resize_with_reports(106, 32, || Ok(Vec::new())).unwrap());
-        if raw_bytes.windows(b"\x1b[?2048h".len()).any(|w| w == b"\x1b[?2048h") {
-            let _ = handle.try_send_automatic(b"\x1b[48;32;106;576;848t".to_vec());
-        }
+        let mut terminal = vt::VtTerminal::new(80, 24, 200).expect("VT terminal");
+        let enter = b"\x1b[?1049h";
+        let switch = raw_bytes.windows(enter.len()).position(|part| part == enter)
+            .expect("Neovim enters the alternate screen");
+        terminal.feed(&raw_bytes[..switch]);
+        terminal.feed(b"\x1b[Hprimary screen");
+        terminal.feed(&raw_bytes[switch..]);
+        assert_eq!(terminal.active_screen(), ghostty_vt::screen::Screen::Alternate);
+        assert!(handle.try_resize_with_reports(106, 32, || terminal.resize(106, 32, 8, 18)).unwrap());
+        let resized = terminal.snapshot().expect("alternate screen snapshot");
+        assert_eq!((resized.cols, resized.rows), (106, 32));
+        let replayed = raw_bytes.len();
         let mut saw_resize = false;
         let resize_deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < resize_deadline {
@@ -218,11 +272,23 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
             }) {
                 Ok(Some(SessionOutput::Data(bytes))) => raw_bytes.extend_from_slice(&bytes),
                 Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
-                Err(_) => {}
+                Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
             }
         }
         guard.stop_blocking();
         let _ = std::fs::remove_dir_all(&qa_home);
+
+        let tail = &raw_bytes[replayed..];
+        let leave = b"\x1b[?1049l";
+        let switch = tail.windows(leave.len()).position(|part| part == leave)
+            .expect("Neovim leaves the alternate screen");
+        terminal.feed(&tail[..switch + leave.len()]);
+        assert_eq!(terminal.active_screen(), ghostty_vt::screen::Screen::Primary);
+        let primary = terminal.snapshot().expect("restored primary screen");
+        assert!(primary.lines.iter().any(|row| {
+            let text: String = row.iter().map(|cell| cell.text.as_str()).collect();
+            text.contains("primary screen")
+        }));
 
         let text = String::from_utf8_lossy(&raw_bytes);
         assert!(
@@ -263,7 +329,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
                     out.push_str(&String::from_utf8_lossy(&bytes));
                 }
                 Ok(Some(SessionOutput::Closed(_))) | Ok(None) => break,
-                Err(_) => {}
+                Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
             }
         }
         guard.stop_blocking();

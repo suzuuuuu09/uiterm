@@ -168,10 +168,10 @@ Stage 1・2 で検証した GPUI フォントシェーピング・IME 状態管�
 
 1. **ビルド依存の不足（`ghostty-vt-sys` 側）**:
    - `ghostty-vt-sys 0.9.0` の `GHOSTTY.lock` は Apple (`xcframework`) と Windows GNU のみ事前ビルドバイナリを配布しており、Linux 向けプリビルドを含まない。
-   - したがって Linux (`x86_64-linux` / `aarch64-linux`) でビルドするには、Ghostty `1.0.1` ソース・`libghostty-vt-1.0.1-deps.tar.gz` と対応する **Zig コンパイラ** を Nix で用意するか、`pkg-config` (`libghostty-vt-static`) / `GHOSTTY_VT_LIB_DIR` で事前ビルド済み静的ライブラリを供給する必要がある。現行 [`flake.nix`](../../flake.nix) には Zig / `libghostty-vt` がまだ含まれていない。
+   - したがって Linux (`x86_64-linux` / `aarch64-linux`) でビルドするには、Ghostty `1.0.1` ソース・`libghostty-vt-1.0.1-deps.tar.gz` と対応する **Zig コンパイラ** を Nix で用意するか、`pkg-config` (`libghostty-vt-static`) / `GHOSTTY_VT_LIB_DIR` で事前ビルド済み静的ライブラリを供給する必要がある。[`flake.nix`](../../flake.nix) の `gpui` シェルは固定 nixpkgs の Zig 0.17 を供給する。Cargo のビルドスクリプトは固定リリースのソースと依存アーカイブを取得し、同梱ハッシュで検証する。
 2. **GPUI Linux 描画バックエンドと Flake 依存**:
    - `gpui 0.2.2` は Linux でデフォルトで `wayland`・`x11`・`font-kit`・`cosmic-text`・`xkbcommon`・`blade-graphics` を有効化する。
-   - GPU レンダリングは **Vulkan**（`blade-graphics` → `ash`）を使うため、Linux 実行・ビルド環境には既存の Wayland / xkbcommon に加えて **`vulkan-loader` と GPU ドライバ ICD / Mesa Vulkan、ならびに `fontconfig` / `freetype` 等の動的ライブラリパス** が必要になる（現行 [`flake.nix`](../../flake.nix) は WebKitGTK 中心であり Vulkan / fontconfig 周りの構成検証が未了）。
+   - GPU レンダリングは **Vulkan**（`blade-graphics` → `ash`）を使うため、Linux 実行・ビルド環境には既存の Wayland / xkbcommon に加えて **`vulkan-loader` と GPU ドライバ ICD / Mesa Vulkan、ならびに `fontconfig` / `freetype` 等の動的ライブラリパス** が必要になる（`gpui` シェルは Vulkan loader とフォントライブラリを供給し、GPU ドライバは NixOS 側の `hardware.graphics` を使用する。Linux 実機での構成検証は未了）。
 3. **Hyprland / Wayland IME（Fcitx5 / IBus）の挙動**:
    - `gpui 0.2.2` の Wayland クライアント（`src/platform/linux/wayland/client.rs`）は `zwp_text_input_manager_v3` / `zwp_text_input_v3`（`PreeditString`・`CommitString`・`Done`・`set_cursor_rectangle`）を実装しており、Hyprland 標準の text-input-v3 とプロトコル上は接続できる。ただし、1 バイト長の `CommitString` を `KeyDown` 経路へ振り分ける分岐や `last_serial` 検証が存在するため、Fcitx5 での日本語 1 文字確定・連続変換・未確定候補位置は Linux 実機での検証が必須。
 4. **Nerd Font アイコン専用フォントのフィルタ**:
@@ -208,6 +208,10 @@ nix develop --no-write-lock-file --command \
 nix develop --no-write-lock-file --command \
   ./poc/gpui-terminal/target/release/uiterm-gpui-poc --probe-ui
 ```
+
+Linux では `nix develop .#gpui --command cargo build --locked --release --manifest-path poc/gpui-terminal/Cargo.toml` でビルドする。Hyprland で起動経路、Fcitx5 の日本語と ASCII の確定、Nerd Font を確認する。GPUI 0.2.2 は ASCII 一文字の IME 確定を物理キーと同じイベント型で渡すため、未確定中の確定漏れについては上流の区別が必要。
+
+Kitty キーボード拡張で反復・解放イベントや全キーの報告を要求するアプリについては、現在のライブ端末は押下とテキスト確定のみを送るため、一部のキー報告が欠ける。
 
 ### 手動検証チェックリスト
 
