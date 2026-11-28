@@ -22,7 +22,9 @@ pub enum TerminalAppAction {
     CycleFont,
     ToggleNerdFallback,
     RestartSession,
+    #[cfg(target_os = "macos")]
     ToggleRenderCache,
+    #[cfg(target_os = "macos")]
     Quit,
 }
 

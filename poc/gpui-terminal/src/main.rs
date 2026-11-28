@@ -694,6 +694,7 @@ impl LiveTerminalView {
                 window.focus(&self.focus_handle);
                 cx.notify();
             }
+            #[cfg(target_os = "macos")]
             TerminalAppAction::ToggleRenderCache => {
                 self.cache.mode = match self.cache.mode {
                     RenderCacheMode::DirtyRowCache => RenderCacheMode::Uncached,
@@ -702,6 +703,7 @@ impl LiveTerminalView {
                 self.cache.clear();
                 cx.notify();
             }
+            #[cfg(target_os = "macos")]
             TerminalAppAction::Quit => {
                 self.shutdown();
                 cx.quit();
