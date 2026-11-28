@@ -291,7 +291,7 @@ struct LiveTerminalView {
     last_cell_w: f32,
     last_row_h: f32,
     last_ime_anchor: Option<Bounds<Pixels>>,
-    last_ime_line: Option<ShapedLine>,
+    last_ime_overlay: Option<(Bounds<Pixels>, ShapedLine)>,
     scroll_px_accum: f32,
     startup_task: Option<gpui::Task<()>>,
     _output_task: Option<gpui::Task<()>>,
@@ -336,7 +336,7 @@ impl LiveTerminalView {
             last_cell_w: 8.43,
             last_row_h: (config.font_size * DEFAULT_LINE_HEIGHT).ceil(),
             last_ime_anchor: None,
-            last_ime_line: None,
+            last_ime_overlay: None,
             scroll_px_accum: 0.0,
             startup_task: None,
             _output_task: None,
@@ -847,7 +847,7 @@ impl LiveTerminalView {
 
         if event.button == MouseButton::Left && !self.vt.is_sync_held() {
             self.mouse_presses.push((event.button, false));
-            self.vt.selection_press(col, row, lx, ly);
+            self.vt.selection_press(col, row, lx, ly, self.last_cell_w);
             cx.notify();
         }
     }
@@ -859,10 +859,14 @@ impl LiveTerminalView {
         cx: &mut Context<Self>,
     ) {
         let (col, row, lx, ly) = self.pointer_to_grid(event.position);
-        let to_pty = match event.pressed_button {
-            Some(button) => self.mouse_presses.contains(&(button, true)),
-            None => self.vt.is_mouse_tracking() && !event.modifiers.shift,
-        };
+        let to_pty = should_route_mouse_move_to_pty(
+            event.pressed_button,
+            &self.mouse_presses,
+            self.vt.is_mouse_tracking(),
+            event.modifiers.shift,
+            self.last_content_bounds,
+            event.position,
+        );
         if to_pty {
             let (x, y) = self.mouse_encoder_position(lx, ly);
             let btn = event.pressed_button.and_then(gpui_button_to_vt);
@@ -889,11 +893,8 @@ impl LiveTerminalView {
                 row,
                 (lx, ly),
                 event.modifiers.alt,
-                (
-                    (self.last_cell_w.round() as u32).max(1),
-                    0,
-                    (f32::from(bounds.size.height).round() as u32).max(1),
-                ),
+                self.last_cell_w,
+                (f32::from(bounds.size.height).round() as u32).max(1),
             );
             cx.notify();
         }
@@ -1008,25 +1009,27 @@ impl LiveTerminalView {
         let cell_h_u32 = (row_h.round() as u32).max(1);
 
         let grid = (new_cols, new_rows);
-        // The server can change its grid independently. Only a local layout change
-        // issues a new resize, so processing a remote notification cannot echo it.
-        if self.last_requested_grid == Some(grid) {
-            return false;
-        }
-        if grid == (self.vt.cols(), self.vt.rows()) {
+        let current = (self.vt.cols(), self.vt.rows());
+        // Only a new local layout request may override the core's grid. Pixel
+        // metrics still need to reach VT even if the core's grid stays unchanged.
+        let pty_grid = (self.last_requested_grid != Some(grid) && grid != current).then_some(grid);
+        if pty_grid.is_none() && self.vt.cell_pixel_size() == Some((cell_w_u32, cell_h_u32)) {
             self.last_requested_grid = Some(grid);
             return false;
         }
 
-        let mut resize = || self.vt.resize(new_cols, new_rows, cell_w_u32, cell_h_u32);
+        let (cols, rows) = pty_grid.unwrap_or(current);
+        let mut resize = || self.vt.resize(cols, rows, cell_w_u32, cell_h_u32);
         let result = match &self.herdr_handle {
-            Some(handle) => handle.try_resize_with_reports(new_cols, new_rows, resize),
+            Some(handle) => handle.try_update_size_with_reports(pty_grid, resize),
             None => resize().map(|_| true),
         };
         match result {
             Ok(true) => {
                 self.last_requested_grid = Some(grid);
-                self.cache.clear();
+                if pty_grid.is_some() {
+                    self.cache.clear();
+                }
             }
             Ok(false) => return true,
             Err(error) => self.session_error = Some(error),
@@ -1038,6 +1041,24 @@ impl LiveTerminalView {
 fn stream_closed(this: &gpui::WeakEntity<LiveTerminalView>, cx: &mut gpui::AsyncApp) -> bool {
     this.read_with(cx, |view, _| view.session_closed.is_some())
         .unwrap_or(true)
+}
+
+fn should_route_mouse_move_to_pty(
+    pressed_button: Option<MouseButton>,
+    mouse_presses: &[(MouseButton, bool)],
+    mouse_tracking: bool,
+    shift: bool,
+    content_bounds: Option<Bounds<Pixels>>,
+    position: Point<Pixels>,
+) -> bool {
+    match pressed_button {
+        Some(button) => mouse_presses.contains(&(button, true)),
+        None => {
+            mouse_tracking
+                && !shift
+                && content_bounds.is_some_and(|bounds| bounds.contains(&position))
+        }
+    }
 }
 
 fn gpui_button_to_vt(btn: MouseButton) -> Option<VtMouseButton> {
@@ -1134,10 +1155,10 @@ impl EntityInputHandler for LiveTerminalView {
         let preedit = self.ime.preedit_text();
         if !preedit.is_empty() {
             let fresh_line;
-            let (line, left) = if let Some(line) = self.last_ime_line.as_ref()
+            let (line, left) = if let Some((overlay, line)) = self.last_ime_overlay.as_ref()
                 && line.text.as_ref() == preedit
             {
-                (line, anchor.left())
+                (line, overlay.left())
             } else {
                 fresh_line = window.text_system().shape_line(
                     SharedString::from(preedit.to_owned()),
@@ -1169,7 +1190,7 @@ impl EntityInputHandler for LiveTerminalView {
         }
         Some(Bounds::new(
             anchor.origin,
-            size(px(self.last_cell_w.max(2.0)), row_h),
+            size(anchor.size.width.max(px(2.0)), row_h),
         ))
     }
 
@@ -1179,11 +1200,10 @@ impl EntityInputHandler for LiveTerminalView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let anchor = self.last_ime_anchor?;
-        let line = self
-            .last_ime_line
+        let (anchor, line) = self
+            .last_ime_overlay
             .as_ref()
-            .filter(|line| line.text.as_ref() == self.ime.preedit_text())?;
+            .filter(|(_, line)| line.text.as_ref() == self.ime.preedit_text())?;
         let local_x = (point.x - anchor.left()).max(px(0.0));
         let utf8_idx = line.closest_index_for_x(local_x);
         Some(self.ime.offset_to_utf16(utf8_idx))
@@ -1444,7 +1464,7 @@ impl Element for LiveTerminalElement {
             })
         };
 
-        let ime_result = paint_terminal_frame(
+        let (cursor_anchor, ime_overlay) = paint_terminal_frame(
             frame,
             prepaint.content_bounds,
             window_active,
@@ -1456,10 +1476,8 @@ impl Element for LiveTerminalElement {
 
         let cursor_blinking = frame.meta.cursor.visible && frame.meta.cursor.blinking;
         self.view.update(cx, |view, cx| {
-            if let Some((anchor, line)) = ime_result {
-                view.last_ime_anchor = Some(anchor);
-                view.last_ime_line = Some(line);
-            }
+            view.last_ime_anchor = Some(cursor_anchor);
+            view.last_ime_overlay = ime_overlay;
             view.maybe_arm_cursor_blink(cursor_blinking, cx);
         });
     }
@@ -1475,14 +1493,8 @@ impl Render for LiveTerminalView {
             .id("live-terminal-root")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
-            .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_mouse_up(MouseButton::Right, cx.listener(Self::on_mouse_up))
-            .on_mouse_up(MouseButton::Middle, cx.listener(Self::on_mouse_up))
-            .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
+            .capture_any_mouse_up(cx.listener(Self::on_mouse_up))
             .flex()
             .flex_col()
             .size_full()
@@ -1520,6 +1532,7 @@ impl Render for LiveTerminalView {
                                     this.style.preset = preset;
                                     this.cache.clear();
                                     window.focus(&this.focus_handle);
+                                    cx.stop_propagation();
                                     cx.notify();
                                 }),
                             )
@@ -1543,6 +1556,7 @@ impl Render for LiveTerminalView {
                                     this.style.nerd_font_fallback = !this.style.nerd_font_fallback;
                                     this.cache.clear();
                                     window.focus(&this.focus_handle);
+                                    cx.stop_propagation();
                                     cx.notify();
                                 }),
                             )
@@ -1560,6 +1574,10 @@ impl Render for LiveTerminalView {
                 .flex_1()
                 .w_full()
                 .min_h_0()
+                .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+                .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
+                .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_mouse_down))
+                .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
                 .child(LiveTerminalElement {
                     view: cx.entity().clone(),
                 }),
@@ -1572,6 +1590,7 @@ impl Render for LiveTerminalView {
                     cx.listener(|this, _, window, cx| {
                         this.start_session(cx);
                         window.focus(&this.focus_handle);
+                        cx.stop_propagation();
                         cx.notify();
                     }),
                 )
@@ -1604,6 +1623,7 @@ impl Render for LiveTerminalView {
                                 cx.listener(|this, _, window, cx| {
                                     this.reattach(cx);
                                     window.focus(&this.focus_handle);
+                                    cx.stop_propagation();
                                     cx.notify();
                                 }),
                             ),
@@ -1864,5 +1884,56 @@ mod tests {
         assert_eq!(config.cmd_argv.unwrap(), ["example", "--bench-vt"]);
         let args = ["uiterm", "--bench-vt"].map(str::to_owned);
         assert_eq!(CliConfig::parse(&args).mode, RunMode::BenchVt);
+    }
+
+    #[test]
+    fn mouse_move_ignores_toolbar_hover_and_button_drags() {
+        let content_bounds = Some(Bounds::new(
+            point(px(8.0), px(34.0)),
+            size(px(800.0), px(500.0)),
+        ));
+        let toolbar_pos = point(px(40.0), px(10.0));
+        let terminal_pos = point(px(40.0), px(60.0));
+
+        assert!(!should_route_mouse_move_to_pty(
+            None,
+            &[],
+            true,
+            false,
+            content_bounds,
+            toolbar_pos,
+        ));
+        assert!(should_route_mouse_move_to_pty(
+            None,
+            &[],
+            true,
+            false,
+            content_bounds,
+            terminal_pos,
+        ));
+        assert!(!should_route_mouse_move_to_pty(
+            None,
+            &[],
+            true,
+            true,
+            content_bounds,
+            terminal_pos,
+        ));
+        assert!(should_route_mouse_move_to_pty(
+            Some(MouseButton::Left),
+            &[(MouseButton::Left, true)],
+            true,
+            false,
+            content_bounds,
+            toolbar_pos,
+        ));
+        assert!(!should_route_mouse_move_to_pty(
+            Some(MouseButton::Left),
+            &[],
+            true,
+            false,
+            content_bounds,
+            terminal_pos,
+        ));
     }
 }

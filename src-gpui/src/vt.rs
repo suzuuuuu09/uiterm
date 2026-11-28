@@ -78,7 +78,7 @@ pub struct CursorSnapshot {
     pub visible: bool,
     pub blinking: bool,
     pub visual_style: CursorVisualStyle,
-    pub at_wide_tail: bool,
+    pub width: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -326,6 +326,7 @@ pub struct VtTerminal {
     osc_normalizer: Osc133Normalizer,
     cols: u16,
     rows: u16,
+    cell_pixel_size: Option<(u32, u32)>,
     pub mac_option_as_alt: bool,
     pub sync_hold_since: Option<Instant>,
 }
@@ -383,6 +384,7 @@ impl VtTerminal {
             osc_normalizer: Osc133Normalizer::new(),
             cols: cols.clamp(1, MAX_GRID_DIMENSION),
             rows: rows.clamp(1, MAX_GRID_DIMENSION),
+            cell_pixel_size: None,
             mac_option_as_alt: true,
             sync_hold_since: None,
         })
@@ -394,6 +396,10 @@ impl VtTerminal {
 
     pub fn rows(&self) -> u16 {
         self.rows
+    }
+
+    pub fn cell_pixel_size(&self) -> Option<(u32, u32)> {
+        self.cell_pixel_size
     }
 
     pub fn active_screen(&self) -> Screen {
@@ -496,11 +502,13 @@ impl VtTerminal {
     ) -> Result<Vec<Vec<u8>>, String> {
         let cols = cols.clamp(1, MAX_GRID_DIMENSION);
         let rows = rows.clamp(1, MAX_GRID_DIMENSION);
+        let cell_size = (cell_w_px.max(1), cell_h_px.max(1));
         self.terminal
-            .resize(cols, rows, cell_w_px.max(1), cell_h_px.max(1))
+            .resize(cols, rows, cell_size.0, cell_size.1)
             .map_err(|e| format!("Terminal::resize: {e}"))?;
         self.cols = cols;
         self.rows = rows;
+        self.cell_pixel_size = Some(cell_size);
         let events = self.drain_events();
         Ok(events.pty_writes)
     }
@@ -595,7 +603,8 @@ impl VtTerminal {
         }
     }
 
-    pub fn selection_press(&mut self, col: u16, row: u16, x_px: f64, y_px: f64) {
+    pub fn selection_press(&mut self, col: u16, row: u16, x_px: f64, y_px: f64, cell_width: f32) {
+        let x_px = selection_x(x_px, cell_width);
         let clamped_col = col.min(self.cols.saturating_sub(1));
         let clamped_row = row.min(self.rows.saturating_sub(1));
         let Ok(grid_ref) = self.terminal.grid_ref(Point::Viewport(PointCoordinate {
@@ -626,10 +635,11 @@ impl VtTerminal {
         row: u16,
         px_pos: (f64, f64),
         rectangle: bool,
-        geom: (u32, u32, u32),
+        cell_width: f32,
+        screen_h_px: u32,
     ) {
         let (x_px, y_px) = px_pos;
-        let (cell_w_px, padding_left_px, screen_h_px) = geom;
+        let x_px = selection_x(x_px, cell_width);
         let clamped_col = col.min(self.cols.saturating_sub(1));
         let clamped_row = row.min(self.rows.saturating_sub(1));
         let Ok(grid_ref) = self.terminal.grid_ref(Point::Viewport(PointCoordinate {
@@ -640,8 +650,8 @@ impl VtTerminal {
         };
         let geometry = SelectionGeometry {
             columns: self.cols as u32,
-            cell_width: cell_w_px.max(1),
-            padding_left: padding_left_px,
+            cell_width: (cell_width.round() as u32).max(1),
+            padding_left: 0,
             screen_height: screen_h_px.max(1),
         };
         let _ = self
@@ -725,7 +735,7 @@ impl VtTerminal {
         let cols = snap.cols().unwrap_or(self.cols);
         let rows = snap.rows().unwrap_or(self.rows);
         let dirty = snap.dirty().unwrap_or(Dirty::Full);
-        let cursor = read_cursor(&snap);
+        let cursor = read_cursor(&snap, &self.terminal);
         let colors = ScreenColorsSnapshot::from_snapshot(&snap);
         let meta = RenderFrameMeta {
             cols,
@@ -776,25 +786,48 @@ impl VtTerminal {
     }
 }
 
-fn read_cursor(snap: &Snapshot<'_>) -> CursorSnapshot {
-    match snap.cursor().ok() {
-        Some(c) => CursorSnapshot {
-            col: c.viewport.as_ref().map(|v| v.x).unwrap_or(0),
-            row: c.viewport.as_ref().map(|v| v.y).unwrap_or(0),
-            visible: c.visible && c.viewport.is_some(),
-            blinking: c.blinking,
-            visual_style: c.visual_style,
-            at_wide_tail: c.viewport.as_ref().is_some_and(|v| v.at_wide_tail),
-        },
-        None => CursorSnapshot {
-            col: 0,
-            row: 0,
-            visible: false,
-            blinking: false,
-            visual_style: CursorVisualStyle::Block,
-            at_wide_tail: false,
-        },
+// libghostty reports when the cursor is on a wide tail. Query the cell
+// for a cursor positioned directly on the wide glyph's leading column.
+fn read_cursor(snap: &Snapshot<'_>, terminal: &Terminal) -> CursorSnapshot {
+    let mut cursor = CursorSnapshot {
+        col: 0,
+        row: 0,
+        visible: false,
+        blinking: false,
+        visual_style: CursorVisualStyle::Block,
+        width: 1,
+    };
+    let Ok(state) = snap.cursor() else {
+        return cursor;
+    };
+    cursor.blinking = state.blinking;
+    cursor.visual_style = state.visual_style;
+    let Some(pos) = state.viewport else {
+        return cursor;
+    };
+    cursor.visible = state.visible;
+    cursor.col = pos.x;
+    cursor.row = pos.y;
+    if pos.at_wide_tail {
+        cursor.col = cursor.col.saturating_sub(1);
+        cursor.width = 2;
+    } else if terminal
+        .grid_ref(Point::Viewport(PointCoordinate {
+            x: pos.x,
+            y: u32::from(pos.y),
+        }))
+        .and_then(|grid| grid.cell())
+        .and_then(|cell| cell.wide())
+        .is_ok_and(|wide| wide == CellWide::Wide)
+    {
+        cursor.width = 2;
     }
+    cursor
+}
+
+fn selection_x(x: f64, cell_width: f32) -> f64 {
+    let cell_width = f64::from(cell_width.max(1.0));
+    x / cell_width * cell_width.round()
 }
 
 pub fn extract_row_cells(
@@ -1193,8 +1226,8 @@ mod tests {
         vt.render_update(|_, _, _, _| Ok(())).unwrap();
 
         // Selection update -> verify RenderState sees selection on row 0 ("L2")
-        vt.selection_press(0, 0, 1.0, 1.0);
-        vt.selection_drag(2, 0, (20.0, 1.0), false, (8, 0, 120));
+        vt.selection_press(0, 0, 1.0, 1.0, 8.0);
+        vt.selection_drag(2, 0, (20.0, 1.0), false, 8.0, 120);
         vt.selection_release(Some((2, 0)));
         assert_eq!(vt.selected_text().as_deref(), Some("L2"));
         let mut sel_seen = None;
@@ -1218,6 +1251,53 @@ mod tests {
             out.as_ref(),
             b"\x1b]133;A;redraw=0\x07prompt$ \x1b]133;A;redraw=1\x1b\\"
         );
+    }
+
+    #[test]
+    fn fractional_cell_drag_matches_the_same_selection_on_an_integral_grid() {
+        fn selected(cell_width: f32) -> String {
+            let mut vt = VtTerminal::new(80, 24, 0).unwrap();
+            vt.feed(b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
+            let width = f64::from(cell_width);
+            vt.selection_press(48, 0, 48.25 * width, 8.0, cell_width);
+            vt.selection_drag(54, 0, (54.25 * width, 8.0), false, cell_width, 432);
+            vt.selected_text().unwrap()
+        }
+
+        assert_eq!(selected(8.0), "mnopqr");
+        assert_eq!(selected(8.43), selected(8.0));
+    }
+
+    #[test]
+    fn size_queries_follow_cell_resize_without_changing_the_grid() {
+        let mut vt = VtTerminal::new(106, 32, 0).unwrap();
+        assert_eq!(vt.cell_pixel_size(), None);
+        assert!(vt.feed_raw(b"\x1b[16t").is_empty());
+
+        vt.resize(106, 32, 8, 18).unwrap();
+        assert_eq!(
+            vt.feed_raw(b"\x1b[14t\x1b[16t"),
+            [b"\x1b[4;576;848t".to_vec(), b"\x1b[6;18;8t".to_vec()]
+        );
+        vt.resize(106, 32, 9, 20).unwrap();
+        assert_eq!(vt.cell_pixel_size(), Some((9, 20)));
+        assert_eq!(
+            vt.feed_raw(b"\x1b[14t\x1b[16t"),
+            [b"\x1b[4;640;954t".to_vec(), b"\x1b[6;20;9t".to_vec()]
+        );
+    }
+
+    #[test]
+    fn wide_cursor_uses_the_same_two_cells_on_the_lead_and_tail() {
+        let mut vt = VtTerminal::new(80, 24, 0).unwrap();
+        vt.feed("A界B".as_bytes());
+        for column in [2, 3] {
+            vt.feed(format!("\x1b[1;{column}H").as_bytes());
+            let cursor = vt.snapshot().unwrap().cursor;
+            assert_eq!((cursor.col, cursor.row, cursor.width), (1, 0, 2));
+        }
+        vt.feed(b"\x1b[1;4H");
+        assert_eq!(vt.snapshot().unwrap().cursor.width, 1);
     }
 
     #[test]

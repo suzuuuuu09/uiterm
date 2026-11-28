@@ -248,7 +248,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         });
         assert!(
             handle
-                .try_resize_with_reports(106, 32, || Ok(Vec::new()))
+                .try_update_size_with_reports(Some((106, 32)), || Ok(Vec::new()))
                 .unwrap()
         );
         std::thread::sleep(Duration::from_millis(60));
@@ -342,7 +342,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         );
         assert!(
             handle
-                .try_resize_with_reports(106, 32, || terminal.resize(106, 32, 8, 18))
+                .try_update_size_with_reports(Some((106, 32)), || terminal.resize(106, 32, 8, 18))
                 .unwrap()
         );
         let resized = terminal.snapshot().expect("alternate screen snapshot");

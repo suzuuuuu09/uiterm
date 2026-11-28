@@ -329,13 +329,12 @@ impl HerdrHandle {
             .map_err(|e| format!("herdr user send failed: {e}"))
     }
 
-    pub fn try_resize_with_reports(
+    pub fn try_update_size_with_reports(
         &self,
-        cols: u16,
-        rows: u16,
+        pty_grid: Option<(u16, u16)>,
         resize: impl FnOnce() -> Result<Vec<Vec<u8>>, String>,
     ) -> Result<bool, String> {
-        if !valid_grid(cols, rows) {
+        if pty_grid.is_some_and(|(cols, rows)| !valid_grid(cols, rows)) {
             return Err("invalid terminal dimensions".into());
         }
         let permit = match self.writer_tx.try_reserve() {
@@ -346,7 +345,10 @@ impl HerdrHandle {
             }
         };
         let reports = resize()?;
-        let mut frames = vec![Frame::resize(self.attach_channel, cols, rows)];
+        let mut frames = Vec::new();
+        if let Some((cols, rows)) = pty_grid {
+            frames.push(Frame::resize(self.attach_channel, cols, rows));
+        }
         if self.automatic_input_supported {
             frames.extend(
                 reports
@@ -354,7 +356,9 @@ impl HerdrHandle {
                     .map(|bytes| Frame::automatic_input(self.attach_channel, bytes)),
             );
         }
-        permit.send(frames);
+        if !frames.is_empty() {
+            permit.send(frames);
+        }
         Ok(true)
     }
 
@@ -1161,7 +1165,7 @@ mod tests {
         handle.try_send_user(b"x".to_vec()).unwrap();
         assert!(
             !handle
-                .try_resize_with_reports(80, 24, || panic!("resize applied too early"))
+                .try_update_size_with_reports(Some((80, 24)), || panic!("resize applied too early"))
                 .unwrap()
         );
         assert_eq!(
@@ -1172,12 +1176,32 @@ mod tests {
         let report = b"size report".to_vec();
         assert!(
             handle
-                .try_resize_with_reports(80, 24, || Ok(vec![report.clone()]))
+                .try_update_size_with_reports(Some((80, 24)), || Ok(vec![report.clone()]))
                 .unwrap()
         );
         assert_eq!(
             writer_rx.recv().await.unwrap(),
             [Frame::resize(7, 80, 24), Frame::automatic_input(7, report)],
+        );
+    }
+
+    #[tokio::test]
+    async fn cell_only_resize_sends_reports_without_a_pty_resize_frame() {
+        let (writer_tx, mut writer_rx) = mpsc::channel(1);
+        let handle = HerdrHandle {
+            attach_channel: 7,
+            automatic_input_supported: true,
+            writer_tx,
+        };
+        let report = b"cell size report".to_vec();
+        assert!(
+            handle
+                .try_update_size_with_reports(None, || Ok(vec![report.clone()]))
+                .unwrap()
+        );
+        assert_eq!(
+            writer_rx.try_recv().unwrap(),
+            [Frame::automatic_input(7, report)]
         );
     }
 
