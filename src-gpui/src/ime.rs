@@ -48,16 +48,12 @@ impl ImeBuffer {
         self.content[..clamped].encode_utf16().count()
     }
 
-    pub fn offset_from_utf16(&self, utf16_offset: usize) -> usize {
-        offset_from_utf16_in(&self.content, utf16_offset)
-    }
-
     pub fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
         self.offset_to_utf16(range.start)..self.offset_to_utf16(range.end)
     }
 
     pub fn range_from_utf16(&self, range_utf16: &Range<usize>) -> Range<usize> {
-        self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
+        range_from_utf16_in(&self.content, range_utf16)
     }
 
     fn clamp_to_char_boundary(&self, mut offset: usize) -> usize {
@@ -130,9 +126,8 @@ impl ImeBuffer {
 
         self.selected_range = new_selected_range_utf16
             .map(|rel_utf16| {
-                let rel_start = offset_from_utf16_in(new_text, rel_utf16.start);
-                let rel_end = offset_from_utf16_in(new_text, rel_utf16.end);
-                (range.start + rel_start)..(range.start + rel_end)
+                let range_in_text = range_from_utf16_in(new_text, &rel_utf16);
+                (range.start + range_in_text.start)..(range.start + range_in_text.end)
             })
             .unwrap_or(mark_end..mark_end);
 
@@ -249,12 +244,8 @@ impl TerminalImeState {
         self.preedit[..clamped].encode_utf16().count()
     }
 
-    pub fn offset_from_utf16(&self, utf16_offset: usize) -> usize {
-        offset_from_utf16_in(&self.preedit, utf16_offset)
-    }
-
     pub fn range_from_utf16(&self, range_utf16: &Range<usize>) -> Range<usize> {
-        self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
+        range_from_utf16_in(&self.preedit, range_utf16)
     }
 
     pub fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
@@ -293,9 +284,8 @@ impl TerminalImeState {
             .or_else(|| self.marked_range.clone())
             .unwrap_or_else(|| self.selected_range.clone());
 
-        let start = range.start.min(self.preedit.len());
-        let end = range.end.min(self.preedit.len()).max(start);
-        self.preedit.replace_range(start..end, new_text);
+        let start = range.start;
+        self.preedit.replace_range(range, new_text);
         let mark_end = start + new_text.len();
 
         if self.preedit.is_empty() {
@@ -305,10 +295,8 @@ impl TerminalImeState {
             self.marked_range = Some(0..self.preedit.len());
             self.selected_range = new_selected_range_utf16
                 .map(|rel_utf16| {
-                    let rel_start = offset_from_utf16_in(new_text, rel_utf16.start);
-                    let rel_end = offset_from_utf16_in(new_text, rel_utf16.end);
-                    (start + rel_start).min(self.preedit.len())
-                        ..(start + rel_end).min(self.preedit.len())
+                    let range_in_text = range_from_utf16_in(new_text, &rel_utf16);
+                    (start + range_in_text.start)..(start + range_in_text.end)
                 })
                 .unwrap_or(mark_end..mark_end);
         }
@@ -318,39 +306,28 @@ impl TerminalImeState {
         });
     }
 
-    /// Commits IME/text input, clears preedit, and returns the exact committed text
-    /// for immediate PTY transmission (never deduplicating repeated commits like "あ"->"あ").
+    /// Sends the replacement and retains marked text outside its range.
     pub fn replace_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
     ) -> Option<String> {
-        let utf16_len = new_text.encode_utf16().count();
-        if let Some(r_utf16) = range_utf16 {
-            let range = self.range_from_utf16(&r_utf16);
-            let start = range.start.min(self.preedit.len());
-            let end = range.end.min(self.preedit.len()).max(start);
-            self.preedit.replace_range(start..end, new_text);
-            let committed = std::mem::take(&mut self.preedit);
-            self.marked_range = None;
-            self.selected_range = 0..0;
-            self.record(ImeEventKind::Committed { utf16_len });
-            if committed.is_empty() {
-                None
-            } else {
-                Some(committed)
-            }
+        let committed = if let Some(range_utf16) = range_utf16 {
+            let range = self.range_from_utf16(&range_utf16);
+            let caret = range.start;
+            self.preedit.replace_range(range, "");
+            self.selected_range = caret..caret;
+            new_text.to_owned()
         } else {
             self.preedit.clear();
-            self.marked_range = None;
             self.selected_range = 0..0;
-            self.record(ImeEventKind::Committed { utf16_len });
-            if new_text.is_empty() {
-                None
-            } else {
-                Some(new_text.to_string())
-            }
-        }
+            new_text.to_owned()
+        };
+        self.marked_range = (!self.preedit.is_empty()).then_some(0..self.preedit.len());
+        self.record(ImeEventKind::Committed {
+            utf16_len: committed.encode_utf16().count(),
+        });
+        (!committed.is_empty()).then_some(committed)
     }
 
     /// Discards active mark state without leaking uncommitted preedit to the PTY.
@@ -359,19 +336,6 @@ impl TerminalImeState {
         self.marked_range = None;
         self.selected_range = 0..0;
         self.record(ImeEventKind::Unmarked);
-    }
-
-    /// Explicitly cancels active preedit (e.g. Escape fallback when IME didn't clear).
-    pub fn cancel_mark_if_any(&mut self) -> bool {
-        if self.is_composing() {
-            self.preedit.clear();
-            self.marked_range = None;
-            self.selected_range = 0..0;
-            self.record(ImeEventKind::EscapeClearedMark);
-            true
-        } else {
-            false
-        }
     }
 
     /// Preserves macSKK / IME preedit across window focus loss (Cmd+Tab).
@@ -384,6 +348,12 @@ impl TerminalImeState {
         let has_mark = self.is_composing();
         self.record(ImeEventKind::WindowFocus { has_mark });
     }
+}
+
+fn range_from_utf16_in(text: &str, range: &Range<usize>) -> Range<usize> {
+    let start = offset_from_utf16_in(text, range.start);
+    let end = offset_from_utf16_in(text, range.end);
+    start.min(end)..start.max(end)
 }
 
 fn offset_from_utf16_in(s: &str, utf16_offset: usize) -> usize {
@@ -479,10 +449,122 @@ mod tests {
     }
 
     #[test]
-    fn live_ime_escape_and_unmark_do_not_leak_preedit_or_revive_on_refocus() {
+    fn deleting_or_replacing_a_middle_range_never_commits_its_prefix() {
+        let mut ime = TerminalImeState::new();
+        ime.replace_and_mark_text_in_range(None, "🦀かな", None);
+        assert_eq!(ime.replace_text_in_range(Some(2..3), ""), None);
+        assert_eq!(ime.preedit_text(), "🦀な");
+        assert_eq!(ime.selected_range_utf16(), 2..2);
+        ime.replace_and_mark_text_in_range(None, "🦀かな", None);
+        assert_eq!(
+            ime.replace_text_in_range(Some(2..3), "蚊").as_deref(),
+            Some("蚊")
+        );
+        assert_eq!(ime.preedit_text(), "🦀な");
+        assert_eq!(ime.marked_range_utf16(), Some(0..3));
+    }
+
+    #[test]
+    fn live_ime_partial_commit_keeps_the_suffix_marked_until_its_own_commit() {
+        let mut ime = TerminalImeState::new();
+        ime.replace_and_mark_text_in_range(None, "にほん🦀ご", None);
+        assert_eq!(
+            ime.replace_text_in_range(Some(0..3), "日本").as_deref(),
+            Some("日本")
+        );
+        assert_eq!(ime.preedit_text(), "🦀ご");
+        assert_eq!(ime.marked_range_utf16(), Some(0..3));
+        assert_eq!(ime.selected_range_utf16(), 0..0);
+        assert_eq!(ime.replace_text_in_range(None, "語").as_deref(), Some("語"));
+        assert!(!ime.is_composing());
+    }
+
+    #[test]
+    fn live_ime_handles_multi_clause_partial_commits_and_empty_delete_text() {
+        let mut ime = TerminalImeState::new();
+        ime.replace_and_mark_text_in_range(None, "にほんごのテスト", None);
+        assert_eq!(
+            ime.replace_text_in_range(Some(0..4), "日本語").as_deref(),
+            Some("日本語")
+        );
+        assert_eq!(ime.preedit_text(), "のテスト");
+        assert_eq!(ime.marked_range_utf16(), Some(0..4));
+
+        assert_eq!(
+            ime.replace_text_in_range(Some(0..1), "の").as_deref(),
+            Some("の")
+        );
+        assert_eq!(ime.preedit_text(), "テスト");
+        assert_eq!(ime.marked_range_utf16(), Some(0..3));
+
+        assert_eq!(
+            ime.replace_text_in_range(None, "テスト").as_deref(),
+            Some("テスト")
+        );
+        assert!(!ime.is_composing());
+        assert!(ime.preedit_text().is_empty());
+        assert_eq!(ime.marked_range_utf16(), None);
+
+        // Wayland text-input DeleteText calls replace_text_in_range(Some(marked), "").
+        ime.replace_and_mark_text_in_range(None, "未確定", None);
+        assert_eq!(ime.replace_text_in_range(Some(0..3), ""), None);
+        assert!(!ime.is_composing());
+        assert!(ime.preedit_text().is_empty());
+        assert_eq!(ime.marked_range_utf16(), None);
+    }
+
+    #[test]
+    fn live_ime_partial_commit_normalizes_reversed_and_mid_surrogate_ranges() {
+        let mut ime = TerminalImeState::new();
+        ime.replace_and_mark_text_in_range(None, "🦀ご", None);
+        assert_eq!(
+            ime.replace_text_in_range(Some(Range { start: 100, end: 1 }), "語")
+                .as_deref(),
+            Some("語")
+        );
+        assert!(ime.is_composing());
+        assert_eq!(ime.preedit_text(), "🦀");
+
+        let mut multi = TerminalImeState::new();
+        multi.replace_and_mark_text_in_range(None, "🦀ごテスト", None);
+        assert_eq!(
+            multi
+                .replace_text_in_range(Some(Range { start: 3, end: 1 }), "A")
+                .as_deref(),
+            Some("A")
+        );
+        assert_eq!(multi.preedit_text(), "🦀テスト");
+        assert_eq!(multi.marked_range_utf16(), Some(0..5));
+    }
+
+    #[test]
+    fn ime_range_queries_and_selections_normalize_invalid_utf16_offsets() {
+        let reversed = Range {
+            start: usize::MAX,
+            end: 1,
+        };
+        let mut ime = TerminalImeState::new();
+        ime.replace_and_mark_text_in_range(None, "🦀語", Some(reversed.clone()));
+        assert_eq!(ime.selected_range_utf16(), 2..3);
+        assert_eq!(
+            ime.text_for_range_utf16(reversed.clone()),
+            (Some("語".into()), 2..3)
+        );
+
+        let mut probe = ImeBuffer::new();
+        probe.replace_and_mark_text_in_range(None, "🦀語", Some(reversed.clone()));
+        assert_eq!(probe.selected_range_utf16(), 2..3);
+        assert_eq!(
+            probe.text_for_range_utf16(reversed),
+            (Some("語".into()), 2..3)
+        );
+    }
+
+    #[test]
+    fn live_ime_os_unmark_does_not_leak_preedit_or_revive_on_refocus() {
         let mut ime = TerminalImeState::new();
         ime.replace_and_mark_text_in_range(None, "▽キャンセル", None);
-        assert!(ime.cancel_mark_if_any());
+        ime.unmark_text();
         assert!(!ime.is_composing());
         assert!(ime.preedit_text().is_empty());
 

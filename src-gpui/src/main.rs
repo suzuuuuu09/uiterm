@@ -77,51 +77,20 @@ const TERM_PAD_Y: f32 = 6.0;
 const SYNC_HOLD_TIMEOUT: Duration = Duration::from_millis(100);
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
-#[cfg(unix)]
-static mut SIGNAL_PIPE_WR: libc::c_int = -1;
+fn install_signal_cleanup_watcher(
+    runtime: &tokio::runtime::Runtime,
+) -> std::io::Result<tokio::task::JoinHandle<libc::c_int>> {
+    use tokio::signal::unix::{SignalKind, signal};
 
-#[cfg(unix)]
-extern "C" fn handle_term_signal(sig: libc::c_int) {
-    unsafe {
-        if SIGNAL_PIPE_WR >= 0 {
-            let b = sig as u8;
-            let _ = libc::write(SIGNAL_PIPE_WR, (&raw const b).cast(), 1);
+    let _entered = runtime.enter();
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    Ok(runtime.spawn(async move {
+        tokio::select! {
+            _ = terminate.recv() => libc::SIGTERM,
+            _ = interrupt.recv() => libc::SIGINT,
         }
-    }
-}
-
-#[cfg(unix)]
-fn install_signal_cleanup_watcher() -> Option<tokio::sync::oneshot::Receiver<u8>> {
-    let mut fds = [0 as libc::c_int; 2];
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    let read_fd = fds[0];
-    let write_fd = fds[1];
-    unsafe {
-        for fd in fds {
-            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
-        }
-        libc::fcntl(write_fd, libc::F_SETFL, libc::O_NONBLOCK);
-        SIGNAL_PIPE_WR = write_fd;
-        let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = handle_term_signal as *const () as usize;
-        libc::sigemptyset(&raw mut sa.sa_mask);
-        sa.sa_flags = libc::SA_RESTART;
-        libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
-        libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
-    }
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
-        .name("sig-cleanup".into())
-        .spawn(move || {
-            let mut signal = 0u8;
-            if unsafe { libc::read(read_fd, (&raw mut signal).cast(), 1) } > 0 {
-                let _ = tx.send(signal);
-            }
-        })
-        .expect("start signal cleanup watcher");
-    Some(rx)
+    }))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,7 +291,7 @@ struct LiveTerminalView {
     last_cell_w: f32,
     last_row_h: f32,
     last_ime_anchor: Option<Bounds<Pixels>>,
-    last_ime_line: Option<ShapedLine>,
+    last_ime_overlay: Option<(Bounds<Pixels>, ShapedLine)>,
     scroll_px_accum: f32,
     startup_task: Option<gpui::Task<()>>,
     _output_task: Option<gpui::Task<()>>,
@@ -339,6 +308,7 @@ impl LiveTerminalView {
             font_size: config.font_size,
             line_height: DEFAULT_LINE_HEIGHT,
         };
+        let metrics = measure_cell_metrics(window.text_system(), &style);
         let vt = VtTerminal::new(config.cols, config.rows, config.scrollback_lines)
             .expect("create VtTerminal");
         let cache = RowShapeCache::new(config.render_mode);
@@ -364,10 +334,10 @@ impl LiveTerminalView {
             last_content_bounds: None,
             last_requested_grid: None,
             mouse_presses: Vec::new(),
-            last_cell_w: 8.43,
-            last_row_h: (config.font_size * DEFAULT_LINE_HEIGHT).ceil(),
+            last_cell_w: f32::from(metrics.cell_width),
+            last_row_h: f32::from(metrics.row_height),
             last_ime_anchor: None,
-            last_ime_line: None,
+            last_ime_overlay: None,
             scroll_px_accum: 0.0,
             startup_task: None,
             _output_task: None,
@@ -475,7 +445,12 @@ impl LiveTerminalView {
         mut stream: HerdrOutputStream,
         cx: &mut Context<Self>,
     ) {
-        self.session_error = handle.try_send_focus(self.window_active).err();
+        let geometry_error = self
+            .vt
+            .initialize_cell_size(self.last_cell_w, self.last_row_h)
+            .err();
+        let focus_error = handle.try_send_focus(self.window_active).err();
+        self.session_error = geometry_error.or(focus_error);
         self.herdr_handle = Some(handle);
         self._output_task = Some(cx.spawn(async move |this, cx| {
             Self::pump_pty_output(this, &mut stream, cx).await;
@@ -756,12 +731,6 @@ impl LiveTerminalView {
             KeyDispatchDecision::ConsumeNoPty => {
                 cx.stop_propagation();
             }
-            KeyDispatchDecision::CancelStuckImeMark => {
-                if self.ime.cancel_mark_if_any() {
-                    cx.notify();
-                }
-                cx.stop_propagation();
-            }
             KeyDispatchDecision::AppAction(action) => {
                 self.perform_app_action(action, window, cx);
                 cx.stop_propagation();
@@ -884,7 +853,7 @@ impl LiveTerminalView {
 
         if event.button == MouseButton::Left && !self.vt.is_sync_held() {
             self.mouse_presses.push((event.button, false));
-            self.vt.selection_press(col, row, lx, ly);
+            self.vt.selection_press(col, row, lx, ly, self.last_cell_w);
             cx.notify();
         }
     }
@@ -896,10 +865,14 @@ impl LiveTerminalView {
         cx: &mut Context<Self>,
     ) {
         let (col, row, lx, ly) = self.pointer_to_grid(event.position);
-        let to_pty = match event.pressed_button {
-            Some(button) => self.mouse_presses.contains(&(button, true)),
-            None => self.vt.is_mouse_tracking() && !event.modifiers.shift,
-        };
+        let to_pty = should_route_mouse_move_to_pty(
+            event.pressed_button,
+            &self.mouse_presses,
+            self.vt.is_mouse_tracking(),
+            event.modifiers.shift,
+            self.last_content_bounds,
+            event.position,
+        );
         if to_pty {
             let (x, y) = self.mouse_encoder_position(lx, ly);
             let btn = event.pressed_button.and_then(gpui_button_to_vt);
@@ -926,11 +899,8 @@ impl LiveTerminalView {
                 row,
                 (lx, ly),
                 event.modifiers.alt,
-                (
-                    (self.last_cell_w.round() as u32).max(1),
-                    0,
-                    (f32::from(bounds.size.height).round() as u32).max(1),
-                ),
+                self.last_cell_w,
+                (f32::from(bounds.size.height).round() as u32).max(1),
             );
             cx.notify();
         }
@@ -1045,25 +1015,27 @@ impl LiveTerminalView {
         let cell_h_u32 = (row_h.round() as u32).max(1);
 
         let grid = (new_cols, new_rows);
-        // The server can change its grid independently. Only a local layout change
-        // issues a new resize, so processing a remote notification cannot echo it.
-        if self.last_requested_grid == Some(grid) {
-            return false;
-        }
-        if grid == (self.vt.cols(), self.vt.rows()) {
+        let current = (self.vt.cols(), self.vt.rows());
+        // Only a new local layout request may override the core's grid. Pixel
+        // metrics still need to reach VT even if the core's grid stays unchanged.
+        let pty_grid = (self.last_requested_grid != Some(grid) && grid != current).then_some(grid);
+        if pty_grid.is_none() && self.vt.cell_pixel_size() == Some((cell_w_u32, cell_h_u32)) {
             self.last_requested_grid = Some(grid);
             return false;
         }
 
-        let mut resize = || self.vt.resize(new_cols, new_rows, cell_w_u32, cell_h_u32);
+        let (cols, rows) = pty_grid.unwrap_or(current);
+        let mut resize = || self.vt.resize(cols, rows, cell_w_u32, cell_h_u32);
         let result = match &self.herdr_handle {
-            Some(handle) => handle.try_resize_with_reports(new_cols, new_rows, resize),
+            Some(handle) => handle.try_update_size_with_reports(pty_grid, resize),
             None => resize().map(|_| true),
         };
         match result {
             Ok(true) => {
                 self.last_requested_grid = Some(grid);
-                self.cache.clear();
+                if pty_grid.is_some() {
+                    self.cache.clear();
+                }
             }
             Ok(false) => return true,
             Err(error) => self.session_error = Some(error),
@@ -1075,6 +1047,24 @@ impl LiveTerminalView {
 fn stream_closed(this: &gpui::WeakEntity<LiveTerminalView>, cx: &mut gpui::AsyncApp) -> bool {
     this.read_with(cx, |view, _| view.session_closed.is_some())
         .unwrap_or(true)
+}
+
+fn should_route_mouse_move_to_pty(
+    pressed_button: Option<MouseButton>,
+    mouse_presses: &[(MouseButton, bool)],
+    mouse_tracking: bool,
+    shift: bool,
+    content_bounds: Option<Bounds<Pixels>>,
+    position: Point<Pixels>,
+) -> bool {
+    match pressed_button {
+        Some(button) => mouse_presses.contains(&(button, true)),
+        None => {
+            mouse_tracking
+                && !shift
+                && content_bounds.is_some_and(|bounds| bounds.contains(&position))
+        }
+    }
 }
 
 fn gpui_button_to_vt(btn: MouseButton) -> Option<VtMouseButton> {
@@ -1163,28 +1153,50 @@ impl EntityInputHandler for LiveTerminalView {
         &mut self,
         range_utf16: Range<usize>,
         element_bounds: Bounds<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let anchor = self.last_ime_anchor.unwrap_or(element_bounds);
         let row_h = px(self.last_row_h.max(1.0));
-        if let Some(line) = self.last_ime_line.as_ref()
-            && !line.text.is_empty()
-        {
+        let preedit = self.ime.preedit_text();
+        if !preedit.is_empty() {
+            let fresh_line;
+            let (line, left) = if let Some((overlay, line)) = self.last_ime_overlay.as_ref()
+                && line.text.as_ref() == preedit
+            {
+                (line, overlay.left())
+            } else {
+                fresh_line = window.text_system().shape_line(
+                    SharedString::from(preedit.to_owned()),
+                    px(self.style.font_size),
+                    &[TextRun {
+                        len: preedit.len(),
+                        font: self.current_ime_font(),
+                        color: rgb(FG_PRIMARY).into(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                );
+                let left = self.last_content_bounds.map_or(anchor.left(), |bounds| {
+                    anchor
+                        .left()
+                        .min((bounds.right() - fresh_line.width - px(4.0)).max(bounds.left()))
+                });
+                (&fresh_line, left)
+            };
             let range = self.ime.range_from_utf16(&range_utf16);
-            let start_x = line.x_for_index(range.start.min(line.text.len()));
-            let end_x = line.x_for_index(range.end.min(line.text.len()));
+            let start_x = line.x_for_index(range.start);
+            let end_x = line.x_for_index(range.end);
             return Some(Bounds::from_corners(
-                point(anchor.left() + start_x, anchor.top()),
-                point(
-                    anchor.left() + end_x.max(start_x + px(2.0)),
-                    anchor.top() + row_h,
-                ),
+                point(left + start_x, anchor.top()),
+                point(left + end_x.max(start_x + px(2.0)), anchor.top() + row_h),
             ));
         }
         Some(Bounds::new(
             anchor.origin,
-            size(px(self.last_cell_w.max(2.0)), row_h),
+            size(anchor.size.width.max(px(2.0)), row_h),
         ))
     }
 
@@ -1194,8 +1206,10 @@ impl EntityInputHandler for LiveTerminalView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let anchor = self.last_ime_anchor?;
-        let line = self.last_ime_line.as_ref()?;
+        let (anchor, line) = self
+            .last_ime_overlay
+            .as_ref()
+            .filter(|(_, line)| line.text.as_ref() == self.ime.preedit_text())?;
         let local_x = (point.x - anchor.left()).max(px(0.0));
         let utf8_idx = line.closest_index_for_x(local_x);
         Some(self.ime.offset_to_utf16(utf8_idx))
@@ -1456,7 +1470,7 @@ impl Element for LiveTerminalElement {
             })
         };
 
-        let ime_result = paint_terminal_frame(
+        let (cursor_anchor, ime_overlay) = paint_terminal_frame(
             frame,
             prepaint.content_bounds,
             window_active,
@@ -1468,10 +1482,8 @@ impl Element for LiveTerminalElement {
 
         let cursor_blinking = frame.meta.cursor.visible && frame.meta.cursor.blinking;
         self.view.update(cx, |view, cx| {
-            if let Some((anchor, line)) = ime_result {
-                view.last_ime_anchor = Some(anchor);
-                view.last_ime_line = Some(line);
-            }
+            view.last_ime_anchor = Some(cursor_anchor);
+            view.last_ime_overlay = ime_overlay;
             view.maybe_arm_cursor_blink(cursor_blinking, cx);
         });
     }
@@ -1487,14 +1499,8 @@ impl Render for LiveTerminalView {
             .id("live-terminal-root")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
-            .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_mouse_up(MouseButton::Right, cx.listener(Self::on_mouse_up))
-            .on_mouse_up(MouseButton::Middle, cx.listener(Self::on_mouse_up))
-            .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
+            .capture_any_mouse_up(cx.listener(Self::on_mouse_up))
             .flex()
             .flex_col()
             .size_full()
@@ -1532,11 +1538,13 @@ impl Render for LiveTerminalView {
                                     this.style.preset = preset;
                                     this.cache.clear();
                                     window.focus(&this.focus_handle);
+                                    cx.stop_propagation();
                                     cx.notify();
                                 }),
                             )
                             .child(preset.label())
                     }))
+                    .children(zoom_controls(cx))
                     .child(
                         div()
                             .id("live-toggle-nf")
@@ -1555,6 +1563,7 @@ impl Render for LiveTerminalView {
                                     this.style.nerd_font_fallback = !this.style.nerd_font_fallback;
                                     this.cache.clear();
                                     window.focus(&this.focus_handle);
+                                    cx.stop_propagation();
                                     cx.notify();
                                 }),
                             )
@@ -1572,6 +1581,10 @@ impl Render for LiveTerminalView {
                 .flex_1()
                 .w_full()
                 .min_h_0()
+                .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+                .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
+                .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_mouse_down))
+                .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
                 .child(LiveTerminalElement {
                     view: cx.entity().clone(),
                 }),
@@ -1584,6 +1597,7 @@ impl Render for LiveTerminalView {
                     cx.listener(|this, _, window, cx| {
                         this.start_session(cx);
                         window.focus(&this.focus_handle);
+                        cx.stop_propagation();
                         cx.notify();
                     }),
                 )
@@ -1616,6 +1630,7 @@ impl Render for LiveTerminalView {
                                 cx.listener(|this, _, window, cx| {
                                     this.reattach(cx);
                                     window.focus(&this.focus_handle);
+                                    cx.stop_propagation();
                                     cx.notify();
                                 }),
                             ),
@@ -1666,6 +1681,33 @@ impl Render for LiveTerminalView {
 // Stage 1/2 Probe UI + Stage 2/3 Window Benchmarks (shared RenderStyle/Cache)
 // ---------------------------------------------------------------------------
 
+fn zoom_controls(
+    cx: &Context<LiveTerminalView>,
+) -> impl IntoIterator<Item = gpui::Stateful<gpui::Div>> {
+    #[cfg(target_os = "linux")]
+    return [
+        ("zoom-out", "A−", TerminalAppAction::ZoomOut),
+        ("zoom-reset", "A", TerminalAppAction::ZoomReset),
+        ("zoom-in", "A+", TerminalAppAction::ZoomIn),
+    ]
+    .into_iter()
+    .map(move |(id, label, action)| {
+        session_button(id, label).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, window, cx| {
+                this.perform_app_action(action, window, cx);
+                window.focus(&this.focus_handle);
+                cx.stop_propagation();
+            }),
+        )
+    });
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = cx;
+        std::iter::empty()
+    }
+}
+
 fn session_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
@@ -1709,14 +1751,21 @@ fn main() {
         return;
     }
 
-    #[cfg(unix)]
-    let quit_signal = install_signal_cleanup_watcher();
+    let signal_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_io()
+        .build()
+        .expect("start signal cleanup runtime");
+    let quit_signal =
+        install_signal_cleanup_watcher(&signal_runtime).expect("install signal cleanup watcher");
 
     let started_at = Instant::now();
 
     Application::new().run(move |cx: &mut App| {
-        #[cfg(unix)]
-        if let Some(signal) = quit_signal {
+        #[cfg(target_os = "linux")]
+        fonts::init_linux_font_families(cx.text_system().all_font_names());
+
+        {
             let exit_signal = std::rc::Rc::new(std::cell::Cell::new(None));
             cx.on_app_quit({
                 let exit_signal = exit_signal.clone();
@@ -1725,7 +1774,6 @@ fn main() {
                     async move {
                         // GPUI polls shutdown futures after running the synchronous cleanup callbacks.
                         if let Some(signal) = signal {
-                            let signal = libc::c_int::from(signal);
                             unsafe {
                                 libc::signal(signal, libc::SIG_DFL);
                                 libc::raise(signal);
@@ -1736,7 +1784,7 @@ fn main() {
             })
             .detach();
             cx.spawn(async move |cx| {
-                if let Ok(signal) = signal.await {
+                if let Ok(signal) = quit_signal.await {
                     exit_signal.set(Some(signal));
                     let _ = cx.update(|cx| cx.quit());
                 }
@@ -1808,6 +1856,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn signal_watcher_delivers_sigterm_and_sigint_in_an_isolated_process() {
+        const CHILD: &str = "UITERM_TEST_SIGNAL_WATCHER";
+        if std::env::var_os(CHILD).is_some() {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap();
+            for sig in [libc::SIGTERM, libc::SIGINT] {
+                let received = install_signal_cleanup_watcher(&runtime).unwrap();
+                assert_eq!(unsafe { libc::raise(sig) }, 0);
+                assert_eq!(
+                    runtime
+                        .block_on(async {
+                            tokio::time::timeout(Duration::from_secs(2), received).await
+                        })
+                        .unwrap()
+                        .unwrap(),
+                    sig,
+                );
+            }
+            return;
+        }
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::signal_watcher_delivers_sigterm_and_sigint_in_an_isolated_process",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
     fn command_line_dimensions_and_history_are_bounded() {
         let args = [
             "uiterm",
@@ -1835,5 +1918,56 @@ mod tests {
         assert_eq!(config.cmd_argv.unwrap(), ["example", "--bench-vt"]);
         let args = ["uiterm", "--bench-vt"].map(str::to_owned);
         assert_eq!(CliConfig::parse(&args).mode, RunMode::BenchVt);
+    }
+
+    #[test]
+    fn mouse_move_ignores_toolbar_hover_and_button_drags() {
+        let content_bounds = Some(Bounds::new(
+            point(px(8.0), px(34.0)),
+            size(px(800.0), px(500.0)),
+        ));
+        let toolbar_pos = point(px(40.0), px(10.0));
+        let terminal_pos = point(px(40.0), px(60.0));
+
+        assert!(!should_route_mouse_move_to_pty(
+            None,
+            &[],
+            true,
+            false,
+            content_bounds,
+            toolbar_pos,
+        ));
+        assert!(should_route_mouse_move_to_pty(
+            None,
+            &[],
+            true,
+            false,
+            content_bounds,
+            terminal_pos,
+        ));
+        assert!(!should_route_mouse_move_to_pty(
+            None,
+            &[],
+            true,
+            true,
+            content_bounds,
+            terminal_pos,
+        ));
+        assert!(should_route_mouse_move_to_pty(
+            Some(MouseButton::Left),
+            &[(MouseButton::Left, true)],
+            true,
+            false,
+            content_bounds,
+            toolbar_pos,
+        ));
+        assert!(!should_route_mouse_move_to_pty(
+            Some(MouseButton::Left),
+            &[],
+            true,
+            false,
+            content_bounds,
+            terminal_pos,
+        ));
     }
 }

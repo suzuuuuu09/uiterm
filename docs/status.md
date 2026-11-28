@@ -15,6 +15,7 @@
 ## 実装状況
 
 - GPUIの製品起動経路は `src-gpui` の `uiterm`。端末描画・入力とPTY接続を移行した。結果は [GPUI製品移行](implementation/phase2-gpui.md) を参照。
+- Issue #10〜#13 の安定性修正はローカルブランチ `fix/gpui-terminal-stability` で実装・自動検証・macOS性能比較済み（未マージ、実機GUIとLinux実機は未検証）。詳細は [GPUI製品移行（安定性修正）](implementation/phase2-gpui.md#安定性修正issues-1013) を参照。
 - Tauri版は回帰検証と性能比較の基準。シェル、描画、内部設定、PTYのIUTF8暫定対応を実装済み。[Phase 2実装・検証レポート](implementation/phase2-terminal.md) を参照。
 - GPUI PoCはPR #4でマージ済み。アイドル負荷の調査記録はPR #5、ビルド・テスト用CIはPR #6、PoCの未使用コード整理はPR #7でマージ済み。PoCのソースと計測結果は移行前のコミットで参照できる。
 - Tauri版の統合修正 `5b5a6c4` の自動検証とmacOS隔離検証はローカルの報告。mainの実装・検証結果とは区別する。

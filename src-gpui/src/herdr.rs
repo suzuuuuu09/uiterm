@@ -158,13 +158,23 @@ impl Drop for DirCleanupGuard {
 }
 
 fn create_private_dir(tag: &str) -> io::Result<PathBuf> {
-    let seq = INSTANCE_SEQ.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    // Keep Unix domain socket path well below macOS SUN_LEN (104 bytes).
-    let dir = PathBuf::from(format!("/tmp/u-gp-{tag}-{pid}-{seq}"));
+    create_private_dir_in(Path::new("/tmp"), tag, &INSTANCE_SEQ)
+}
+
+fn create_private_dir_in(base: &Path, tag: &str, seq: &AtomicU64) -> io::Result<PathBuf> {
     use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
-    Ok(dir)
+
+    let pid = std::process::id();
+    loop {
+        let id = seq.fetch_add(1, Ordering::Relaxed);
+        // Keep Unix domain socket path well below macOS SUN_LEN (104 bytes).
+        let dir = base.join(format!("u-gp-{tag}-{pid}-{id}"));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -319,13 +329,12 @@ impl HerdrHandle {
             .map_err(|e| format!("herdr user send failed: {e}"))
     }
 
-    pub fn try_resize_with_reports(
+    pub fn try_update_size_with_reports(
         &self,
-        cols: u16,
-        rows: u16,
+        pty_grid: Option<(u16, u16)>,
         resize: impl FnOnce() -> Result<Vec<Vec<u8>>, String>,
     ) -> Result<bool, String> {
-        if !valid_grid(cols, rows) {
+        if pty_grid.is_some_and(|(cols, rows)| !valid_grid(cols, rows)) {
             return Err("invalid terminal dimensions".into());
         }
         let permit = match self.writer_tx.try_reserve() {
@@ -336,7 +345,10 @@ impl HerdrHandle {
             }
         };
         let reports = resize()?;
-        let mut frames = vec![Frame::resize(self.attach_channel, cols, rows)];
+        let mut frames = Vec::new();
+        if let Some((cols, rows)) = pty_grid {
+            frames.push(Frame::resize(self.attach_channel, cols, rows));
+        }
         if self.automatic_input_supported {
             frames.extend(
                 reports
@@ -344,7 +356,9 @@ impl HerdrHandle {
                     .map(|bytes| Frame::automatic_input(self.attach_channel, bytes)),
             );
         }
-        permit.send(frames);
+        if !frames.is_empty() {
+            permit.send(frames);
+        }
         Ok(true)
     }
 
@@ -729,73 +743,8 @@ impl IsolatedHerdrSession {
             }
         };
 
-        let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<Frame>>(512);
-        let (output_tx, output_rx) = mpsc::channel::<SessionOutput>(4096);
-
-        let write = async move {
-            while let Some(frames) = writer_rx.recv().await {
-                for frame in frames {
-                    if write_frame(&mut write_half, &frame).await.is_err() {
-                        return;
-                    }
-                }
-            }
-        };
-
-        let disconnected_tx = output_tx.clone();
-        let read = async move {
-            let mut early = early_frames.into_iter();
-            loop {
-                let frame = match early.next() {
-                    Some(frame) => Ok(frame),
-                    None => read_frame(&mut reader).await,
-                };
-                let output = match frame {
-                    Ok(frame) if frame.channel != attach_channel => continue,
-                    Ok(frame) => match frame.kind {
-                        FRAME_DATA => SessionOutput::Data(frame.payload),
-                        FRAME_RESIZE => {
-                            let [c0, c1, r0, r1] = frame.payload.as_slice() else {
-                                break;
-                            };
-                            let cols = u16::from_le_bytes([*c0, *c1]);
-                            let rows = u16::from_le_bytes([*r0, *r1]);
-                            if !valid_grid(cols, rows) {
-                                break;
-                            }
-                            SessionOutput::Resize { cols, rows }
-                        }
-                        FRAME_CLOSE => {
-                            SessionOutput::Closed(CloseInfo::from_payload(&frame.payload))
-                        }
-                        _ => continue,
-                    },
-                    Err(_) => break,
-                };
-                let closed = matches!(output, SessionOutput::Closed(_));
-                if output_tx.send(output).await.is_err() || closed {
-                    return true;
-                }
-            }
-            false
-        };
-
-        let connection = tokio::spawn(async move {
-            let closed = tokio::select! {
-                biased;
-                closed = read => closed,
-                () = write => false,
-            };
-            if !closed {
-                let _ = disconnected_tx
-                    .send(SessionOutput::Closed(CloseInfo {
-                        exit_code: None,
-                        signal: None,
-                        reason: "disconnected".to_string(),
-                    }))
-                    .await;
-            }
-        });
+        let (writer_tx, output_rx, connection) =
+            spawn_framed_connection(reader, write_half, attach_channel, early_frames);
 
         Ok(Attachment {
             address: terminal_addr,
@@ -877,6 +826,90 @@ impl Drop for IsolatedHerdrSession {
     }
 }
 
+fn spawn_framed_connection<R, W>(
+    mut reader: BufReader<R>,
+    mut write_half: W,
+    attach_channel: u32,
+    early_frames: Vec<Frame>,
+) -> (
+    mpsc::Sender<Vec<Frame>>,
+    mpsc::Receiver<SessionOutput>,
+    tokio::task::JoinHandle<()>,
+)
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<Frame>>(512);
+    let (output_tx, output_rx) = mpsc::channel::<SessionOutput>(4096);
+
+    let write = async move {
+        while let Some(frames) = writer_rx.recv().await {
+            for frame in frames {
+                if write_frame(&mut write_half, &frame).await.is_err() {
+                    return;
+                }
+            }
+        }
+    };
+
+    let disconnected_tx = output_tx.clone();
+    let read = async move {
+        let mut early = early_frames.into_iter();
+        loop {
+            let frame = match early.next() {
+                Some(frame) => Ok(frame),
+                None => read_frame(&mut reader).await,
+            };
+            let output = match frame {
+                Ok(frame) if frame.channel != attach_channel => continue,
+                Ok(frame) => match frame.kind {
+                    FRAME_DATA => SessionOutput::Data(frame.payload),
+                    FRAME_RESIZE => {
+                        let [c0, c1, r0, r1] = frame.payload.as_slice() else {
+                            break;
+                        };
+                        let cols = u16::from_le_bytes([*c0, *c1]);
+                        let rows = u16::from_le_bytes([*r0, *r1]);
+                        if !valid_grid(cols, rows) {
+                            break;
+                        }
+                        SessionOutput::Resize { cols, rows }
+                    }
+                    FRAME_CLOSE => SessionOutput::Closed(CloseInfo::from_payload(&frame.payload)),
+                    _ => continue,
+                },
+                Err(_) => break,
+            };
+            let closed = matches!(output, SessionOutput::Closed(_));
+            if output_tx.send(output).await.is_err() || closed {
+                return true;
+            }
+        }
+        false
+    };
+
+    let connection = tokio::spawn(async move {
+        // Both futures own their in-flight frame across polls. Fair polling lets
+        // pending writes advance even when the read side consumes every budget.
+        let closed = tokio::select! {
+            closed = read => closed,
+            () = write => false,
+        };
+        if !closed {
+            let _ = disconnected_tx
+                .send(SessionOutput::Closed(CloseInfo {
+                    exit_code: None,
+                    signal: None,
+                    reason: "disconnected".to_string(),
+                }))
+                .await;
+        }
+    });
+
+    (writer_tx, output_rx, connection)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -912,6 +945,176 @@ mod tests {
         drop(owned);
         assert!(!path.exists());
         assert!(sibling.path().is_dir());
+    }
+
+    #[test]
+    fn create_private_dir_skips_existing_directory_collisions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let parent = DirCleanupGuard::create("collision-parent").unwrap();
+        let seq = AtomicU64::new(0);
+        let pid = std::process::id();
+        let occupied = parent.path().join(format!("u-gp-sock-{pid}-0"));
+        std::fs::create_dir(&occupied).unwrap();
+        let sentinel = occupied.join("keep");
+        std::fs::write(&sentinel, b"active").unwrap();
+
+        let created = create_private_dir_in(parent.path(), "sock", &seq).unwrap();
+        assert_eq!(created, parent.path().join(format!("u-gp-sock-{pid}-1")));
+        assert_eq!(
+            created.metadata().unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"active");
+    }
+
+    #[tokio::test]
+    async fn interrupt_and_resize_reach_a_pty_during_continuous_output() {
+        let (mut daemon, mut session) = start(
+            "busy-output",
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "stty -echo; printf 'READY\\n'; read start; trap 'printf STOPPED:; stty size; exit' INT; yes BUSY"
+                    .into(),
+            ],
+        )
+        .await;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut output = Vec::new();
+            for marker in [b"READY".as_slice(), b"BUSY", b"STOPPED:28 96"] {
+                while !output.windows(marker.len()).any(|bytes| bytes == marker) {
+                    match session.recv_output().await {
+                        Some(SessionOutput::Data(bytes)) => {
+                            let keep = output.len().saturating_sub(marker.len() - 1);
+                            output.drain(..keep);
+                            output.extend(bytes);
+                        }
+                        Some(SessionOutput::Resize { .. }) => {}
+                        _ => panic!("PTY closed before the expected output"),
+                    }
+                }
+                match marker {
+                    b"READY" => session.write_user(b"start\n".to_vec()).await.unwrap(),
+                    b"BUSY" => {
+                        session.resize(96, 28).await.unwrap();
+                        session.write_user(vec![3]).await.unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("PTY remained responsive while streaming output");
+
+        drop(session);
+        daemon.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn writes_are_not_starved_by_continuous_socket_reads() {
+        use std::io::{Read as _, Write as _};
+
+        let (client_stream, peer_stream) = UnixStream::pair().unwrap();
+        let (client_read, client_write) = client_stream.into_split();
+
+        let std_peer = peer_stream.into_std().unwrap();
+        std_peer.set_nonblocking(false).unwrap();
+        std_peer
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut peer_write = std_peer.try_clone().unwrap();
+        let mut peer_read = std_peer;
+
+        let channel = 7;
+        let (writer_tx, mut output_rx, connection) = spawn_framed_connection(
+            BufReader::new(client_read),
+            client_write,
+            channel,
+            Vec::new(),
+        );
+
+        let flood_frame = Frame::data(channel, vec![b'x']);
+        let flood_header = flood_frame.encode_header().unwrap();
+        let mut flood_batch = Vec::with_capacity(512 * (HEADER_LEN + flood_frame.payload.len()));
+        for _ in 0..512 {
+            flood_batch.extend_from_slice(&flood_header);
+            flood_batch.extend_from_slice(&flood_frame.payload);
+        }
+        let (ready_tx, mut ready_rx) = tokio::sync::watch::channel(0usize);
+        let stop_flood = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_flag = stop_flood.clone();
+
+        let peer_writer = std::thread::spawn(move || {
+            while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if peer_write.write_all(&flood_batch).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let consumer = tokio::spawn(async move {
+            let mut count = 0usize;
+            while let Some(ev) = output_rx.recv().await {
+                if matches!(ev, SessionOutput::Data(_)) {
+                    count += 1;
+                    let _ = ready_tx.send(count);
+                }
+            }
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while *ready_rx.borrow() < 1024 {
+                ready_rx.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("flood frames reached consumer");
+
+        let expected = vec![
+            Frame::data(channel, vec![3]),
+            Frame::resize(channel, 96, 28),
+            Frame::credit(channel, 4096),
+            Frame::automatic_input(channel, b"\x1b[48;28;96;504;768t".to_vec()),
+        ];
+        for frame in &expected {
+            writer_tx.send(vec![frame.clone()]).await.unwrap();
+        }
+
+        let expected_len = expected.len();
+        let received = tokio::task::spawn_blocking(move || {
+            let mut out = Vec::with_capacity(expected_len);
+            for _ in 0..expected_len {
+                let mut header = [0u8; HEADER_LEN];
+                peer_read.read_exact(&mut header)?;
+                let ch = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+                let kind = header[4];
+                let len = u32::from_le_bytes([header[5], header[6], header[7], header[8]]) as usize;
+                let mut payload = vec![0u8; len];
+                if len > 0 {
+                    peer_read.read_exact(&mut payload)?;
+                }
+                out.push(Frame {
+                    channel: ch,
+                    kind,
+                    payload,
+                });
+            }
+            io::Result::Ok(out)
+        })
+        .await
+        .unwrap()
+        .expect("writes completed while socket reads stayed continuously ready");
+
+        assert_eq!(received, expected);
+
+        stop_flood.store(true, std::sync::atomic::Ordering::Relaxed);
+        consumer.abort();
+        connection.abort();
+        let _ = connection.await;
+        drop(writer_tx);
+        let _ = peer_writer.join();
     }
 
     #[tokio::test]
@@ -962,7 +1165,7 @@ mod tests {
         handle.try_send_user(b"x".to_vec()).unwrap();
         assert!(
             !handle
-                .try_resize_with_reports(80, 24, || panic!("resize applied too early"))
+                .try_update_size_with_reports(Some((80, 24)), || panic!("resize applied too early"))
                 .unwrap()
         );
         assert_eq!(
@@ -973,12 +1176,32 @@ mod tests {
         let report = b"size report".to_vec();
         assert!(
             handle
-                .try_resize_with_reports(80, 24, || Ok(vec![report.clone()]))
+                .try_update_size_with_reports(Some((80, 24)), || Ok(vec![report.clone()]))
                 .unwrap()
         );
         assert_eq!(
             writer_rx.recv().await.unwrap(),
             [Frame::resize(7, 80, 24), Frame::automatic_input(7, report)],
+        );
+    }
+
+    #[tokio::test]
+    async fn cell_only_resize_sends_reports_without_a_pty_resize_frame() {
+        let (writer_tx, mut writer_rx) = mpsc::channel(1);
+        let handle = HerdrHandle {
+            attach_channel: 7,
+            automatic_input_supported: true,
+            writer_tx,
+        };
+        let report = b"cell size report".to_vec();
+        assert!(
+            handle
+                .try_update_size_with_reports(None, || Ok(vec![report.clone()]))
+                .unwrap()
+        );
+        assert_eq!(
+            writer_rx.try_recv().unwrap(),
+            [Frame::automatic_input(7, report)]
         );
     }
 

@@ -67,7 +67,7 @@ impl FontPreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            FontPreset::Default => "Default (Menlo+NF)",
+            FontPreset::Default => "Default",
             FontPreset::UdevGothic35Nf => "UDEV Gothic 35NF",
             FontPreset::Menlo => "Menlo",
         }
@@ -85,6 +85,41 @@ impl FontPreset {
     }
 }
 
+const LINUX_MONOSPACE: &[&str] = &[
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "Noto Sans Mono",
+    "JetBrains Mono",
+];
+
+#[cfg(target_os = "linux")]
+static LINUX_FONT_FAMILIES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "linux")]
+pub fn init_linux_font_families(families: Vec<String>) {
+    let _ = LINUX_FONT_FAMILIES.set(families);
+}
+
+fn linux_primary_family(preferred: &'static str, families: Option<&[String]>) -> &'static str {
+    match families {
+        Some(installed) => std::iter::once(preferred)
+            .chain(LINUX_MONOSPACE.iter().copied())
+            .find(|candidate| {
+                installed
+                    .iter()
+                    .any(|family| family.eq_ignore_ascii_case(candidate))
+            })
+            .unwrap_or(LINUX_MONOSPACE[0]),
+        None => {
+            if preferred.eq_ignore_ascii_case("Menlo") {
+                LINUX_MONOSPACE[0]
+            } else {
+                preferred
+            }
+        }
+    }
+}
+
 /// Builds a GPUI `Font` with deduplicated Nerd Font, Japanese, and Emoji fallbacks.
 pub fn build_terminal_font(preset: FontPreset, nerd_font_fallback: bool) -> Font {
     build_terminal_font_styled(preset, nerd_font_fallback, false, false)
@@ -97,7 +132,22 @@ pub fn build_terminal_font_styled(
     bold: bool,
     italic: bool,
 ) -> Font {
-    let primary = preset.primary_family();
+    #[cfg(target_os = "linux")]
+    let linux_families = Some(LINUX_FONT_FAMILIES.get().map(Vec::as_slice));
+    #[cfg(not(target_os = "linux"))]
+    let linux_families = None;
+    build_font(preset, nerd_font_fallback, bold, italic, linux_families)
+}
+
+fn build_font(
+    preset: FontPreset,
+    nerd_font_fallback: bool,
+    bold: bool,
+    italic: bool,
+    linux_families: Option<Option<&[String]>>,
+) -> Font {
+    let preferred = preset.primary_family();
+    let primary = linux_families.map_or(preferred, |fonts| linux_primary_family(preferred, fonts));
     let mut fallbacks: Vec<String> = Vec::new();
     let mut push_unique = |name: &str| {
         if !name.eq_ignore_ascii_case(primary)
@@ -112,6 +162,11 @@ pub fn build_terminal_font_styled(
     if preset == FontPreset::Default {
         push_unique("JetBrains Mono");
         push_unique("Monaco");
+    }
+    if linux_families.is_some() {
+        for name in LINUX_MONOSPACE {
+            push_unique(name);
+        }
     }
     if nerd_font_fallback {
         for name in NERD_FONT_FALLBACKS {
@@ -201,6 +256,53 @@ pub fn string_cell_width(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linux_font_builder_deduplicates_the_resolved_primary_and_toggles_nerd_fallbacks() {
+        let installed = ["JetBrains Mono".to_owned()];
+        for nerd in [false, true] {
+            let font = build_font(
+                FontPreset::Default,
+                nerd,
+                false,
+                false,
+                Some(Some(&installed)),
+            );
+            assert_eq!(font.family.as_ref(), "JetBrains Mono");
+            let fallbacks = font.fallbacks.unwrap();
+            let list = fallbacks.fallback_list();
+            assert!(!list.iter().any(|name| name == "JetBrains Mono"));
+            assert!(list.iter().any(|name| name == "DejaVu Sans Mono"));
+            assert_eq!(
+                list.iter().any(|name| name == "Symbols Nerd Font Mono"),
+                nerd
+            );
+        }
+    }
+
+    #[test]
+    fn linux_uses_an_installed_monospace_when_the_preset_is_missing() {
+        let installed = ["Liberation Mono".to_owned(), "UDEV Gothic 35NF".to_owned()];
+        assert_eq!(
+            linux_primary_family("Menlo", Some(&installed)),
+            "Liberation Mono"
+        );
+        assert_eq!(
+            linux_primary_family("UDEV Gothic 35NF", Some(&installed)),
+            "UDEV Gothic 35NF"
+        );
+        let case_mismatch = ["udev gothic 35nf".to_owned()];
+        assert_eq!(
+            linux_primary_family("UDEV Gothic 35NF", Some(&case_mismatch)),
+            "UDEV Gothic 35NF"
+        );
+        assert_eq!(linux_primary_family("Menlo", None), "DejaVu Sans Mono");
+        assert_eq!(
+            linux_primary_family("UDEV Gothic 35NF", None),
+            "UDEV Gothic 35NF"
+        );
+        assert_eq!(linux_primary_family("Menlo", Some(&[])), "DejaVu Sans Mono");
+    }
 
     #[test]
     fn font_fallback_deduplicates_primary_and_respects_nerd_toggle() {

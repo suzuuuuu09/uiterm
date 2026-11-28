@@ -64,6 +64,7 @@ pub struct ShapedSpan {
 #[derive(Debug, Clone)]
 pub struct CachedShapedRow {
     pub bg_quads: Vec<BgQuad>,
+    pub overlines: Vec<BgQuad>,
     pub shaped_spans: Vec<ShapedSpan>,
     pub estimated_bytes: usize,
 }
@@ -614,7 +615,7 @@ struct RunStyleKey {
     strikethrough: bool,
 }
 
-fn push_bg_quad(bg_quads: &mut Vec<BgQuad>, col: u16, span_w: u16, bg_u32: u32) {
+fn push_cell_quad(bg_quads: &mut Vec<BgQuad>, col: u16, span_w: u16, bg_u32: u32) {
     if let Some(last) = bg_quads.last_mut()
         && last.rgb_u32 == bg_u32
         && last.col_start + last.col_span == col
@@ -700,6 +701,21 @@ fn push_coalesced_run(
     }
 }
 
+fn collect_overlines(cells: &[StyledCell], colors: &ScreenColorsSnapshot) -> Vec<BgQuad> {
+    let mut overlines = Vec::new();
+    for cell in cells.iter().filter(|cell| cell.overline && !cell.invisible) {
+        let (fg, _) = resolve_cell_colors(cell, colors);
+        let alpha = if cell.faint { 0x80 } else { 0xff };
+        push_cell_quad(
+            &mut overlines,
+            cell.col,
+            u16::from(cell.width.max(1)),
+            (fg << 8) | alpha,
+        );
+    }
+    overlines
+}
+
 pub fn shape_extracted_row(
     cells: &[StyledCell],
     total_cols: u16,
@@ -720,7 +736,7 @@ pub fn shape_extracted_row(
 
         // Background quad (including SGR 2 faint & SGR 8 invisible & SGR 7 inverse)
         if let Some(bg_u32) = eff_bg {
-            push_bg_quad(&mut bg_quads, cell.col, cell.width.max(1) as u16, bg_u32);
+            push_cell_quad(&mut bg_quads, cell.col, cell.width.max(1) as u16, bg_u32);
         }
 
         // Foreground glyphs (skip SGR 8 invisible and empty text)
@@ -747,7 +763,7 @@ pub fn shape_extracted_row(
                     {
                         let (next_fg, next_bg) = resolve_cell_colors(next, colors);
                         if let Some(nbg) = next_bg {
-                            push_bg_quad(&mut bg_quads, next.col, 1, nbg);
+                            push_cell_quad(&mut bg_quads, next.col, 1, nbg);
                         }
                         text_buf.push_str(&next.text);
                         push_coalesced_run(&mut runs, next, next_fg, fonts);
@@ -788,7 +804,7 @@ pub fn shape_extracted_row(
                     {
                         let (next_fg, next_bg) = resolve_cell_colors(next, colors);
                         if let Some(nbg) = next_bg {
-                            push_bg_quad(&mut bg_quads, next.col, 2, nbg);
+                            push_cell_quad(&mut bg_quads, next.col, 2, nbg);
                         }
                         text_buf.push_str(&next.text);
                         push_coalesced_run(&mut runs, next, next_fg, fonts);
@@ -839,8 +855,9 @@ pub fn shape_extracted_row(
         bg_quads[0].extends_to_right_edge = true;
     }
 
+    let overlines = collect_overlines(cells, colors);
     let estimated_bytes = std::mem::size_of::<CachedShapedRow>()
-        + bg_quads.capacity() * std::mem::size_of::<BgQuad>()
+        + (bg_quads.capacity() + overlines.capacity()) * std::mem::size_of::<BgQuad>()
         + shaped_spans
             .iter()
             .map(|s| {
@@ -854,6 +871,7 @@ pub fn shape_extracted_row(
     (
         CachedShapedRow {
             bg_quads,
+            overlines,
             shaped_spans,
             estimated_bytes,
         },
@@ -918,7 +936,7 @@ pub fn paint_terminal_frame(
     ime: Option<ImeOverlayState<'_>>,
     window: &mut Window,
     cx: &mut App,
-) -> Option<(Bounds<Pixels>, ShapedLine)> {
+) -> (Bounds<Pixels>, Option<(Bounds<Pixels>, ShapedLine)>) {
     let origin = content_bounds.origin;
     let cw = frame.metrics.cell_width;
     let rh = frame.metrics.row_height;
@@ -955,6 +973,14 @@ pub fn paint_terminal_frame(
         }
 
         if let Some(row) = row_opt {
+            for q in &row.overlines {
+                let x = origin.x + cw * f32::from(q.col_start);
+                let width = cw * f32::from(q.col_span);
+                window.paint_quad(fill(
+                    Bounds::new(point(x, y), size(width, px(1.0))),
+                    rgba(q.rgb_u32),
+                ));
+            }
             for span in &row.shaped_spans {
                 let x = origin.x + cw * span.col_start as f32;
                 let _ = span.shaped.paint(point(x, y), rh, window, cx);
@@ -985,23 +1011,17 @@ pub fn paint_terminal_frame(
 
     // 4. Cursor
     let cursor = frame.meta.cursor;
+    let cursor_pos = point(
+        origin.x + cw * f32::from(cursor.col),
+        origin.y + rh * f32::from(cursor.row),
+    );
+    let cw_cells = cw * f32::from(cursor.width);
     let cursor_color_u32 = frame.meta.colors.cursor_u32.unwrap_or(0xe4e4e7);
     if cursor.visible {
         let show_filled = !cursor.blinking || cursor_blink_on;
-        let cursor_col = if cursor.at_wide_tail && cursor.col > 0 {
-            cursor.col - 1
-        } else {
-            cursor.col
-        };
-        let cx_pos = point(
-            origin.x + cw * cursor_col as f32,
-            origin.y + rh * cursor.row as f32,
-        );
-        let cw_cells = if cursor.at_wide_tail { cw * 2.0 } else { cw };
-
         if !window_active || matches!(cursor.visual_style, CursorVisualStyle::BlockHollow) {
             window.paint_quad(gpui::outline(
-                Bounds::new(cx_pos, size(cw_cells, rh)),
+                Bounds::new(cursor_pos, size(cw_cells, rh)),
                 rgb(cursor_color_u32),
                 Default::default(),
             ));
@@ -1009,7 +1029,7 @@ pub fn paint_terminal_frame(
             match cursor.visual_style {
                 CursorVisualStyle::Block => {
                     window.paint_quad(fill(
-                        Bounds::new(cx_pos, size(cw_cells, rh)),
+                        Bounds::new(cursor_pos, size(cw_cells, rh)),
                         Hsla {
                             a: 0.45,
                             ..rgb(cursor_color_u32).into()
@@ -1018,14 +1038,14 @@ pub fn paint_terminal_frame(
                 }
                 CursorVisualStyle::Bar => {
                     window.paint_quad(fill(
-                        Bounds::new(cx_pos, size(px(2.0), rh)),
+                        Bounds::new(cursor_pos, size(px(2.0), rh)),
                         rgb(cursor_color_u32),
                     ));
                 }
                 CursorVisualStyle::Underline => {
                     window.paint_quad(fill(
                         Bounds::new(
-                            point(cx_pos.x, cx_pos.y + rh - px(2.0)),
+                            point(cursor_pos.x, cursor_pos.y + rh - px(2.0)),
                             size(cw_cells, px(2.0)),
                         ),
                         rgb(cursor_color_u32),
@@ -1033,7 +1053,7 @@ pub fn paint_terminal_frame(
                 }
                 CursorVisualStyle::BlockHollow | _ => {
                     window.paint_quad(gpui::outline(
-                        Bounds::new(cx_pos, size(cw_cells, rh)),
+                        Bounds::new(cursor_pos, size(cw_cells, rh)),
                         rgb(cursor_color_u32),
                         Default::default(),
                     ));
@@ -1043,11 +1063,7 @@ pub fn paint_terminal_frame(
     }
 
     // 5. IME preedit overlay & candidate anchor bounds anchored at cursor position
-    let cursor_pos = point(
-        origin.x + cw * cursor.col as f32,
-        origin.y + rh * cursor.row as f32,
-    );
-    let mut ime_anchor = Bounds::new(cursor_pos, size(cw.max(px(2.0)), rh));
+    let cursor_anchor = Bounds::new(cursor_pos, size(cw_cells.max(px(2.0)), rh));
 
     if let Some(ime_state) = ime
         && !ime_state.preedit.is_empty()
@@ -1129,12 +1145,10 @@ pub fn paint_terminal_frame(
             rgb(0x22c55e),
         ));
 
-        ime_anchor = overlay_bounds;
-        return Some((ime_anchor, shaped_preedit));
+        return (cursor_anchor, Some((overlay_bounds, shaped_preedit)));
     }
 
-    let empty_shaped = ShapedLine::default();
-    Some((ime_anchor, empty_shaped))
+    (cursor_anchor, None)
 }
 
 #[cfg(test)]
@@ -1143,11 +1157,28 @@ mod tests {
     use crate::vt::DEFAULT_SCROLLBACK_LINES;
 
     #[test]
+    fn sgr_53_overlines_cover_cells_and_stop_on_reset_or_conceal() {
+        let mut vt = crate::vt::VtTerminal::new(20, 4, 0).unwrap();
+        vt.feed("A\x1b[53;31mB界 \x1b[8mC\x1b[28;55mD\r\n\x1b[53;2mE".as_bytes());
+        let screen = vt.snapshot().unwrap();
+        let quads = collect_overlines(&screen.lines[0], &screen.colors);
+        assert_eq!(quads.len(), 1);
+        assert_eq!((quads[0].col_start, quads[0].col_span), (1, 4));
+        assert_eq!(quads[0].rgb_u32 & 0xff, 0xff);
+
+        let faint_quads = collect_overlines(&screen.lines[1], &screen.colors);
+        assert_eq!(faint_quads.len(), 1);
+        assert_eq!((faint_quads[0].col_start, faint_quads[0].col_span), (0, 1));
+        assert_eq!(faint_quads[0].rgb_u32 & 0xff, 0x80);
+    }
+
+    #[test]
     fn cache_estimate_counts_shared_and_viewport_only_rows_once() {
         let mut cache = RowShapeCache::new(RenderCacheMode::DirtyRowCache);
         let row = |estimated_bytes| {
             Arc::new(CachedShapedRow {
                 bg_quads: Vec::new(),
+                overlines: Vec::new(),
                 shaped_spans: Vec::new(),
                 estimated_bytes,
             })
@@ -1252,6 +1283,7 @@ mod tests {
                     content_hash: i + 1000,
                     row: Arc::new(CachedShapedRow {
                         bg_quads: Vec::new(),
+                        overlines: Vec::new(),
                         shaped_spans: Vec::new(),
                         estimated_bytes: 128,
                     }),
