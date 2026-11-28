@@ -22,7 +22,9 @@ pub enum TerminalAppAction {
     CycleFont,
     ToggleNerdFallback,
     RestartSession,
+    #[cfg(target_os = "macos")]
     ToggleRenderCache,
+    #[cfg(target_os = "macos")]
     Quit,
 }
 
@@ -517,7 +519,10 @@ mod tests {
             classify_keydown(&cmd_c, false, false, true),
             KeyDispatchDecision::PassToIme
         );
-        let cmd_w = Keystroke { key: "w".into(), ..cmd_c };
+        let cmd_w = Keystroke {
+            key: "w".into(),
+            ..cmd_c
+        };
         assert_eq!(
             classify_keydown(&cmd_w, false, true, true),
             KeyDispatchDecision::PassToIme
@@ -527,7 +532,11 @@ mod tests {
     #[test]
     fn ctrl_shift_c_copies_selection_and_ctrl_c_reaches_the_pty() {
         let mut keystroke = Keystroke {
-            modifiers: Modifiers { control: true, shift: true, ..Default::default() },
+            modifiers: Modifiers {
+                control: true,
+                shift: true,
+                ..Default::default()
+            },
             key: "c".into(),
             key_char: None,
         };
@@ -541,5 +550,4 @@ mod tests {
             KeyDispatchDecision::SendToTerminal { .. },
         ));
     }
-
 }

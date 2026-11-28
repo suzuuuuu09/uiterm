@@ -26,7 +26,7 @@ function TerminalTopBar({ onNewTerminal }: { readonly onNewTerminal: () => void 
   const panes = useAppStore((s) => s.panes);
   const sessions = useAppStore((s) => s.sessions);
   const activeWorkspace = useAppStore((s) =>
-    s.selection.activeWorkspaceId ? s.workspaces[s.selection.activeWorkspaceId] ?? null : null,
+    s.selection.activeWorkspaceId ? (s.workspaces[s.selection.activeWorkspaceId] ?? null) : null,
   );
   const activeTabId = useAppStore((s) => s.selection.activeTabId);
   const benchRunning = usePocStore((s) => s.benchRunning);
@@ -123,10 +123,10 @@ function SessionStatusBanner() {
   const locale = useAppStore((s) => s.settings.locale);
   const activeTabId = useAppStore((s) => s.selection.activeTabId);
   const activePane = useAppStore((s) =>
-    s.selection.activePaneId ? s.panes[s.selection.activePaneId] ?? null : null,
+    s.selection.activePaneId ? (s.panes[s.selection.activePaneId] ?? null) : null,
   );
   const activeSession = useAppStore((s) =>
-    activePane?.sessionId ? s.sessions[activePane.sessionId] ?? null : null,
+    activePane?.sessionId ? (s.sessions[activePane.sessionId] ?? null) : null,
   );
 
   const disconnected = useAppStore((s) => s.coreConnection.status === "disconnected");
@@ -244,9 +244,10 @@ export function App() {
       const state = appStore.getState();
       const activePaneId = state.selection.activePaneId;
       const isEditableTarget = isEditableElement(event.target);
-      const hasSelection = activePaneId && !isEditableTarget
-        ? appRuntime.sessionManager.hasSelection(activePaneId)
-        : false;
+      const hasSelection =
+        activePaneId && !isEditableTarget
+          ? appRuntime.sessionManager.hasSelection(activePaneId)
+          : false;
       const match = matchAppShortcut(event, {
         isMac,
         isComposing: state.ui.isComposing,
@@ -256,11 +257,7 @@ export function App() {
       if (!match) return;
       event.preventDefault();
       event.stopPropagation();
-      void appRuntime.actions.execute(
-        match.actionId,
-        match.args as never,
-        { caller: "keybind" },
-      );
+      void appRuntime.actions.execute(match.actionId, match.args as never, { caller: "keybind" });
     };
 
     window.addEventListener("keydown", onKeyDown, true);

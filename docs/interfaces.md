@@ -2,13 +2,13 @@
 
 現行Tauri版の契約への入口。詳細仕様と実装を参照し、ここで新規プロトコルを定義しない。
 
-| 境界 | 契約 |
-| --- | --- |
-| GUI → Rust | Tauri Commands、端末入力のRaw Body |
-| Rust → GUI | Channels、出力のRaw Binaryフレーム |
-| Rust ↔ herdr-core | Unixソケット、JSON-RPC、Framed Mode |
+| 境界                        | 契約                                                    |
+| --------------------------- | ------------------------------------------------------- |
+| GUI → Rust                  | Tauri Commands、端末入力のRaw Body                      |
+| Rust → GUI                  | Channels、出力のRaw Binaryフレーム                      |
+| Rust ↔ herdr-core           | Unixソケット、JSON-RPC、Framed Mode                     |
 | UI・CLI・設定・キーバインド | 共通Action Registry（CLIと製品設定の外部公開はPhase 4） |
-| 設定ランタイム | JSON-RPC over stdio（開発用PoCで検証） |
+| 設定ランタイム              | JSON-RPC over stdio（開発用PoCで検証）                  |
 
 ## 不変条件
 

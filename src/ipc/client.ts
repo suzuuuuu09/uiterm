@@ -72,11 +72,7 @@ export class TauriIpcClient implements UitermBackendClient {
     });
   }
 
-  async terminalResize(
-    attachId: AttachId,
-    cols: number,
-    rows: number,
-  ): Promise<void> {
+  async terminalResize(attachId: AttachId, cols: number, rows: number): Promise<void> {
     await invoke<void>("terminal_resize", { attachId, cols, rows });
   }
 
@@ -84,10 +80,7 @@ export class TauriIpcClient implements UitermBackendClient {
     await invoke<void>("terminal_focus", { attachId, focused });
   }
 
-  async terminalFacts(
-    attachId: AttachId,
-    display: DisplayFacts,
-  ): Promise<void> {
+  async terminalFacts(attachId: AttachId, display: DisplayFacts): Promise<void> {
     await invoke<void>("terminal_facts", { attachId, display });
   }
 
@@ -99,9 +92,7 @@ export class TauriIpcClient implements UitermBackendClient {
     await invoke<void>("terminal_kill", { sessionId });
   }
 
-  async eventsSubscribe(
-    onEvent: (event: CoreEvent) => void,
-  ): Promise<EventsSubscribeResult> {
+  async eventsSubscribe(onEvent: (event: CoreEvent) => void): Promise<EventsSubscribeResult> {
     const channel = new Channel<EventDelivery>();
     channel.onmessage = ({ subscriptionId, events, bytes }) => {
       try {

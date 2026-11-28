@@ -101,7 +101,9 @@ pub fn build_terminal_font_styled(
     let mut fallbacks: Vec<String> = Vec::new();
     let mut push_unique = |name: &str| {
         if !name.eq_ignore_ascii_case(primary)
-            && !fallbacks.iter().any(|existing| existing.eq_ignore_ascii_case(name))
+            && !fallbacks
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(name))
         {
             fallbacks.push(name.to_string());
         }

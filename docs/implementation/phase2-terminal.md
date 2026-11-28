@@ -14,14 +14,14 @@ Phase 0・Phase 1 で構築した Tauri 2 + `herdr-core` v0.1.22 + `@wterm/dom` 
 
 ### 1.1 ターミナル基本機能
 
-| 機能 | 実装ファイル | 内容 |
-| --- | --- | --- |
-| シェル起動・終了・再起動 | `src/App.tsx`, `src/actions/builtin.ts`, `src-tauri/src/commands.rs` | 既存のログインシェル起動・XDG 復元・監視プロセス終了を維持。アクティブセッションが `finished` / `lost` になった際に終了コードまたは切断状態と再起動ボタンを表示。再起動中の重複呼び出しを拒否し、失敗時も再試行できる。 |
-| テキスト選択・コピー・ペースト | `src/terminal/wtermAdapter.ts`, `src/terminal/sessionManager.ts`, `src/actions/builtin.ts` | `terminal.copySelection` に加え、`terminal.paste` / `terminal.selectAll` / `terminal.clearSelection` を Action Registry へ接続。`adapter.paste(text)` は `core.bracketedPaste()` が有効な場合に ESC (`\x1b`) をサニタイズした上で `\x1b[200~...\x1b[201~` でラップして送信。 |
-| リサイズ・セル計測 | `src/terminal/wtermAdapter.ts`, `src/index.css` | `ResizeObserver` による自動リサイズに加え、`document.fonts.ready` 完了時の再フィットおよびフォント変更時の即時 `fit()` を実装。バックエンド起点リサイズループ防止ガードは Phase 0/1 のまま維持。 |
-| フォーカス管理 | `src/App.tsx`, `src/terminal/sessionManager.ts` | タブ切替時の `terminalFocus` IPC に加え、OS ウィンドウの `focus` / `blur` イベントを `sessionManager.setWindowFocused()` へ接続し、herdr-core の FOCUS フレームに PTY 通知を統一。タブ切替とウィンドウのアクティブ状態から通知し、wterm による同一通知の送信を抑止。 |
-| カラーパレット・前景色/背景色 | `src/terminal/appearance.ts`, `src/terminal/wtermAdapter.ts`, `src/index.css` | `#09090b` 背景・`#f4f4f5` 前景・通常色（0–7）と明色（8–15）を明確に区別した 16 色 ANSI パレット（`DEFAULT_TERMINAL_THEME`）を定義。CSS カスタムプロパティ（`--term-fg`, `--term-bg`, `--term-cursor`, `--term-selection-bg`, `--term-color-0..15`）と `WTerm.setThemeColors()` を同期。 |
-| カーソル形状・点滅 | `src/terminal/appearance.ts`, `src/actions/builtin.ts`, `src/index.css` | `cursorStyle`（`auto \| block \| bar \| underline`）と `cursorBlink`（`auto \| on \| off`）の内部設定と `app.setCursor` アクションを追加。`auto` では VT が報告する形状を使う。明示的な形状指定は DOM / WebGL が読むカーソルに反映する。 |
+| 機能                           | 実装ファイル                                                                               | 内容                                                                                                                                                                                                                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| シェル起動・終了・再起動       | `src/App.tsx`, `src/actions/builtin.ts`, `src-tauri/src/commands.rs`                       | 既存のログインシェル起動・XDG 復元・監視プロセス終了を維持。アクティブセッションが `finished` / `lost` になった際に終了コードまたは切断状態と再起動ボタンを表示。再起動中の重複呼び出しを拒否し、失敗時も再試行できる。                                                                 |
+| テキスト選択・コピー・ペースト | `src/terminal/wtermAdapter.ts`, `src/terminal/sessionManager.ts`, `src/actions/builtin.ts` | `terminal.copySelection` に加え、`terminal.paste` / `terminal.selectAll` / `terminal.clearSelection` を Action Registry へ接続。`adapter.paste(text)` は `core.bracketedPaste()` が有効な場合に ESC (`\x1b`) をサニタイズした上で `\x1b[200~...\x1b[201~` でラップして送信。            |
+| リサイズ・セル計測             | `src/terminal/wtermAdapter.ts`, `src/index.css`                                            | `ResizeObserver` による自動リサイズに加え、`document.fonts.ready` 完了時の再フィットおよびフォント変更時の即時 `fit()` を実装。バックエンド起点リサイズループ防止ガードは Phase 0/1 のまま維持。                                                                                        |
+| フォーカス管理                 | `src/App.tsx`, `src/terminal/sessionManager.ts`                                            | タブ切替時の `terminalFocus` IPC に加え、OS ウィンドウの `focus` / `blur` イベントを `sessionManager.setWindowFocused()` へ接続し、herdr-core の FOCUS フレームに PTY 通知を統一。タブ切替とウィンドウのアクティブ状態から通知し、wterm による同一通知の送信を抑止。                    |
+| カラーパレット・前景色/背景色  | `src/terminal/appearance.ts`, `src/terminal/wtermAdapter.ts`, `src/index.css`              | `#09090b` 背景・`#f4f4f5` 前景・通常色（0–7）と明色（8–15）を明確に区別した 16 色 ANSI パレット（`DEFAULT_TERMINAL_THEME`）を定義。CSS カスタムプロパティ（`--term-fg`, `--term-bg`, `--term-cursor`, `--term-selection-bg`, `--term-color-0..15`）と `WTerm.setThemeColors()` を同期。 |
+| カーソル形状・点滅             | `src/terminal/appearance.ts`, `src/actions/builtin.ts`, `src/index.css`                    | `cursorStyle`（`auto \| block \| bar \| underline`）と `cursorBlink`（`auto \| on \| off`）の内部設定と `app.setCursor` アクションを追加。`auto` では VT が報告する形状を使う。明示的な形状指定は DOM / WebGL が読むカーソルに反映する。                                                |
 
 ### 1.2 フォント・Nerd Font
 
@@ -70,14 +70,14 @@ wterm の pnpm パッチ（`patches/@wterm__dom@0.6.0.patch`）と `TerminalView
 
 ユーザーの実 Neovim 設定（隔離ではない通常の `HOME` / `XDG_CONFIG_HOME` / `XDG_STATE_HOME`）を用い、ローカル PTY・単体 `herdr-core`・`uiterm.app` リリースビルド（背景・前景 `FRONT=uiterm`・`nix develop` 経由・`macSKK` ひらがなからの切替を含む）で初回および 2〜4 回目を測定した。
 
-| 条件 | 入力方式 | macism 実時間（ms、1〜4 回目） | 実 Neovim 設定 `NVIM STARTED`（ms、1〜4 回目） |
-| --- | --- | --- | --- |
-| ローカル PTY（`fish -l`） | macSKK ASCII | 68.2 / 59.5 / 55.9 / 54.3 | 294.2 / 203.1 / 247.2 / 203.1 |
-| 単体 `herdr-core`（`fish -l`） | macSKK ASCII | 53.9 / 40.9 / 34.7 / 33.9 | 81.1 / 62.3 / 59.4 / 64.3 |
-| `uiterm.app` リリース（背景） | macSKK ASCII | 48.8 / 42.4 / 40.1 / 38.0 | 68.1 / 63.5 / 68.9 / 62.7 |
-| `uiterm.app` リリース（前景 `FRONT=uiterm`） | macSKK ASCII | 44.1 / 43.4 / 38.5 | 98.5 / 67.3 / 71.2 |
-| `uiterm.app`（`nix develop` 経由） | macSKK ASCII → ひらがな切替 | 38.1 / 39.0 / 40.7 | 119.0 / 92.5（ひらがな→ASCII 切替含む） |
-| `uiterm.app` 対話起動（`:q!` 終了） | macSKK ASCII | — | 112.6（`VimEnter autocommands`: 35.7） |
+| 条件                                         | 入力方式                    | macism 実時間（ms、1〜4 回目） | 実 Neovim 設定 `NVIM STARTED`（ms、1〜4 回目） |
+| -------------------------------------------- | --------------------------- | ------------------------------ | ---------------------------------------------- |
+| ローカル PTY（`fish -l`）                    | macSKK ASCII                | 68.2 / 59.5 / 55.9 / 54.3      | 294.2 / 203.1 / 247.2 / 203.1                  |
+| 単体 `herdr-core`（`fish -l`）               | macSKK ASCII                | 53.9 / 40.9 / 34.7 / 33.9      | 81.1 / 62.3 / 59.4 / 64.3                      |
+| `uiterm.app` リリース（背景）                | macSKK ASCII                | 48.8 / 42.4 / 40.1 / 38.0      | 68.1 / 63.5 / 68.9 / 62.7                      |
+| `uiterm.app` リリース（前景 `FRONT=uiterm`） | macSKK ASCII                | 44.1 / 43.4 / 38.5             | 98.5 / 67.3 / 71.2                             |
+| `uiterm.app`（`nix develop` 経由）           | macSKK ASCII → ひらがな切替 | 38.1 / 39.0 / 40.7             | 119.0 / 92.5（ひらがな→ASCII 切替含む）        |
+| `uiterm.app` 対話起動（`:q!` 終了）          | macSKK ASCII                | —                              | 112.6（`VimEnter autocommands`: 35.7）         |
 
 ユーザー報告値（Ghostty `102.458 ms` / `macism 29.29〜57.05 ms` に対し、uiterm `2699.883 ms` / `macism 1680〜2490 ms`）の 1.7〜2.7 秒遅延は、ユーザー実設定を用いた上記すべての自動測定条件でも、修正後 macOS リリースビルドでのユーザー実機検証でも再現しなかった。ただし遅延発生時の `macism` プロセススタックは未採取であり根本原因は未特定のため、恒久的な解決済みとは扱わず既知の調査事項として記録を維持する。今後実機で遅延が再発した際に下記チェックリスト §6 の `sample` 手順でスタックを採取し、`TISCreateInputSourceList` / `TISCopyCurrentKeyboardInputSource` / WindowServer IPC のどこで待機しているかを特定する必要がある。
 
@@ -107,33 +107,33 @@ wterm の pnpm パッチ（`patches/@wterm__dom@0.6.0.patch`）と `TerminalView
 
 対象 worktree: `uiterm-phase2`（ブランチ `feat/phase2-terminal`）
 
-| 検証項目 | コマンド | 結果 |
-| --- | --- | --- |
-| TypeScript 型検査 | `pnpm typecheck` | **合格**（0 errors） |
-| Lint | `pnpm lint` | **合格** |
-| Vitest（単体・統合・回帰） | `pnpm test -- --run` | **合格**（11 ファイル、55 件。Phase 0/1 の既存回帰および IME 連続確定・未確定削除を含む） |
-| Rust テスト | `cargo test --locked --manifest-path src-tauri/Cargo.toml` | **合格**（unit 15 + `herdr_integration` 6 + `supervisor` 3 = 24 passed、`IUTF8` 初期化回帰を含む） |
-| Clippy | `cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` | **合格**（0 warnings） |
-| CLI 互換性（隔離 PTY） | `cargo test --locked --manifest-path src-tauri/Cargo.toml installed_cli_compatibility_in_isolated_pty -- --ignored` | **合格**（`fish` / `nvim` / `codex --version`） |
-| リリースビルド | `nix develop --no-write-lock-file --command pnpm tauri build --bundles app` | **合格**（`uiterm.app` 3.66 MiB / Vite+ 警告 0 件） |
-| Phase 0 描画・計測スモーク | `node --expose-gc scripts/bench-terminals.mjs`、`python3 scripts/bench-app.py self-test` | **合格**（1 / 5 / 10 端末の 10,000 行出力と破棄） |
-| Nix Flake 静的評価 | `nix flake check --no-build --all-systems --no-write-lock-file` | **合格**（`aarch64-darwin` / `aarch64-linux` / `x86_64-linux`） |
+| 検証項目                   | コマンド                                                                                                            | 結果                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| TypeScript 型検査          | `pnpm typecheck`                                                                                                    | **合格**（0 errors）                                                                               |
+| Lint                       | `pnpm lint`                                                                                                         | **合格**                                                                                           |
+| Vitest（単体・統合・回帰） | `pnpm test -- --run`                                                                                                | **合格**（11 ファイル、55 件。Phase 0/1 の既存回帰および IME 連続確定・未確定削除を含む）          |
+| Rust テスト                | `cargo test --locked --manifest-path src-tauri/Cargo.toml`                                                          | **合格**（unit 15 + `herdr_integration` 6 + `supervisor` 3 = 24 passed、`IUTF8` 初期化回帰を含む） |
+| Clippy                     | `cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`                           | **合格**（0 warnings）                                                                             |
+| CLI 互換性（隔離 PTY）     | `cargo test --locked --manifest-path src-tauri/Cargo.toml installed_cli_compatibility_in_isolated_pty -- --ignored` | **合格**（`fish` / `nvim` / `codex --version`）                                                    |
+| リリースビルド             | `nix develop --no-write-lock-file --command pnpm tauri build --bundles app`                                         | **合格**（`uiterm.app` 3.66 MiB / Vite+ 警告 0 件）                                                |
+| Phase 0 描画・計測スモーク | `node --expose-gc scripts/bench-terminals.mjs`、`python3 scripts/bench-app.py self-test`                            | **合格**（1 / 5 / 10 端末の 10,000 行出力と破棄）                                                  |
+| Nix Flake 静的評価         | `nix flake check --no-build --all-systems --no-write-lock-file`                                                     | **合格**（`aarch64-darwin` / `aarch64-linux` / `x86_64-linux`）                                    |
 
 | macOS 実ウィンドウ | リリース .app を隔離 HOME / XDG で起動 | CoreGraphics でウィンドウ表示を検出。各試行で専用 core・holder・fish の起動と終了を観測。 |
 
 ### 独立レビューで修正した点
 
-| 判定 | 問題と修正 | 回帰検証 |
-| --- | --- | --- |
-| 修正必須 | Option キーのキャプチャがストアの IME 状態を見ていなかった。変換を追跡するコールバックを実際のリスナーへ渡し、入力欄の blur で変換状態を解除する。 | アダプターのリスナーで IME 中の不送信、変換外の 1 回送信、解放を確認。既存の wterm 入力テストで IME 確定文字列の重複と Enter の誤送信を検証。 |
-| 修正必須 | wterm の選択が残ると Ctrl+C が PTY へ届かない。キャプチャ時に端末の選択を解除し、wterm の通常エンコードに委ねる。コピー対象は端末内の選択に限定した。 | 選択解除とイベント通過をアダプターのリスナーで確認。 |
-| 修正必須 | Tauri 標準メニューの `Cmd+W` はウィンドウを閉じる。タブを閉じる割り当てを `Cmd+Shift+W` へ変更した。 | 2 つの組み合わせの判定をテスト。実打鍵は手動検証。 |
-| 修正必須 | DOM と herdr-core の両方がフォーカス通知を生成できた。FOCUS フレームに統一し、非アクティブ時のタブ切替や再アタッチも考慮する。 | フォーカス IPC の重複、非アクティブ時のタブ切替、復帰時の通知を検証。 |
-| 修正必須 | herdr-core の終了シグナルが数値なのに Rust 側は文字列を要求し、終了済み端末を含む一覧が失敗した。Rust の変換境界と CLOSE デコーダーで正規化し、既存 IPC の文字列型を維持。UI はシグナルによる終了を表示する。 | 修正前の一覧取得失敗を再現。隔離 core に対する停止・一覧取得と、数値シグナルを含む CLOSE の回帰を追加。 |
-| 修正必須 | 再起動の再入が進行中の起動を中断し、切断後にイベント購読が失われたままになる。再入を拒否し、失敗時は再起動対象を保持する。端末生成時に購読を確保し、切断・セッション消失を画面に表示する。 | モック IPC で切断後の再購読、再起動の連打、新セッションの状態反映を検証。 |
-| 修正必須 | クリップボード読み込み中の再起動で、新しいシェルへ貼り付ける競合があった。読み込み前後で同じセッションか照合する。 | 読み込み中に再起動しても新セッションへ送信しないことを検証。 |
-| 修正必須 | DOM のカーソル形状属性は常に存在するため、アプリの既定形状を適用する CSS が一致しなかった。既定は VT の `auto` とし、明示した形状を両描画経路のカーソル取得に反映する。 | 既定・強制・解除のカーソル形状をアダプターで検証。 |
-| 修正推奨 | 自動応答の診断は種別・バイト数に限定した（セル寸法計測の `getCellMetrics` / `CellMetrics` は開発用診断ドロワーのフォント検証表示で使用）。 | TypeScript、Lint、既存の送信分離・入力プライバシーの回帰テストを実行。 |
+| 判定     | 問題と修正                                                                                                                                                                                                    | 回帰検証                                                                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 修正必須 | Option キーのキャプチャがストアの IME 状態を見ていなかった。変換を追跡するコールバックを実際のリスナーへ渡し、入力欄の blur で変換状態を解除する。                                                            | アダプターのリスナーで IME 中の不送信、変換外の 1 回送信、解放を確認。既存の wterm 入力テストで IME 確定文字列の重複と Enter の誤送信を検証。 |
+| 修正必須 | wterm の選択が残ると Ctrl+C が PTY へ届かない。キャプチャ時に端末の選択を解除し、wterm の通常エンコードに委ねる。コピー対象は端末内の選択に限定した。                                                         | 選択解除とイベント通過をアダプターのリスナーで確認。                                                                                          |
+| 修正必須 | Tauri 標準メニューの `Cmd+W` はウィンドウを閉じる。タブを閉じる割り当てを `Cmd+Shift+W` へ変更した。                                                                                                          | 2 つの組み合わせの判定をテスト。実打鍵は手動検証。                                                                                            |
+| 修正必須 | DOM と herdr-core の両方がフォーカス通知を生成できた。FOCUS フレームに統一し、非アクティブ時のタブ切替や再アタッチも考慮する。                                                                                | フォーカス IPC の重複、非アクティブ時のタブ切替、復帰時の通知を検証。                                                                         |
+| 修正必須 | herdr-core の終了シグナルが数値なのに Rust 側は文字列を要求し、終了済み端末を含む一覧が失敗した。Rust の変換境界と CLOSE デコーダーで正規化し、既存 IPC の文字列型を維持。UI はシグナルによる終了を表示する。 | 修正前の一覧取得失敗を再現。隔離 core に対する停止・一覧取得と、数値シグナルを含む CLOSE の回帰を追加。                                       |
+| 修正必須 | 再起動の再入が進行中の起動を中断し、切断後にイベント購読が失われたままになる。再入を拒否し、失敗時は再起動対象を保持する。端末生成時に購読を確保し、切断・セッション消失を画面に表示する。                    | モック IPC で切断後の再購読、再起動の連打、新セッションの状態反映を検証。                                                                     |
+| 修正必須 | クリップボード読み込み中の再起動で、新しいシェルへ貼り付ける競合があった。読み込み前後で同じセッションか照合する。                                                                                            | 読み込み中に再起動しても新セッションへ送信しないことを検証。                                                                                  |
+| 修正必須 | DOM のカーソル形状属性は常に存在するため、アプリの既定形状を適用する CSS が一致しなかった。既定は VT の `auto` とし、明示した形状を両描画経路のカーソル取得に反映する。                                       | 既定・強制・解除のカーソル形状をアダプターで検証。                                                                                            |
+| 修正推奨 | 自動応答の診断は種別・バイト数に限定した（セル寸法計測の `getCellMetrics` / `CellMetrics` は開発用診断ドロワーのフォント検証表示で使用）。                                                                    | TypeScript、Lint、既存の送信分離・入力プライバシーの回帰テストを実行。                                                                        |
 
 Action Registry の引数検証を維持し、出力バイトは Zustand を経由しない。Phase 2 でネイティブの権限、CSP、ナビゲーション制限、生成 IPC DTO、依存ロックに差分はない。Rust の権限・入力検証・クレジット・古いアタッチの拒否・監視プロセスの回帰テストが通った。GUI 経由の再起動クリックと core 強制終了後の UI は手動検証に残る。
 
@@ -145,13 +145,13 @@ Action Registry の引数検証を維持し、出力バイトは Zustand を経�
 
 macOS arm64（Darwin 24.5.0）。Phase 0 `5ea6c3d`、Phase 1 `005f4b1`、最終修正後の Phase 2 を同じ Nix シェルでリリースビルドした。外部の herdr-core は固定版 `0.1.22`（6,603,232 B）。各版を隔離 HOME / XDG、既定 1000×700 ウィンドウ、wterm DOM と fish 1 端末で 3 回起動した。fish の起動引数は各版の既定に従った。起動時刻は CoreGraphics がウィンドウを検出した時点。足し合わせた RSS と `footprint` の Summary は別指標。4 秒以降で専用ソケットを検出したサンプルの試行内中央値を求め、さらに 3 試行の中央値を取った。各版の既定 UI が異なるため端末グリッドは揃えていない。
 
-| 指標 | Phase 0 | Phase 1 | Phase 2 |
-| --- | ---: | ---: | ---: |
-| `.app` 論理サイズ | 4,422,468 B | 3,817,236 B | 3,833,748 B |
-| `.app` + core | 10.51 MiB | 9.94 MiB | 9.95 MiB |
-| ウィンドウ表示まで | 178.4 ms | 188.6 ms | 166.9 ms |
-| Summary Physical Footprint | 159.42 MiB | 163.46 MiB | 110.37 MiB |
-| 合計 RSS | 233.92 MiB | 233.06 MiB | 225.69 MiB |
+| 指標                       |     Phase 0 |     Phase 1 |     Phase 2 |
+| -------------------------- | ----------: | ----------: | ----------: |
+| `.app` 論理サイズ          | 4,422,468 B | 3,817,236 B | 3,833,748 B |
+| `.app` + core              |   10.51 MiB |    9.94 MiB |    9.95 MiB |
+| ウィンドウ表示まで         |    178.4 ms |    188.6 ms |    166.9 ms |
+| Summary Physical Footprint |  159.42 MiB |  163.46 MiB |  110.37 MiB |
+| 合計 RSS                   |  233.92 MiB |  233.06 MiB |  225.69 MiB |
 
 Phase 2 の配布サイズは Phase 1 より 16,512 B 増。起動時間は Phase 0 が 167.9–427.7 ms、Phase 1 が 176.3–386.5 ms、Phase 2 が 159.4–443.0 ms と重なり、速度差を判定できない。3 版とも最初の試行が遅かった。メモリは既定 UI 全体の観測値で、グリッドや WebKit.GPU の影響を含む。プロンプト表示時刻とログイン直後のコールド起動は未計測。全 9 試行で SIGTERM 後に観測した関連 PID の残存なし。
 
@@ -159,11 +159,11 @@ Phase 2 の配布サイズは Phase 1 より 16,512 B 増。起動時間は Phas
 
 macOS 実ウィンドウに接続した専用 PTY で `python3 scripts/bench-app.py workload --mib 5 --seconds 30 --rate-kib 256` を実行した。入力には同じ専用ソケットを指定した `herdr-core send` を使い、PTY の出力から終了マーカーを取得した。この経路は WKWebView での打鍵やクリップボードを通らない。Phase 2 の 30 秒測定はキーバインドと終了シグナルの最終修正前。
 
-| 指標 | Phase 0（45×40） | Phase 1（45×40） | Phase 2（82×46、2 試行） |
-| --- | ---: | ---: | ---: |
-| アイドル時 CPU（関連 PID の CPU 時間差 ÷ 10 秒、コア 1 個を 100% とする） | 5.1% | 5.2% | 3.1–3.4% |
-| 負荷中の最大 Summary Physical Footprint（サンプル） | 290.47 MiB | 351.42 MiB | 410.40–422.61 MiB |
-| 負荷中の最大合計 RSS（サンプル） | 377.56 MiB | 361.33 MiB | 432.03–441.06 MiB |
+| 指標                                                                      | Phase 0（45×40） | Phase 1（45×40） | Phase 2（82×46、2 試行） |
+| ------------------------------------------------------------------------- | ---------------: | ---------------: | -----------------------: |
+| アイドル時 CPU（関連 PID の CPU 時間差 ÷ 10 秒、コア 1 個を 100% とする） |             5.1% |             5.2% |                 3.1–3.4% |
+| 負荷中の最大 Summary Physical Footprint（サンプル）                       |       290.47 MiB |       351.42 MiB |        410.40–422.61 MiB |
+| 負荷中の最大合計 RSS（サンプル）                                          |       377.56 MiB |       361.33 MiB |        432.03–441.06 MiB |
 
 各版で出力マーカーとシェルの終了コード 7 を確認した。Phase 0 は負荷後の SIGTERM 試行で core と holder が残ったため、その試行の PID と専用ソケットを照合して終了した。Phase 1 と Phase 2 は観測した関連 PID の残存なし。アイドルの `ps %CPU` は試行によって大きく振れたため、表には Footprint 採取を挟まない区間の CPU 時間差を載せた。負荷中のメモリ増加は Phase 2 の 2 試行で再現した。Phase 2 の列数・行数が他の版と異なり、同一グリッドでの Phase 固有の退行は判定できない。
 
@@ -174,10 +174,10 @@ macOS 実ウィンドウに接続した専用 PTY で `python3 scripts/bench-app
 固定サイズのヘッドレス測定は `node --expose-gc scripts/bench-terminals.mjs` で実行した。120×40、履歴上限 2,000 行、各端末へ日本語と ANSI を含む 10,000 行（996.1 KiB）を書き込んだ。
 
 | 端末数 | 10,000 行解析 | 書き込み後 RSS 増分 | 全端末破棄・GC 後の RSS 増分 |
-| ---: | ---: | ---: | ---: |
-| 1 | 9.3 ms | 4.97 MiB | 5.08 MiB |
-| 5 | 9.3 ms | 24.97 MiB | 0.09 MiB |
-| 10 | 9.4 ms | 49.78 MiB | 0.09 MiB |
+| -----: | ------------: | ------------------: | ---------------------------: |
+|      1 |        9.3 ms |            4.97 MiB |                     5.08 MiB |
+|      5 |        9.3 ms |           24.97 MiB |                     0.09 MiB |
+|     10 |        9.4 ms |           49.78 MiB |                     0.09 MiB |
 
 ヘッドレスの回収結果は Node.js プロセスでの観測。WKWebView でウィンドウを残したままタブを破棄した場合の回収は未測定。
 
@@ -191,12 +191,12 @@ macOS 実ウィンドウに接続した専用 PTY で `python3 scripts/bench-app
 
 修正後の macOS リリースビルドに対し、ユーザーによる実機検証で以下が確認された。
 
-| 確認項目 | 結果 | 扱い・備考 |
-| --- | --- | --- |
-| Nerd Font 表示 | **正常** | 実機で正常表示を確認済み。3 パターン網羅の文字幅・セル寸法再計算は下表で継続管理。 |
-| `IUTF8` による日本語文字化け | **修正確認済み** | uiterm 側 `--uiterm-pty-init` による暫定対応で実機修正を確認済み。上流 `herdr-core` 修正後に撤去予定。 |
-| macSKK のフォーカス復帰時の未確定文字表示 | **正常** | ウィンドウ非アクティブ→復帰時に未確定文字が保持・表示されることを確認済み。Esc 取消・確定フロー・標準日本語入力は未検証のまま維持。 |
-| `macism`・Neovim の起動遅延 | **再現せず** | 自動測定・実機検証とも再現せず。ただし根本原因未特定のため**恒久的な解決済みとは扱わず、既知の調査事項**として記録を維持する。 |
+| 確認項目                                  | 結果             | 扱い・備考                                                                                                                          |
+| ----------------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Nerd Font 表示                            | **正常**         | 実機で正常表示を確認済み。3 パターン網羅の文字幅・セル寸法再計算は下表で継続管理。                                                  |
+| `IUTF8` による日本語文字化け              | **修正確認済み** | uiterm 側 `--uiterm-pty-init` による暫定対応で実機修正を確認済み。上流 `herdr-core` 修正後に撤去予定。                              |
+| macSKK のフォーカス復帰時の未確定文字表示 | **正常**         | ウィンドウ非アクティブ→復帰時に未確定文字が保持・表示されることを確認済み。Esc 取消・確定フロー・標準日本語入力は未検証のまま維持。 |
+| `macism`・Neovim の起動遅延               | **再現せず**     | 自動測定・実機検証とも再現せず。ただし根本原因未特定のため**恒久的な解決済みとは扱わず、既知の調査事項**として記録を維持する。      |
 
 ### 検証用の起動手順
 
@@ -232,11 +232,11 @@ Neovim で次の自動コマンドを登録し、別アプリへ切り替えて�
    - [ ] `Cmd+=` / `Cmd+-` / `Cmd+0` でフォントサイズが拡大・縮小・リセットされ、セル幅・行列数が再計算されること。
 3. **フォント・Nerd Font・文字幅（3 パターン検証）**
    - 診断パネル（`Cmd+Shift+D`）内の「フォント検証（開発用）」セクション（`app.setFont` 接続・正式なユーザー向け設定 UI は Phase 4）を使い、以下の 3 パターンそれぞれで「日本語・文字幅」プローブ、fish プロンプト、および Neovim（ステータスライン/ツリー/日本語編集）の表示崩れを確認する。
-     | パターン | 入力例 | 確認目的 |
-     | --- | --- | --- |
-     | デフォルト | 「デフォルト」ボタン（`ui-monospace, "SF Mono", "Menlo", "JetBrains Mono"`） | 初期状態での表示・PUA/日本語フォールバック |
-     | 普段 Ghostty で使用しているフォント | 例: `"UDEV Gothic 35NF"` や `"UDEV Gothic NF"` 等を入力して「適用」（サイズ `12.5` 等も調整可） | Nerd Font・日常利用時の表示、セル寸法・行間再計算 |
-     | Menlo | 「Menlo」ボタン（`Nerd Font フォールバック` ON / OFF の両方を切替） | Nerd Font 非対応プライマリフォント時の PUA フォールバック・日本語フォールバック |
+     | パターン                            | 入力例                                                                                          | 確認目的                                                                        |
+     | ----------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+     | デフォルト                          | 「デフォルト」ボタン（`ui-monospace, "SF Mono", "Menlo", "JetBrains Mono"`）                    | 初期状態での表示・PUA/日本語フォールバック                                      |
+     | 普段 Ghostty で使用しているフォント | 例: `"UDEV Gothic 35NF"` や `"UDEV Gothic NF"` 等を入力して「適用」（サイズ `12.5` 等も調整可） | Nerd Font・日常利用時の表示、セル寸法・行間再計算                               |
+     | Menlo                               | 「Menlo」ボタン（`Nerd Font フォールバック` ON / OFF の両方を切替）                             | Nerd Font 非対応プライマリフォント時の PUA フォールバック・日本語フォールバック |
    - [x] Nerd Font アイコンの表示が正常であること（ユーザーによる修正後 macOS リリースビルド実機検証で確認済み）。
    - [ ] 各パターン（デフォルト / 普段使用フォント / Menlo）で ASCII 40 桁と全角 20 文字の右端が揃い、半角カナ・曖昧幅・絵文字/ZWJ・結合文字（NFD 濁点等）が崩れないこと。
    - [ ] 各パターンで Nerd Font アイコン（Powerline・Git・Devicons 等）の表示位置と後続セルの整列、および Neovim のレイアウトが崩れないこと。
@@ -280,11 +280,11 @@ Neovim で次の自動コマンドを登録し、別アプリへ切り替えて�
 
 ユーザーによる修正後 macOS リリースビルドの実機検証により、Nerd Font 表示の正常性、`IUTF8` 暫定修正（`--uiterm-pty-init`）による日本語文字化け解消、および macSKK のフォーカス復帰時の未確定文字表示の正常性を確認し、`macism`・Neovim の起動遅延も再現しなかった。一方で、上記チェックリスト §4 の残存手動検証項目（通常利用 UI、コピー＆ペースト・ブラケットペースト、ドラッグリサイズ・ズーム、フォント 3 パターン文字幅、macOS 標準日本語入力・確定/取消フロー・候補位置、fish/Neovim/Codex 対話・Option-as-Meta 実打鍵、タブ閉鎖後メモリ・終了後プロセス確認）が未検証であり、`macism` 遅延は根本原因未特定のため既知の調査事項として残存している。未検証項目を成功扱いしない方針に基づき、Phase 2 は未完了のまま維持する。
 
-| 優先度 | 項目 | 詳細 |
-| --- | --- | --- |
-| 高（残存手動検証） | Phase 2 UI での macOS 実ウィンドウ対話確認（未検証項目） | Nerd Font 表示、`IUTF8` 文字化け修正、macSKK フォーカス復帰時未確定表示は確認済み。残る通常 UI、コピペ、リサイズ・ズーム、フォント 3 パターン文字幅、標準日本語入力・確定/取消・候補位置、fish/Neovim/Codex 対話、Option-as-Meta 実打鍵、終了後プロセス残存確認が未検証。 |
-| 中（既知の調査事項） | `macism` / Neovim 起動遅延（過去報告値 約 2.7 秒）の根本原因特定 | 自動比較（`macism` 38–49 ms、`NVIM STARTED` 63–119 ms）および修正後リリースビルドでのユーザー実機検証とも再現せず。ただし根本原因未特定のため恒久解決済みとは扱わず、今後再発した際に `sample` でスタックを採取して原因を切り分ける。 |
-| 低（暫定対応・上流追従） | `herdr-core` PTY 初期 `IUTF8` の上流修正取り込み | uiterm 側で `--uiterm-pty-init` により暫定修正済み（macOS/Linux 双方対応、ユーザー実機検証で確認済み）。上流 `herdr-core` が `openpty` 後に `IUTF8` を設定する版へ更新した段階で暫定ラッパーを削除する。 |
-| 保留（Phase 4） | フォント・テーマ・キーバインドのユーザー設定 UI / TS 設定接続 | Phase 2 では内部 API（`app.setFont`, `app.setCursor`, `TerminalTheme`, `macOptionAsMeta`）までを整備した。永続化・TypeScript 設定ファイル・キーバインドカスタマイズは Phase 4 で接続する。 |
-| 保留（Phase 6） | アイドル CPU の試行間変動と長時間（30 分 soak）WKWebView メモリ推移および Ghostty/Herdr 同一条件比較 | 30 分の連続出力・タブ破棄後の WKWebView 内メモリ回収・他端末との同一条件比較は Phase 6 で実施する。 |
-| 保留（Phase 6） | NixOS / Hyprland（Wayland + WebKitGTK + Fcitx5）実機検証 | Nix Flake の Linux 静的評価のみ完了。実機ビルド・Wayland・Fcitx5 動作は Phase 6（MVP 完成条件）として保留。 |
+| 優先度                   | 項目                                                                                                 | 詳細                                                                                                                                                                                                                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 高（残存手動検証）       | Phase 2 UI での macOS 実ウィンドウ対話確認（未検証項目）                                             | Nerd Font 表示、`IUTF8` 文字化け修正、macSKK フォーカス復帰時未確定表示は確認済み。残る通常 UI、コピペ、リサイズ・ズーム、フォント 3 パターン文字幅、標準日本語入力・確定/取消・候補位置、fish/Neovim/Codex 対話、Option-as-Meta 実打鍵、終了後プロセス残存確認が未検証。 |
+| 中（既知の調査事項）     | `macism` / Neovim 起動遅延（過去報告値 約 2.7 秒）の根本原因特定                                     | 自動比較（`macism` 38–49 ms、`NVIM STARTED` 63–119 ms）および修正後リリースビルドでのユーザー実機検証とも再現せず。ただし根本原因未特定のため恒久解決済みとは扱わず、今後再発した際に `sample` でスタックを採取して原因を切り分ける。                                     |
+| 低（暫定対応・上流追従） | `herdr-core` PTY 初期 `IUTF8` の上流修正取り込み                                                     | uiterm 側で `--uiterm-pty-init` により暫定修正済み（macOS/Linux 双方対応、ユーザー実機検証で確認済み）。上流 `herdr-core` が `openpty` 後に `IUTF8` を設定する版へ更新した段階で暫定ラッパーを削除する。                                                                  |
+| 保留（Phase 4）          | フォント・テーマ・キーバインドのユーザー設定 UI / TS 設定接続                                        | Phase 2 では内部 API（`app.setFont`, `app.setCursor`, `TerminalTheme`, `macOptionAsMeta`）までを整備した。永続化・TypeScript 設定ファイル・キーバインドカスタマイズは Phase 4 で接続する。                                                                                |
+| 保留（Phase 6）          | アイドル CPU の試行間変動と長時間（30 分 soak）WKWebView メモリ推移および Ghostty/Herdr 同一条件比較 | 30 分の連続出力・タブ破棄後の WKWebView 内メモリ回収・他端末との同一条件比較は Phase 6 で実施する。                                                                                                                                                                       |
+| 保留（Phase 6）          | NixOS / Hyprland（Wayland + WebKitGTK + Fcitx5）実機検証                                             | Nix Flake の Linux 静的評価のみ完了。実機ビルド・Wayland・Fcitx5 動作は Phase 6（MVP 完成条件）として保留。                                                                                                                                                               |

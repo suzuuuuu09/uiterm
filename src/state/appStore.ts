@@ -2,10 +2,7 @@ import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type { AppError } from "../errors/appError.ts";
 import type { CoreEvent, CoreStatus, SessionId, TerminalInfo } from "../ipc/types.ts";
-import {
-  DEFAULT_USER_SETTINGS,
-  type UserSettings,
-} from "../validation/settingsSchemas.ts";
+import { DEFAULT_USER_SETTINGS, type UserSettings } from "../validation/settingsSchemas.ts";
 import { applyCoreEvent, applyCoreSnapshot } from "./coreSync.ts";
 import type {
   AppStateData,
@@ -142,9 +139,7 @@ function createInitialData(initialSettings?: Partial<UserSettings>): AppStateDat
  * - `herdr-core` owns session execution state; mirrored here via `applyCoreSnapshot`/`applyCoreEvent`.
  * - Terminal output bytes, VT state, and rendering buffers NEVER enter this store.
  */
-export function createAppStore(
-  initialSettings?: Partial<UserSettings>,
-): StoreApi<AppState> {
+export function createAppStore(initialSettings?: Partial<UserSettings>): StoreApi<AppState> {
   let nextNotificationId = 1;
 
   return createStore<AppState>((set, get) => ({
@@ -527,9 +522,7 @@ export function createAppStore(
 
     setSidebarVisible: (sidebarVisible) =>
       set((s) =>
-        s.ui.sidebarVisible === sidebarVisible
-          ? s
-          : { ui: { ...s.ui, sidebarVisible } },
+        s.ui.sidebarVisible === sidebarVisible ? s : { ui: { ...s.ui, sidebarVisible } },
       ),
 
     toggleSidebar: () =>
@@ -538,9 +531,7 @@ export function createAppStore(
       })),
 
     setIsComposing: (isComposing) =>
-      set((s) =>
-        s.ui.isComposing === isComposing ? s : { ui: { ...s.ui, isComposing } },
-      ),
+      set((s) => (s.ui.isComposing === isComposing ? s : { ui: { ...s.ui, isComposing } })),
 
     setDiagnosticsPanelVisible: (diagnosticsPanelVisible) =>
       set((s) =>

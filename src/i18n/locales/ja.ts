@@ -17,19 +17,24 @@ export const ja = {
   "action.terminal.create.title": "新しいターミナルを開く",
   "action.terminal.create.description": "現在のワークスペースに新しいターミナルタブを作成します。",
   "action.terminal.close.title": "ターミナルを閉じる",
-  "action.terminal.close.description": "指定またはアクティブなターミナルタブを閉じ、セッションを終了します。",
+  "action.terminal.close.description":
+    "指定またはアクティブなターミナルタブを閉じ、セッションを終了します。",
   "action.terminal.focus.title": "ターミナルにフォーカス",
   "action.terminal.focus.description": "アクティブなターミナルへ入力フォーカスを移動します。",
   "action.terminal.resync.title": "ターミナルを再同期",
   "action.terminal.resync.description": "herdr-core へ再アタッチして画面状態を再同期します。",
   "action.terminal.copySelection.title": "選択テキストをコピー",
-  "action.terminal.copySelection.description": "アクティブなターミナルの選択テキストをクリップボードへコピーします。",
+  "action.terminal.copySelection.description":
+    "アクティブなターミナルの選択テキストをクリップボードへコピーします。",
   "action.terminal.paste.title": "クリップボードから貼り付け",
-  "action.terminal.paste.description": "クリップボードのテキストをアクティブなターミナルへ貼り付けます。",
+  "action.terminal.paste.description":
+    "クリップボードのテキストをアクティブなターミナルへ貼り付けます。",
   "action.terminal.selectAll.title": "すべて選択",
-  "action.terminal.selectAll.description": "アクティブなターミナルのスクロールバックと画面全体を選択します。",
+  "action.terminal.selectAll.description":
+    "アクティブなターミナルのスクロールバックと画面全体を選択します。",
   "action.terminal.clearSelection.title": "選択を解除",
-  "action.terminal.clearSelection.description": "アクティブなターミナルのテキスト選択を解除します。",
+  "action.terminal.clearSelection.description":
+    "アクティブなターミナルのテキスト選択を解除します。",
   "action.terminal.restart.title": "ターミナルを再起動",
   "action.terminal.restart.description": "終了または切断されたターミナルセッションを再起動します。",
   "action.terminal.zoomIn.title": "文字サイズを拡大",
@@ -51,7 +56,8 @@ export const ja = {
   "action.app.toggleSidebar.title": "サイドバー表示切替",
   "action.app.toggleSidebar.description": "サイドバーの表示・非表示を切り替えます。",
   "action.app.toggleDiagnostics.title": "診断パネル表示切替",
-  "action.app.toggleDiagnostics.description": "開発者向けの診断・ベンチマークパネルの表示を切り替えます。",
+  "action.app.toggleDiagnostics.description":
+    "開発者向けの診断・ベンチマークパネルの表示を切り替えます。",
 
   // Action unavailability reasons
   "action.unavailable.noActiveTab": "アクティブなタブがありません。",

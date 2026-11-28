@@ -1,12 +1,12 @@
 # ドキュメント
 
-| 文書 | 内容 |
-| --- | --- |
+| 文書                               | 内容                         |
+| ---------------------------------- | ---------------------------- |
 | [architecture.md](architecture.md) | 現行構成、責務、設計上の制約 |
-| [development.md](development.md) | 開発・検証手順 |
-| [interfaces.md](interfaces.md) | IPC、状態同期、操作APIの境界 |
-| [status.md](status.md) | 開発状況、実機検証、残課題 |
-| [ADR](adr/README.md) | 設計判断と変更履歴 |
+| [development.md](development.md)   | 開発・検証手順               |
+| [interfaces.md](interfaces.md)     | IPC、状態同期、操作APIの境界 |
+| [status.md](status.md)             | 開発状況、実機検証、残課題   |
+| [ADR](adr/README.md)               | 設計判断と変更履歴           |
 
 ## 詳細資料
 

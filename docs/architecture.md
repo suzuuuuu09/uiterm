@@ -12,14 +12,14 @@ Rust adapter / process supervisor
 herdr-core → PTY / shell / CLI
 ```
 
-| 領域 | 責務 |
-| --- | --- |
-| src/app, src/state, src/actions | アプリ状態、共通操作API、レイアウト |
-| src/terminal | 入出力、VT描画、アタッチ、フォーカス |
-| src/ipc, src/validation | IPC契約と外部入力検証 |
-| src-tauri/src | ネイティブ処理、core接続、監視、DTO |
-| src/i18n | 日本語・英語の翻訳キーと書式 |
-| src/poc | PoC専用診断 |
+| 領域                            | 責務                                 |
+| ------------------------------- | ------------------------------------ |
+| src/app, src/state, src/actions | アプリ状態、共通操作API、レイアウト  |
+| src/terminal                    | 入出力、VT描画、アタッチ、フォーカス |
+| src/ipc, src/validation         | IPC契約と外部入力検証                |
+| src-tauri/src                   | ネイティブ処理、core接続、監視、DTO  |
+| src/i18n                        | 日本語・英語の翻訳キーと書式         |
+| src/poc                         | PoC専用診断                          |
 
 herdr-coreがセッション状態の正、uitermがWindow → Workspace → Tab → Paneのレイアウトと選択状態を所有する。端末出力はストアを経由させない。プロセス監視、クレジット、再同期、機密情報の非記録を維持する。
 

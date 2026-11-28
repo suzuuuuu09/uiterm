@@ -147,9 +147,7 @@ describe("Mock IPC integration (Runtime + Store + ActionRegistry + SessionManage
         { caller: "cli" },
       );
       expect(partial.ok).toBe(true);
-      expect(createSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ cols: 120, rows: 24 }),
-      );
+      expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({ cols: 120, rows: 24 }));
     } finally {
       runtime.dispose();
       vi.unstubAllGlobals();

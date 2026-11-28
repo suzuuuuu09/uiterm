@@ -3,7 +3,6 @@
   "version": "0.0.1-poc",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.9.0",
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",
@@ -38,5 +37,6 @@
     "tailwindcss": "^4.3.5",
     "typescript": "^5.9.0",
     "vite-plus": "^1.8.0"
-  }
+  },
+  "packageManager": "pnpm@12.9.0"
 }

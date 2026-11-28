@@ -8,7 +8,7 @@ export function StatusSummary() {
   const locale = useAppStore((s) => s.settings.locale);
   const tabCount = useAppStore((s) => Object.keys(s.tabs).length);
   const activePane = useAppStore((s) =>
-    s.selection.activePaneId ? s.panes[s.selection.activePaneId] ?? null : null,
+    s.selection.activePaneId ? (s.panes[s.selection.activePaneId] ?? null) : null,
   );
   const isComposing = useAppStore((s) => s.ui.isComposing);
   const totalBytesReceived = usePocStore((s) => s.totalBytesReceived);

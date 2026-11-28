@@ -19,7 +19,7 @@ description: "uiterm Phase 0 統合検証・性能測定・最終技術選定レ
   - **フロントエンド（[src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts)）**: `session.attachId > 0` を全送信 IPC の前提条件とし、アタッチ完了前に発生した `unackedBytes`・`pendingWrites`（`user` / `automatic`）・`pendingResize` をキューに保持し、`terminalAttach()` 解決直後に実 `attachId` で一括フラッシュする `flushPostAttach()` を実装。
   - **バックエンド（[src-tauri/src/herdr/client.rs](../../src-tauri/src/herdr/client.rs)）**: `terminal_detach` / `terminal_write` / `terminal_resize` / `terminal_focus` / `terminal_facts` / `terminal_ack` で `attach_id == 0` を明示的に拒否する `ensure_valid_attach_id()` を追加（`code: "invalid_args"`）。
 - **検証**:
-  - Vitest（[src/terminal/__tests__/poc.test.ts](../../src/terminal/__tests__/poc.test.ts)）：`terminalAttach()` 解決前に 20 KiB のデータと自動応答を発生させ、`attachId = 0` での送信が 0 件であること、解決後に実 `attachId = 7` で ACK・自動応答がフラッシュされることを検証済み。
+  - Vitest（[src/terminal/**tests**/poc.test.ts](../../src/terminal/__tests__/poc.test.ts)）：`terminalAttach()` 解決前に 20 KiB のデータと自動応答を発生させ、`attachId = 0` での送信が 0 件であること、解決後に実 `attachId = 7` で ACK・自動応答がフラッシュされることを検証済み。
   - Rust 統合テスト（[src-tauri/tests/herdr_integration.rs](../../src-tauri/tests/herdr_integration.rs)）：`terminal_ack(0, ...)` / `terminal_write(0, ...)` が `invalid_args` で安全に拒否されることを検証済み。
 
 ### 1.2 バックエンド起点リサイズ通知のループ防止
@@ -72,48 +72,48 @@ description: "uiterm Phase 0 統合検証・性能測定・最終技術選定レ
 
 ### 2.2 配布用アプリ容量・起動時間・アプリ全体 RSS / CPU 比較
 
-| 指標 | uiterm (Phase 0 PoC) | Ghostty 1.4.0 | Herdr 0.9.5 |
-| --- | --- | --- | --- |
-| **配布アプリ容量（macOS `.app`）** | **13.73 MiB**（+ `herdr-core` 6.3 MiB = **20.0 MiB**） | 67 MiB | 59 MiB（+ CLI 23 MiB） |
-| **起動時間（初回ライブ端末到達）** | コールド **1,274.2 ms** / ウォーム **534.1 ms** | 未実測（既存起動中） | 未実測（既存起動中） |
-| **アプリ全体 RSS（1 端末アイドル時）** | **237.75 MiB**（WebKit 全ヘルパー込み） | 48.47 MiB | 93.97 MiB（App 56.09 + Server 37.88） |
-| **アイドル時 CPU 使用率** | **0.1%** | — | — |
+| 指標                                   | uiterm (Phase 0 PoC)                                   | Ghostty 1.4.0        | Herdr 0.9.5                           |
+| -------------------------------------- | ------------------------------------------------------ | -------------------- | ------------------------------------- |
+| **配布アプリ容量（macOS `.app`）**     | **13.73 MiB**（+ `herdr-core` 6.3 MiB = **20.0 MiB**） | 67 MiB               | 59 MiB（+ CLI 23 MiB）                |
+| **起動時間（初回ライブ端末到達）**     | コールド **1,274.2 ms** / ウォーム **534.1 ms**        | 未実測（既存起動中） | 未実測（既存起動中）                  |
+| **アプリ全体 RSS（1 端末アイドル時）** | **237.75 MiB**（WebKit 全ヘルパー込み）                | 48.47 MiB            | 93.97 MiB（App 56.09 + Server 37.88） |
+| **アイドル時 CPU 使用率**              | **0.1%**                                               | —                    | —                                     |
 
 #### uiterm 実起動プロセスツリー内訳（1 端末アイドル・3 秒安定後）
 
-| プロセス | RSS | CPU | 役割 |
-| --- | --- | --- | --- |
-| `com.apple.WebKit.WebContent` | 88.83 MiB | 0.0% | React + `wterm` + `libghostty` WASM（※PoC では比較用 4 エンジンも同梱中） |
-| `uiterm` | 76.44 MiB | 0.0% | Tauri 2 Rust ホスト + WKWebView フレームワーク |
-| `com.apple.WebKit.GPU` | 37.94 MiB | 0.0% | WKWebView GPU コンポジタ |
-| `com.apple.WebKit.Networking` | 13.16 MiB | 0.0% | WKWebView ネットワークプロセス |
-| `herdr-core`（daemon） | 10.03 MiB | 0.1% | セッション管理・VT エンジン |
-| `herdr-core`（holder） | 5.42 MiB | 0.0% | PTY 保持プロセス |
-| `bash`（シェル） | 5.94 MiB | 0.0% | ライブシェル |
-| **合計** | **237.75 MiB** | **0.1%** | — |
+| プロセス                      | RSS            | CPU      | 役割                                                                      |
+| ----------------------------- | -------------- | -------- | ------------------------------------------------------------------------- |
+| `com.apple.WebKit.WebContent` | 88.83 MiB      | 0.0%     | React + `wterm` + `libghostty` WASM（※PoC では比較用 4 エンジンも同梱中） |
+| `uiterm`                      | 76.44 MiB      | 0.0%     | Tauri 2 Rust ホスト + WKWebView フレームワーク                            |
+| `com.apple.WebKit.GPU`        | 37.94 MiB      | 0.0%     | WKWebView GPU コンポジタ                                                  |
+| `com.apple.WebKit.Networking` | 13.16 MiB      | 0.0%     | WKWebView ネットワークプロセス                                            |
+| `herdr-core`（daemon）        | 10.03 MiB      | 0.1%     | セッション管理・VT エンジン                                               |
+| `herdr-core`（holder）        | 5.42 MiB       | 0.0%     | PTY 保持プロセス                                                          |
+| `bash`（シェル）              | 5.94 MiB       | 0.0%     | ライブシェル                                                              |
+| **合計**                      | **237.75 MiB** | **0.1%** | —                                                                         |
 
 > [!NOTE]
 > **評価**: 配布容量は Ghostty / Herdr の約 1/3（さらに Phase 1 で比較用 4 エンジン削除＋`lto`/`strip` 適用で削減可能）。一方、メモリ使用量は WKWebView の固定ベースライン（約 216 MiB）があるため、ネイティブ描画の Ghostty（48 MiB）や Herdr（94 MiB）よりは明確に大きい。Chromium 同梱（Electron 系の 400〜600+ MiB）と比べれば軽量であり、「TypeScript / Web UI による高いカスタマイズ性・開発速度」とのトレードオフとして許容範囲内と判断する。
 
 ### 2.3 1 / 5 / 10 端末スケーリング（バックエンド `herdr-core` + `holder`）
 
-| 端末数 | 生成時間 | `herdr-core` RSS | `holder` RSS | 合計（バックエンド） |
-| --- | --- | --- | --- | --- |
-| 1 端末 | 26.8 ms | 8.34 MiB | 5.09 MiB | **13.44 MiB** |
-| 5 端末 | 78.0 ms | 9.45 MiB | 6.17 MiB | **15.62 MiB** |
-| 10 端末 | 131.8 ms | 9.95 MiB | 7.36 MiB | **17.31 MiB** |
+| 端末数  | 生成時間 | `herdr-core` RSS | `holder` RSS | 合計（バックエンド） |
+| ------- | -------- | ---------------- | ------------ | -------------------- |
+| 1 端末  | 26.8 ms  | 8.34 MiB         | 5.09 MiB     | **13.44 MiB**        |
+| 5 端末  | 78.0 ms  | 9.45 MiB         | 6.17 MiB     | **15.62 MiB**        |
+| 10 端末 | 131.8 ms | 9.95 MiB         | 7.36 MiB     | **17.31 MiB**        |
 
 ※ フロントエンド側の 1 / 5 / 10 端末スケーリング（`@wterm/ghostty` WASM：`+5.2` / `+23.4` / `+46.1 MiB`、`dispose()` 後 99.5% 解放）は [docs/poc/frontend.md](./frontend.md) に実測記録済み。
 
 ### 2.4 長時間連続出力時のメモリ安定性（20 秒間・計 20 MiB 連続出力）
 
-| 経過時間 | `herdr-core` RSS | `holder` RSS |
-| --- | --- | --- |
-| `t = 1s` | 15.44 MiB | 7.48 MiB |
-| `t = 5s` | 15.47 MiB | 8.44 MiB |
-| `t = 10s` | 14.38 MiB | 7.45 MiB |
-| `t = 15s` | 13.31 MiB | 6.58 MiB |
-| `t = 20s` | 13.42 MiB | 6.53 MiB |
+| 経過時間  | `herdr-core` RSS | `holder` RSS |
+| --------- | ---------------- | ------------ |
+| `t = 1s`  | 15.44 MiB        | 7.48 MiB     |
+| `t = 5s`  | 15.47 MiB        | 8.44 MiB     |
+| `t = 10s` | 14.38 MiB        | 7.45 MiB     |
+| `t = 15s` | 13.31 MiB        | 6.58 MiB     |
+| `t = 20s` | 13.42 MiB        | 6.53 MiB     |
 
 スクロールバック上限によりメモリは完全に有界（増加傾向なし・リークなし）。
 
@@ -165,6 +165,7 @@ pnpm tauri dev
 ```
 
 NixOS 実機での確認観点：
+
 - `GDK_BACKEND=wayland` 下で WebKitGTK ウィンドウが正常描画されること（GPU 描画不具合が出る場合は `WEBKIT_DISABLE_DMABUF_RENDERER=1` の要否を確認）
 - Fcitx5 + Mozc でのインライン未確定文字列表示・候補位置・変換確定 Enter 挙動
 - `wterm` の DOM モードと WebGL モードの安定性差異
@@ -182,15 +183,15 @@ NixOS 実機での確認観点：
 
 ## 6. Phase 0 最終技術選定判断
 
-| 領域 | 採用技術 | 最終判断 | 根拠 |
-| --- | --- | --- | --- |
-| デスクトップ基盤 | **Tauri 2** (`2.12.7`) | **採用確定** | Raw Binary IPC（Channel + Request）がゼロ Base64 で高速・簡潔。`.app` 13.73 MiB と軽量。 |
-| 端末セッション基盤 | **`herdr-core`** (`v0.1.22`) | **採用確定** | 10 端末 17.3 MiB、20 秒連続出力でもメモリ完全有界、`AUTOMATIC_INPUT` (kind 6) / クレジットフロー制御 / OSC 7501 / OpenRPC を完備。 |
-| 端末描画・フロント VT | **`wterm`** (`@wterm/dom` + `@wterm/ghostty`) | **採用確定（DOM 標準）** | `libghostty` WASM、`keyCode === 229` を含む最も堅牢な IME 構造、`setRenderingPaused(true)`、`dispose()` 後 99.5% メモリ解放。`gespenst` / `ghostty-web` は IME に致命的懸念があり不採用。 |
-| フロント UI | **React 19 + React Compiler + Tailwind v4 + Base UI + Zustand Vanilla + Lucide + Valibot** | **採用確定** | 全コンポーネントが Vite+ で 0 errors / 0 warnings で統合動作。端末出力をストアに流さない構成を実証済み。 |
-| 国際化 | **TypeScript 辞書**（`i18next` 非導入） | **採用確定（変更）** | 依存ゼロ・型安全・即時切替可能。 |
-| TypeScript 設定 | **外部 Node.js 24 LTS + JSON-RPC over stdio** | **採用確定** | ネイティブ型除去によりトランスパイラ不要。起動 32〜50 ms・RSS 約 35 MiB、アプリへのランタイム同梱不要。 |
-| 開発ツールチェーン | **Vite+ (`vite-plus`) + pnpm + Nix Flakes** | **採用確定** | ビルド 578〜745 ms、テスト 134〜185 ms。`pnpm dev/build` 経由で Tauri CLI・Nix と安定連携。 |
+| 領域                  | 採用技術                                                                                   | 最終判断                 | 根拠                                                                                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------ | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| デスクトップ基盤      | **Tauri 2** (`2.12.7`)                                                                     | **採用確定**             | Raw Binary IPC（Channel + Request）がゼロ Base64 で高速・簡潔。`.app` 13.73 MiB と軽量。                                                                                                  |
+| 端末セッション基盤    | **`herdr-core`** (`v0.1.22`)                                                               | **採用確定**             | 10 端末 17.3 MiB、20 秒連続出力でもメモリ完全有界、`AUTOMATIC_INPUT` (kind 6) / クレジットフロー制御 / OSC 7501 / OpenRPC を完備。                                                        |
+| 端末描画・フロント VT | **`wterm`** (`@wterm/dom` + `@wterm/ghostty`)                                              | **採用確定（DOM 標準）** | `libghostty` WASM、`keyCode === 229` を含む最も堅牢な IME 構造、`setRenderingPaused(true)`、`dispose()` 後 99.5% メモリ解放。`gespenst` / `ghostty-web` は IME に致命的懸念があり不採用。 |
+| フロント UI           | **React 19 + React Compiler + Tailwind v4 + Base UI + Zustand Vanilla + Lucide + Valibot** | **採用確定**             | 全コンポーネントが Vite+ で 0 errors / 0 warnings で統合動作。端末出力をストアに流さない構成を実証済み。                                                                                  |
+| 国際化                | **TypeScript 辞書**（`i18next` 非導入）                                                    | **採用確定（変更）**     | 依存ゼロ・型安全・即時切替可能。                                                                                                                                                          |
+| TypeScript 設定       | **外部 Node.js 24 LTS + JSON-RPC over stdio**                                              | **採用確定**             | ネイティブ型除去によりトランスパイラ不要。起動 32〜50 ms・RSS 約 35 MiB、アプリへのランタイム同梱不要。                                                                                   |
+| 開発ツールチェーン    | **Vite+ (`vite-plus`) + pnpm + Nix Flakes**                                                | **採用確定**             | ビルド 578〜745 ms、テスト 134〜185 ms。`pnpm dev/build` 経由で Tauri CLI・Nix と安定連携。                                                                                               |
 
 ---
 
@@ -210,23 +211,24 @@ macOS 15.5 (`arm64`) の Tauri 実ウィンドウ（WKWebView + `wterm` DOM + `l
 - [x] 変換候補ウィンドウの表示位置
 
 保留・次フェーズ以降への持ち越し：
+
 - **Nerd Font の表示**: Phase 2（ターミナル実装）で対応するため、Phase 0 では未実装。
 - **NixOS / Hyprland 実機検証**: 実機が現在利用できないため、MVP 完成条件（Phase 6）まで保留。
 
 ### 7.2 自動検証・ビルド・実ウィンドウ確認結果
 
-| 確認項目 | コマンド | 結果 |
-| --- | --- | --- |
-| TypeScript 型検査 | `pnpm typecheck` (`tsc --noEmit`) | **合格**（0 errors） |
-| Lint | `pnpm lint` (`vp lint`, 23 files / 96 rules) | **合格**（0 warnings, 0 errors, 203 ms） |
-| フロントエンドテスト | `pnpm test -- --run` (Vitest 5.1.1) | **合格**（2 files / 13 passed, 134 ms） |
-| フロントエンドビルド | `pnpm build` (`vp build`) | **合格**（578〜606 ms, 警告 0 件） |
-| Rust Clippy | `cargo clippy --locked --all-targets -- -D warnings` | **合格**（0 warnings） |
-| Rust 単体・統合テスト | `cargo test --locked -- --nocapture` | **合格**（unit 7/7 + integration 5/5 passed） |
-| CLI 互換統合テスト | `cargo test --locked installed_cli_compatibility_in_isolated_pty -- --ignored` | **合格**（1/1 passed: `fish`, `nvim`, `codex`） |
-| リリースビルド | `pnpm tauri build --bundles app` | **合格**（`uiterm.app` **4.22 MiB**、31.98 s） |
-| Tauri 実ウィンドウ動作確認 | `scripts/bench-app.py` 経由で `uiterm.app` を起動・実操作 | **合格**（WKWebView 描画・隔離 `herdr-core` 起動・`fish` セッション稼働・PTY 入出力を確認） |
-| セッション終了時リソース解放 | `osascript` による GUI 正常終了（計 6 回）+ `post-close` 計測 | **合格**（全 6 回で `uiterm`・`WebKit.*`・`herdr-core`・`holder`・`fish` の残存 PID 0 件、`/tmp/uiterm.*` 削除確認） |
+| 確認項目                     | コマンド                                                                       | 結果                                                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| TypeScript 型検査            | `pnpm typecheck` (`tsc --noEmit`)                                              | **合格**（0 errors）                                                                                                 |
+| Lint                         | `pnpm lint` (`vp lint`, 23 files / 96 rules)                                   | **合格**（0 warnings, 0 errors, 203 ms）                                                                             |
+| フロントエンドテスト         | `pnpm test -- --run` (Vitest 5.1.1)                                            | **合格**（2 files / 13 passed, 134 ms）                                                                              |
+| フロントエンドビルド         | `pnpm build` (`vp build`)                                                      | **合格**（578〜606 ms, 警告 0 件）                                                                                   |
+| Rust Clippy                  | `cargo clippy --locked --all-targets -- -D warnings`                           | **合格**（0 warnings）                                                                                               |
+| Rust 単体・統合テスト        | `cargo test --locked -- --nocapture`                                           | **合格**（unit 7/7 + integration 5/5 passed）                                                                        |
+| CLI 互換統合テスト           | `cargo test --locked installed_cli_compatibility_in_isolated_pty -- --ignored` | **合格**（1/1 passed: `fish`, `nvim`, `codex`）                                                                      |
+| リリースビルド               | `pnpm tauri build --bundles app`                                               | **合格**（`uiterm.app` **4.22 MiB**、31.98 s）                                                                       |
+| Tauri 実ウィンドウ動作確認   | `scripts/bench-app.py` 経由で `uiterm.app` を起動・実操作                      | **合格**（WKWebView 描画・隔離 `herdr-core` 起動・`fish` セッション稼働・PTY 入出力を確認）                          |
+| セッション終了時リソース解放 | `osascript` による GUI 正常終了（計 6 回）+ `post-close` 計測                  | **合格**（全 6 回で `uiterm`・`WebKit.*`・`herdr-core`・`holder`・`fish` の残存 PID 0 件、`/tmp/uiterm.*` 削除確認） |
 
 ### 7.3 最終性能測定結果（今後の開発基準値）
 
@@ -237,51 +239,51 @@ macOS 15.5 (`arm64`) の Tauri 実ウィンドウ（WKWebView + `wterm` DOM + `l
 
 #### (1) 配布容量・フロントエンドバンドルサイズ
 
-| 対象 | 旧 PoC（整理前） | 最終実測（統合後） | 変化・備考 |
-| --- | ---: | ---: | --- |
-| 配布用 `uiterm.app`（論理サイズ） | 13.73 MiB | **4.22 MiB** (4,422,468 B) | **-69.3%**。内訳: `uiterm` 3.56 MiB + `poc_bench` 672.0 KiB + 資材 |
-| `herdr-core` v0.1.22（macOS arm64） | 6.30 MiB | **6.30 MiB** (6,603,232 B) | 必須バックエンドバイナリ |
-| **実質配布容量（`uiterm.app` + `herdr-core`）** | 20.03 MiB | **10.51 MiB** (11,025,700 B) | **-47.5%**（`poc_bench` 移設で約 9.85 MiB へさらに削減可能） |
-| フロントエンド `dist/` 合計 | 3.4 MB | **1.1 MiB** | `index.js` 476.94 kB (gzip 147.12 kB), `index.css` 21.66 kB (gzip 5.67 kB), `ghostty-vt.wasm` 599.62 kB (gzip 199.83 kB), `wasm-inline.js` 73.47 kB (gzip 31.96 kB, 実行時未ロード) |
-| *(参考)* Ghostty 1.4.0 `.app` | 67 MiB (du) | **64.18 MiB**（論理サイズ） | 同一マシン `/Applications/Ghostty.app` |
-| *(参考)* Herdr 0.1.16 `.app` | 59 MiB (du) | **58.84 MiB**（論理サイズ） | 同一マシン `/Applications/Herdr.app`（別途 `herdr-core` 6.30 MiB / CLI `herdr` 0.9.5 23.37 MiB） |
+| 対象                                            | 旧 PoC（整理前） |           最終実測（統合後） | 変化・備考                                                                                                                                                                          |
+| ----------------------------------------------- | ---------------: | ---------------------------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 配布用 `uiterm.app`（論理サイズ）               |        13.73 MiB |   **4.22 MiB** (4,422,468 B) | **-69.3%**。内訳: `uiterm` 3.56 MiB + `poc_bench` 672.0 KiB + 資材                                                                                                                  |
+| `herdr-core` v0.1.22（macOS arm64）             |         6.30 MiB |   **6.30 MiB** (6,603,232 B) | 必須バックエンドバイナリ                                                                                                                                                            |
+| **実質配布容量（`uiterm.app` + `herdr-core`）** |        20.03 MiB | **10.51 MiB** (11,025,700 B) | **-47.5%**（`poc_bench` 移設で約 9.85 MiB へさらに削減可能）                                                                                                                        |
+| フロントエンド `dist/` 合計                     |           3.4 MB |                  **1.1 MiB** | `index.js` 476.94 kB (gzip 147.12 kB), `index.css` 21.66 kB (gzip 5.67 kB), `ghostty-vt.wasm` 599.62 kB (gzip 199.83 kB), `wasm-inline.js` 73.47 kB (gzip 31.96 kB, 実行時未ロード) |
+| _(参考)_ Ghostty 1.4.0 `.app`                   |      67 MiB (du) |  **64.18 MiB**（論理サイズ） | 同一マシン `/Applications/Ghostty.app`                                                                                                                                              |
+| _(参考)_ Herdr 0.1.16 `.app`                    |      59 MiB (du) |  **58.84 MiB**（論理サイズ） | 同一マシン `/Applications/Herdr.app`（別途 `herdr-core` 6.30 MiB / CLI `herdr` 0.9.5 23.37 MiB）                                                                                    |
 
 #### (2) 起動時間（`scripts/bench-app.py` 計測点: プロセス起動 → `window_visible`）
 
-| 区分 | 試行数 | 中央値 | 範囲 | 備考 |
-| --- | ---: | ---: | --- | --- |
-| ビルド後初回起動（同一ログインセッション内） | 1 | **477.8 ms** | — | 真のログイン後コールド起動（OS キャッシュ未ロード）は未実測 |
-| **ウォーム起動**（GUI 正常終了→PID 消滅後に再起動） | 5 | **158.5 ms** | **148.2〜177.6 ms** | 全 5 回で GUI 終了後の残存プロセス 0 件・ソケット削除を確認 |
+| 区分                                                | 試行数 |       中央値 | 範囲                | 備考                                                        |
+| --------------------------------------------------- | -----: | -----------: | ------------------- | ----------------------------------------------------------- |
+| ビルド後初回起動（同一ログインセッション内）        |      1 | **477.8 ms** | —                   | 真のログイン後コールド起動（OS キャッシュ未ロード）は未実測 |
+| **ウォーム起動**（GUI 正常終了→PID 消滅後に再起動） |      5 | **158.5 ms** | **148.2〜177.6 ms** | 全 5 回で GUI 終了後の残存プロセス 0 件・ソケット削除を確認 |
 
 ※ §2.2 の旧 PoC 値（コールド 1,274.2 ms / ウォーム 534.1 ms）は「初回プロンプト到達」を計測点としていたため、今回の `window_visible` とは計測点が異なる。
 
 #### (3) アイドル時 CPU・アプリ全体 RSS / Physical Footprint（1 端末安定後 20 秒・11 サンプル）
 
-| 指標 | 中央値 | 範囲 | 備考 |
-| --- | ---: | --- | --- |
-| アプリ全体 RSS 合計（参考値・共有ページ重複あり） | **242.42 MiB** | 242.19〜244.36 MiB | 全 7 プロセス合計 |
-| **アプリ全体 Summary Physical Footprint（実測）** | **120.48 MiB** | **120.37〜123.99 MiB** | `footprint` コマンドによる実物理メモリ消費 |
-| アイドル時 CPU 合計（`ps` 平滑化値） | **2.3%** | 0.6〜4.3% | 主に `uiterm` + `WebKit.WebContent`（カーソル描画等） |
+| 指標                                              |         中央値 | 範囲                   | 備考                                                  |
+| ------------------------------------------------- | -------------: | ---------------------- | ----------------------------------------------------- |
+| アプリ全体 RSS 合計（参考値・共有ページ重複あり） | **242.42 MiB** | 242.19〜244.36 MiB     | 全 7 プロセス合計                                     |
+| **アプリ全体 Summary Physical Footprint（実測）** | **120.48 MiB** | **120.37〜123.99 MiB** | `footprint` コマンドによる実物理メモリ消費            |
+| アイドル時 CPU 合計（`ps` 平滑化値）              |       **2.3%** | 0.6〜4.3%              | 主に `uiterm` + `WebKit.WebContent`（カーソル描画等） |
 
 **プロセス別内訳（`idle-1` 最終サンプル、計 7 プロセス）**:
 
-| プロセス | RSS | Physical Footprint | CPU |
-| --- | ---: | ---: | ---: |
-| `com.apple.WebKit.WebContent` | 79.34 MiB | 60.69 MiB | 2.3% |
-| `uiterm` | 79.02 MiB | 23.16 MiB | 2.0% |
-| `com.apple.WebKit.GPU` | 43.17 MiB | 18.49 MiB | 0.0% |
-| `com.apple.WebKit.Networking` | 14.95 MiB | 5.19 MiB | 0.0% |
-| `herdr-core`（daemon） | 10.30 MiB | 4.52 MiB | 0.0% |
-| `herdr-core`（holder） | 5.22 MiB | 3.03 MiB | 0.0% |
-| `fish`（ログインシェル） | 10.36 MiB | 6.06 MiB | 0.0% |
-| **合計 / Summary** | **242.36 MiB** | **120.51 MiB** | **4.3%** |
+| プロセス                      |            RSS | Physical Footprint |      CPU |
+| ----------------------------- | -------------: | -----------------: | -------: |
+| `com.apple.WebKit.WebContent` |      79.34 MiB |          60.69 MiB |     2.3% |
+| `uiterm`                      |      79.02 MiB |          23.16 MiB |     2.0% |
+| `com.apple.WebKit.GPU`        |      43.17 MiB |          18.49 MiB |     0.0% |
+| `com.apple.WebKit.Networking` |      14.95 MiB |           5.19 MiB |     0.0% |
+| `herdr-core`（daemon）        |      10.30 MiB |           4.52 MiB |     0.0% |
+| `herdr-core`（holder）        |       5.22 MiB |           3.03 MiB |     0.0% |
+| `fish`（ログインシェル）      |      10.36 MiB |           6.06 MiB |     0.0% |
+| **合計 / Summary**            | **242.36 MiB** |     **120.51 MiB** | **4.3%** |
 
 **参考比較（同一マシン上の既存稼働中プロセスを読み取り専用計測・条件非同一）**:
 
-| 対象（既存稼働中・条件非同一） | プロセス数 | RSS 合計中央値 | Summary Footprint 中央値 | CPU 中央値 | 条件差 |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Ghostty 1.4.0（本体 PID 単体） | 1 | 34.44 MiB | 129.57 MiB | 0.0% | 既存ユーザーセッション稼働中（配下に `herdr`・`fish`×12・`codex`×2 の計 19 プロセス、合計 Footprint 393.00 MiB） |
-| Herdr 0.1.16 + `herdr-core` + `fish` | 5 | 54.73 MiB | 153.98 MiB | 0.25% | 既存ユーザーセッション稼働中（`Herdr` 本体 Footprint 122.22 MiB + `herdr-core` 群 16.04 MiB + `fish` 16.22 MiB） |
+| 対象（既存稼働中・条件非同一）       | プロセス数 | RSS 合計中央値 | Summary Footprint 中央値 | CPU 中央値 | 条件差                                                                                                           |
+| ------------------------------------ | ---------: | -------------: | -----------------------: | ---------: | ---------------------------------------------------------------------------------------------------------------- |
+| Ghostty 1.4.0（本体 PID 単体）       |          1 |      34.44 MiB |               129.57 MiB |       0.0% | 既存ユーザーセッション稼働中（配下に `herdr`・`fish`×12・`codex`×2 の計 19 プロセス、合計 Footprint 393.00 MiB） |
+| Herdr 0.1.16 + `herdr-core` + `fish` |          5 |      54.73 MiB |               153.98 MiB |      0.25% | 既存ユーザーセッション稼働中（`Herdr` 本体 Footprint 122.22 MiB + `herdr-core` 群 16.04 MiB + `fish` 16.22 MiB） |
 
 #### (4) 1・5・10 端末スケーリング（バックエンド実測・フロントエンド単体実測）
 
@@ -289,20 +291,20 @@ macOS 15.5 (`arm64`) の Tauri 実ウィンドウ（WKWebView + `wterm` DOM + `l
 
 **A. バックエンド + 実シェル（隔離 `herdr-core` + `holder` + `fish -i`、`footprint` / `ps` 実測）**:
 
-| 端末数 | 生成時間（増分） | プロセス数 | RSS 合計 | Summary Footprint | CPU |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 端末 | 34.4 ms | 3 | 23.36 MiB | **11.61 MiB** | 0.0% |
-| 5 端末 | 46.1 ms (+4) | 7 | 62.67 MiB | **33.57 MiB** | 0.1% |
-| 10 端末 | 53.2 ms (+5) | 12 | 113.80 MiB | **62.97 MiB** | 0.0% |
-| 全 `kill` 後 | — | 2 | 16.83 MiB | **9.38 MiB** | 0.0% |
+|       端末数 | 生成時間（増分） | プロセス数 |   RSS 合計 | Summary Footprint |  CPU |
+| -----------: | ---------------: | ---------: | ---------: | ----------------: | ---: |
+|       1 端末 |          34.4 ms |          3 |  23.36 MiB |     **11.61 MiB** | 0.0% |
+|       5 端末 |     46.1 ms (+4) |          7 |  62.67 MiB |     **33.57 MiB** | 0.1% |
+|      10 端末 |     53.2 ms (+5) |         12 | 113.80 MiB |     **62.97 MiB** | 0.0% |
+| 全 `kill` 後 |                — |          2 |  16.83 MiB |      **9.38 MiB** | 0.0% |
 
 **B. フロントエンド VT/WASM 単体（Node.js 24 ヘッドレス、`@wterm/ghostty` `scrollbackLines=2000`、10,000 行負荷）**:
 
-| 端末数 | 生成時間 | 10k 行解析 | スループット | アイドル RSS 増分 | 負荷後 RSS 増分 | 破棄+GC 後 RSS 残 |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 端末 | 0.2 ms | 9.1 ms | 106.6 MB/s | +0.97 MB | +4.98 MB | +5.13 MB |
-| 5 端末 | 0.6 ms | 9.2 ms | 105.7 MB/s | +4.88 MB | +24.95 MB | +0.74 MB |
-| 10 端末 | 1.2 ms | 9.1 ms | 107.3 MB/s | +9.63 MB | +49.83 MB | **-0.06 MB** |
+|  端末数 | 生成時間 | 10k 行解析 | スループット | アイドル RSS 増分 | 負荷後 RSS 増分 | 破棄+GC 後 RSS 残 |
+| ------: | -------: | ---------: | -----------: | ----------------: | --------------: | ----------------: |
+|  1 端末 |   0.2 ms |     9.1 ms |   106.6 MB/s |          +0.97 MB |        +4.98 MB |          +5.13 MB |
+|  5 端末 |   0.6 ms |     9.2 ms |   105.7 MB/s |          +4.88 MB |       +24.95 MB |          +0.74 MB |
+| 10 端末 |   1.2 ms |     9.1 ms |   107.3 MB/s |          +9.63 MB |       +49.83 MB |      **-0.06 MB** |
 
 #### (5) 大量出力時の負荷（実ウィンドウ 1 端末 + `poc_bench` バックエンド単体）
 
@@ -320,14 +322,14 @@ macOS 15.5 (`arm64`) の Tauri 実ウィンドウ（WKWebView + `wterm` DOM + `l
 
 ※ 30 分 soak テストは未実施（60 秒連続出力での傾向実測。長期利用の本格検証は Phase 6 で実施）。
 
-| 経過時間 | RSS 合計 | Summary Footprint | CPU | `WebContent` FP | `WebKit.GPU` FP | `uiterm` FP | `herdr-core` FP |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `t = 0.0 s`（バースト直後） | 358.5 MiB | 271.4 MiB | 0.5% | 187.8 MiB | 23.9 MiB | 24.1 MiB | 23.7 MiB |
-| `t = 15.3 s` | 409.4 MiB | 457.3 MiB | 35.6% | 287.4 MiB | 95.6 MiB | 24.5 MiB | 23.8 MiB |
-| `t = 30.5 s` | 432.4 MiB | 458.9 MiB | 23.8% | 297.9 MiB | 86.6 MiB | 24.6 MiB | 23.8 MiB |
-| `t = 45.8 s` | 422.0 MiB | 488.0 MiB | 29.7% | 322.3 MiB | 91.2 MiB | 24.6 MiB | 23.9 MiB |
-| `t = 61.0 s`（出力完了直後） | 436.4 MiB | 484.7 MiB | 23.1% | 327.3 MiB | 95.4 MiB | 24.6 MiB | 23.9 MiB |
-| `t = 66.1 s`（停止 6 秒後） | 441.6 MiB | **351.3 MiB** | 2.9% | **266.8 MiB** | **24.0 MiB** | **24.5 MiB** | **23.9 MiB** |
+|                     経過時間 |  RSS 合計 | Summary Footprint |   CPU | `WebContent` FP | `WebKit.GPU` FP |  `uiterm` FP | `herdr-core` FP |
+| ---------------------------: | --------: | ----------------: | ----: | --------------: | --------------: | -----------: | --------------: |
+|  `t = 0.0 s`（バースト直後） | 358.5 MiB |         271.4 MiB |  0.5% |       187.8 MiB |        23.9 MiB |     24.1 MiB |        23.7 MiB |
+|                 `t = 15.3 s` | 409.4 MiB |         457.3 MiB | 35.6% |       287.4 MiB |        95.6 MiB |     24.5 MiB |        23.8 MiB |
+|                 `t = 30.5 s` | 432.4 MiB |         458.9 MiB | 23.8% |       297.9 MiB |        86.6 MiB |     24.6 MiB |        23.8 MiB |
+|                 `t = 45.8 s` | 422.0 MiB |         488.0 MiB | 29.7% |       322.3 MiB |        91.2 MiB |     24.6 MiB |        23.9 MiB |
+| `t = 61.0 s`（出力完了直後） | 436.4 MiB |         484.7 MiB | 23.1% |       327.3 MiB |        95.4 MiB |     24.6 MiB |        23.9 MiB |
+|  `t = 66.1 s`（停止 6 秒後） | 441.6 MiB |     **351.3 MiB** |  2.9% |   **266.8 MiB** |    **24.0 MiB** | **24.5 MiB** |    **23.9 MiB** |
 
 - **`uiterm`（Rust ホスト）および `herdr-core`（daemon + holder）**: 60 秒連続出力を通して +0.2〜+0.5 MiB の完全フラット（リーク兆候なし）。
 - **`WebKit.GPU`**: 負荷中 84〜96 MiB へ上昇するが、出力停止 6 秒後に **24.0 MiB** へ即時復帰。

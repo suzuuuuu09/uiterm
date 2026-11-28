@@ -4,37 +4,37 @@ description: "uitermのアーキテクチャをまとめる"
 
 ## 技術スタック
 
-| 分類 | 用途 | 技術 |
-|---|---|---|
-| Core | メイン言語 | TypeScript |
-| Core | ネイティブ処理 | Rust |
-| Core | デスクトップ基盤 | Tauri 2 |
-| Frontend | UI | React |
-| Frontend | 最適化 | React Compiler |
-| Frontend | CSS | Tailwind CSS v4 |
-| Frontend | UIプリミティブ | Base UI |
-| Frontend | 状態管理 | Zustand Vanilla |
-| Frontend | 国際化 | TypeScript 辞書 + Intl API |
-| Frontend | アイコン | Lucide |
-| Frontend | スキーマ検証 | Valibot |
-| Terminal | セッション管理 | herdr-core |
-| Terminal | VTエンジン | libghostty-vt |
-| Terminal | 描画 | wterm |
-| Backend | 非同期処理 | Tokio |
-| Backend | シリアライズ | Serde |
-| Backend | 型生成 | ts-rs |
-| CLI | 引数解析 | clap |
-| Config | 設定言語 | TypeScript |
-| Config | 実行環境 | Node.js LTS |
-| Storage | データ永続化 | JSON |
-| Development | 開発ツールチェーン | Vite+ |
-| Development | パッケージ管理 | pnpm / Cargo |
-| Development | 開発環境 | Nix Flakes |
-| Testing | 単体テスト | Vitest / Cargo Test |
-| Testing | E2E | Playwright / WebdriverIO |
-| Distribution | Rustビルド | crane |
-| Distribution | CI/CD | GitHub Actions |
-| Distribution | 依存関係更新 | Renovate |
+| 分類         | 用途               | 技術                       |
+| ------------ | ------------------ | -------------------------- |
+| Core         | メイン言語         | TypeScript                 |
+| Core         | ネイティブ処理     | Rust                       |
+| Core         | デスクトップ基盤   | Tauri 2                    |
+| Frontend     | UI                 | React                      |
+| Frontend     | 最適化             | React Compiler             |
+| Frontend     | CSS                | Tailwind CSS v4            |
+| Frontend     | UIプリミティブ     | Base UI                    |
+| Frontend     | 状態管理           | Zustand Vanilla            |
+| Frontend     | 国際化             | TypeScript 辞書 + Intl API |
+| Frontend     | アイコン           | Lucide                     |
+| Frontend     | スキーマ検証       | Valibot                    |
+| Terminal     | セッション管理     | herdr-core                 |
+| Terminal     | VTエンジン         | libghostty-vt              |
+| Terminal     | 描画               | wterm                      |
+| Backend      | 非同期処理         | Tokio                      |
+| Backend      | シリアライズ       | Serde                      |
+| Backend      | 型生成             | ts-rs                      |
+| CLI          | 引数解析           | clap                       |
+| Config       | 設定言語           | TypeScript                 |
+| Config       | 実行環境           | Node.js LTS                |
+| Storage      | データ永続化       | JSON                       |
+| Development  | 開発ツールチェーン | Vite+                      |
+| Development  | パッケージ管理     | pnpm / Cargo               |
+| Development  | 開発環境           | Nix Flakes                 |
+| Testing      | 単体テスト         | Vitest / Cargo Test        |
+| Testing      | E2E                | Playwright / WebdriverIO   |
+| Distribution | Rustビルド         | crane                      |
+| Distribution | CI/CD              | GitHub Actions             |
+| Distribution | 依存関係更新       | Renovate                   |
 
 ## アーキテクチャ方針
 
@@ -118,13 +118,13 @@ TypeScriptによるプログラマブルな設定を提供する。設定の実�
 
 ## プロセス間通信
 
-| 通信経路 | 方式 |
-|---|---|
-| Frontend → Tauri | Tauri Commands |
-| Tauri → Frontend | Tauri Channels |
-| Tauri ↔ herdr-core | Unix Socket / JSON-RPC / Binary Stream |
-| CLI ↔ uiterm | Unix Domain Socket |
-| 設定ランタイム ↔ uiterm | JSON-RPC over stdio |
+| 通信経路                | 方式                                   |
+| ----------------------- | -------------------------------------- |
+| Frontend → Tauri        | Tauri Commands                         |
+| Tauri → Frontend        | Tauri Channels                         |
+| Tauri ↔ herdr-core      | Unix Socket / JSON-RPC / Binary Stream |
+| CLI ↔ uiterm            | Unix Domain Socket                     |
+| 設定ランタイム ↔ uiterm | JSON-RPC over stdio                    |
 
 ターミナル出力はストリーミング方式で処理し、通信の滞留や過剰なバッファリングを防止する。IPCへのアクセスは原則として同一ユーザーに限定する。
 

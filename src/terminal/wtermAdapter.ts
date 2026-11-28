@@ -11,11 +11,7 @@ import {
 } from "./appearance.ts";
 import type { CellMetrics } from "./fonts.ts";
 import { isImeComposingEvent, isMacPlatform, translateMacOptionKey } from "./keyboard.ts";
-import type {
-  TerminalAdapter,
-  TerminalAdapterCallbacks,
-  TerminalAdapterOptions,
-} from "./types.ts";
+import type { TerminalAdapter, TerminalAdapterCallbacks, TerminalAdapterOptions } from "./types.ts";
 
 const encoder = new TextEncoder();
 
@@ -158,8 +154,13 @@ export class WTermGhosttyAdapter implements TerminalAdapter {
     this.onKeyDown = (event: KeyboardEvent) => {
       const isComposing = this.callbacks.isComposing?.() ?? false;
       if (isImeComposingEvent(event, isComposing)) return;
-      if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey &&
-          event.key.toLowerCase() === "c") {
+      if (
+        event.ctrlKey &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        event.key.toLowerCase() === "c"
+      ) {
         // wterm leaves Ctrl+C to the browser when a selection is active.
         term.clearSelection();
       }

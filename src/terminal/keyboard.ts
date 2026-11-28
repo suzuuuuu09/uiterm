@@ -39,8 +39,8 @@ export function isMacPlatform(platform?: string): boolean {
   const value =
     platform ??
     (typeof navigator !== "undefined"
-      ? (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
-          ?.platform ?? navigator.platform
+      ? ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
+          ?.platform ?? navigator.platform)
       : "");
   return /mac|darwin/i.test(value);
 }

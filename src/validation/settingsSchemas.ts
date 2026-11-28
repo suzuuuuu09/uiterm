@@ -15,10 +15,7 @@ import {
   MIN_LINE_HEIGHT,
 } from "../terminal/fonts.ts";
 
-export const TerminalBackendIdSchema = v.picklist([
-  "wterm-ghostty-dom",
-  "wterm-ghostty-webgl",
-]);
+export const TerminalBackendIdSchema = v.picklist(["wterm-ghostty-dom", "wterm-ghostty-webgl"]);
 
 export type TerminalBackendId = v.InferOutput<typeof TerminalBackendIdSchema>;
 

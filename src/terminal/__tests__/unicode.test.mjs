@@ -7,9 +7,13 @@ import { expect, it, vi } from "vite-plus/test";
 it("keeps UTF-8 fragments and graphemes in the expected terminal columns", async () => {
   const resolve = createRequire(import.meta.url).resolve;
   const wasm = readFileSync(resolve("@wterm/ghostty/ghostty-vt.wasm"));
-  vi.stubGlobal("fetch", async () => new Response(new Uint8Array(wasm), {
-    headers: { "content-type": "application/wasm" },
-  }));
+  vi.stubGlobal(
+    "fetch",
+    async () =>
+      new Response(new Uint8Array(wasm), {
+        headers: { "content-type": "application/wasm" },
+      }),
+  );
   const core = await GhosttyCore.load({ wasmPath: "file:///uiterm-unicode-test.wasm" });
   try {
     core.init(80, 24);
@@ -39,109 +43,112 @@ it("keeps UTF-8 fragments and graphemes in the expected terminal columns", async
   }
 });
 
-it.each(["commit", "cancel", "element blur"])("handles IME %s around an app switch", async (outcome) => {
-  const resolve = createRequire(import.meta.url).resolve;
-  const { InputHandler } = await import(
-    new URL("./input.js", pathToFileURL(resolve("@wterm/dom"))).href
-  );
-
-  class Element extends EventTarget {
-    style = {};
-    value = "";
-    attrs = new Map();
-    classList = { add() {}, remove() {} };
-    getAttribute = (key) => this.attrs.get(key) ?? null;
-    setAttribute = (key, value) => this.attrs.set(key, value);
-    removeAttribute = (key) => this.attrs.delete(key);
-    hasAttribute = (key) => this.attrs.has(key);
-    getRootNode = () => this;
-    querySelector = () => null;
-    append() {}
-    appendChild() {}
-    remove() {}
-  }
-
-  const doc = {
-    createElement: () => Object.assign(new Element(), { ownerDocument: doc }),
-    hasFocus: () => true,
-  };
-  vi.stubGlobal("document", doc);
-  vi.stubGlobal(
-    "MutationObserver",
-    class {
-      disconnect() {}
-      observe() {}
-      takeRecords() {
-        return [];
-      }
-    },
-  );
-  const host = new Element();
-  host.ownerDocument = doc;
-  const input = vi.fn();
-  const handler = new InputHandler(host, input, () => null);
-  const textarea = handler.textarea;
-  const emit = (type, fields = {}) => {
-    const event = Object.assign(
-      new Event(type, { cancelable: true }),
-      { getModifierState: () => false },
-      fields,
+it.each(["commit", "cancel", "element blur"])(
+  "handles IME %s around an app switch",
+  async (outcome) => {
+    const resolve = createRequire(import.meta.url).resolve;
+    const { InputHandler } = await import(
+      new URL("./input.js", pathToFileURL(resolve("@wterm/dom"))).href
     );
-    textarea.dispatchEvent(event);
-    return event;
-  };
-  try {
-    emit("compositionstart");
-    expect(emit("keydown", { key: "Backspace", code: "Backspace" }).defaultPrevented).toBe(false);
-    emit("keydown", { key: "c", code: "KeyC", ctrlKey: true });
-    emit("keydown", { key: "ArrowDown", code: "ArrowDown" });
-    textarea.value = "にほんご";
-    emit("input", { inputType: "insertCompositionText" });
-    doc.activeElement = textarea;
-    doc.hasFocus = () => false;
-    emit("blur", { relatedTarget: null });
-    expect(textarea.value).toBe("にほんご");
-    expect(input).not.toHaveBeenCalled();
-    if (outcome === "cancel") {
-      emit("compositionend", { data: "" });
+
+    class Element extends EventTarget {
+      style = {};
+      value = "";
+      attrs = new Map();
+      classList = { add() {}, remove() {} };
+      getAttribute = (key) => this.attrs.get(key) ?? null;
+      setAttribute = (key, value) => this.attrs.set(key, value);
+      removeAttribute = (key) => this.attrs.delete(key);
+      hasAttribute = (key) => this.attrs.has(key);
+      getRootNode = () => this;
+      querySelector = () => null;
+      append() {}
+      appendChild() {}
+      remove() {}
     }
 
-    doc.hasFocus = () => true;
-    emit("focus");
-    if (outcome !== "cancel") {
-      expect(textarea.style.opacity).toBe("1");
-      expect(textarea.value).toBe("にほんご");
-      emit("keydown", { key: "Enter", code: "Enter", keyCode: 13 });
-    }
-
-    if (outcome === "element blur") {
-      doc.activeElement = host;
-      emit("blur", { relatedTarget: host });
-    } else if (outcome === "commit") {
-      emit("compositionend", { data: "日本語" });
-    }
-    if (outcome !== "commit") {
-      expect(textarea.style.opacity).toBe("0");
-      expect(textarea.value).toBe("");
-      expect(input).not.toHaveBeenCalled();
+    const doc = {
+      createElement: () => Object.assign(new Element(), { ownerDocument: doc }),
+      hasFocus: () => true,
+    };
+    vi.stubGlobal("document", doc);
+    vi.stubGlobal(
+      "MutationObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        takeRecords() {
+          return [];
+        }
+      },
+    );
+    const host = new Element();
+    host.ownerDocument = doc;
+    const input = vi.fn();
+    const handler = new InputHandler(host, input, () => null);
+    const textarea = handler.textarea;
+    const emit = (type, fields = {}) => {
+      const event = Object.assign(
+        new Event(type, { cancelable: true }),
+        { getModifierState: () => false },
+        fields,
+      );
+      textarea.dispatchEvent(event);
+      return event;
+    };
+    try {
+      emit("compositionstart");
+      expect(emit("keydown", { key: "Backspace", code: "Backspace" }).defaultPrevented).toBe(false);
+      emit("keydown", { key: "c", code: "KeyC", ctrlKey: true });
+      emit("keydown", { key: "ArrowDown", code: "ArrowDown" });
+      textarea.value = "にほんご";
+      emit("input", { inputType: "insertCompositionText" });
       doc.activeElement = textarea;
-      emit("focus");
-      emit("keydown", { key: "Enter", code: "Enter", keyCode: 13 });
-      expect(input.mock.calls).toEqual([["\r"]]);
-      return;
-    }
-    emit("keydown", { key: "Enter", code: "Enter", keyCode: 229, isComposing: false });
-    textarea.value = "日本語";
-    emit("input", { inputType: "insertText" });
-    expect(input.mock.calls).toEqual([["日本語"]]);
+      doc.hasFocus = () => false;
+      emit("blur", { relatedTarget: null });
+      expect(textarea.value).toBe("にほんご");
+      expect(input).not.toHaveBeenCalled();
+      if (outcome === "cancel") {
+        emit("compositionend", { data: "" });
+      }
 
-    emit("keydown", { key: "Enter", code: "Enter", keyCode: 13, isComposing: false });
-    expect(input.mock.calls).toEqual([["日本語"], ["\r"]]);
-  } finally {
-    handler.destroy();
-    vi.unstubAllGlobals();
-  }
-});
+      doc.hasFocus = () => true;
+      emit("focus");
+      if (outcome !== "cancel") {
+        expect(textarea.style.opacity).toBe("1");
+        expect(textarea.value).toBe("にほんご");
+        emit("keydown", { key: "Enter", code: "Enter", keyCode: 13 });
+      }
+
+      if (outcome === "element blur") {
+        doc.activeElement = host;
+        emit("blur", { relatedTarget: host });
+      } else if (outcome === "commit") {
+        emit("compositionend", { data: "日本語" });
+      }
+      if (outcome !== "commit") {
+        expect(textarea.style.opacity).toBe("0");
+        expect(textarea.value).toBe("");
+        expect(input).not.toHaveBeenCalled();
+        doc.activeElement = textarea;
+        emit("focus");
+        emit("keydown", { key: "Enter", code: "Enter", keyCode: 13 });
+        expect(input.mock.calls).toEqual([["\r"]]);
+        return;
+      }
+      emit("keydown", { key: "Enter", code: "Enter", keyCode: 229, isComposing: false });
+      textarea.value = "日本語";
+      emit("input", { inputType: "insertText" });
+      expect(input.mock.calls).toEqual([["日本語"]]);
+
+      emit("keydown", { key: "Enter", code: "Enter", keyCode: 13, isComposing: false });
+      expect(input.mock.calls).toEqual([["日本語"], ["\r"]]);
+    } finally {
+      handler.destroy();
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 it("preserves continuous identical IME commits and blocks Backspace/Escape during composition", async () => {
   const resolve = createRequire(import.meta.url).resolve;
@@ -199,10 +206,14 @@ it("preserves continuous identical IME commits and blocks Backspace/Escape durin
     emit("compositionstart");
     textarea.value = "あい";
     emit("input", { inputType: "insertCompositionText" });
-    expect(emit("keydown", { key: "Backspace", code: "Backspace", isComposing: true }).defaultPrevented).toBe(false);
+    expect(
+      emit("keydown", { key: "Backspace", code: "Backspace", isComposing: true }).defaultPrevented,
+    ).toBe(false);
     textarea.value = "あ";
     emit("input", { inputType: "deleteContentBackward" });
-    expect(emit("keydown", { key: "Escape", code: "Escape", isComposing: true }).defaultPrevented).toBe(false);
+    expect(
+      emit("keydown", { key: "Escape", code: "Escape", isComposing: true }).defaultPrevented,
+    ).toBe(false);
     emit("compositionend", { data: "" });
     expect(input).not.toHaveBeenCalled();
 

@@ -169,7 +169,11 @@ describe("ActionRegistry", () => {
       ).toBe(false);
       expect(runtime.actions.canExecute("tab.select").allowed).toBe(false);
       expect(runtime.actions.canExecute("tab.select", { tabId: "toString" }).allowed).toBe(false);
-      const copyRes = await runtime.actions.execute("terminal.copySelection", {}, { caller: "keybind" });
+      const copyRes = await runtime.actions.execute(
+        "terminal.copySelection",
+        {},
+        { caller: "keybind" },
+      );
       expect(copyRes).toEqual({ ok: true, value: { copiedLength: 5 } });
       expect(copied).toEqual(["日本語選択"]);
 
@@ -186,7 +190,11 @@ describe("ActionRegistry", () => {
       expect(localeRes).toEqual({ ok: true, value: { locale: "en" } });
       expect(runtime.store.getState().settings.locale).toBe("en");
 
-      const sidebarRes = await runtime.actions.execute("app.toggleSidebar", {}, { caller: "keybind" });
+      const sidebarRes = await runtime.actions.execute(
+        "app.toggleSidebar",
+        {},
+        { caller: "keybind" },
+      );
       expect(sidebarRes).toEqual({ ok: true, value: { sidebarVisible: true } });
 
       const diagRes = await runtime.actions.execute(

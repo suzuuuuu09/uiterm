@@ -12,14 +12,28 @@ nix develop --command pnpm tauri dev
 ## 自動検証
 
 ```sh
+nix develop --command cargo fmt --check --manifest-path src-tauri/Cargo.toml
+nix develop --command cargo fmt --check --manifest-path poc/gpui-terminal/Cargo.toml
 nix develop --command pnpm check
 nix develop --command pnpm typecheck
 nix develop --command pnpm test
 nix develop --command pnpm build
-nix develop --command cargo test --locked --manifest-path src-tauri/Cargo.toml
 nix develop --command cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+nix develop .#gpui --command cargo clippy --locked --manifest-path poc/gpui-terminal/Cargo.toml --all-targets -- -D warnings
+nix develop --command cargo test --locked --manifest-path src-tauri/Cargo.toml
+nix develop .#gpui --command cargo test --locked --manifest-path poc/gpui-terminal/Cargo.toml
+nix develop --command cargo build --locked --manifest-path src-tauri/Cargo.toml
+nix develop .#gpui --command cargo build --locked --manifest-path poc/gpui-terminal/Cargo.toml
 nix flake check --no-build --all-systems --no-write-lock-file
 ```
+
+## GitHub Actions CI
+
+`.github/workflows/ci.yml` はPull Requestとmainへのpushで実行する。Rustfmt、Clippy、Rustテスト、TauriバックエンドとGPUI PoCのビルド・テストはmacOS ARM64（`macos-15`）とLinux x86_64（`ubuntu-24.04`）で行う。TypeScriptの型検査とVite+のcheck・test・build、Flakeの全対象システム評価はLinuxで一度だけ行う。
+
+CIは既存Flakeの開発シェルを使い、CargoとpnpmのダウンロードキャッシュにはGitHub Actions cacheを使う。Nixのビルド済み依存は既定の`cache.nixos.org`を使う。全ActionはコミットSHAで固定し、Cargo・pnpm・Flakeのロックファイルを変更しない。
+
+Flake評価やmacOS/Linuxランナーでのビルドは、NixOS/Hyprland実機、GUI、IME、Nerd Font、クリップボード、連続利用や性能の検証を代替しない。実機検証は「検証上の注意」に記載した手順で行う。
 
 ## macOS配布ビルド
 

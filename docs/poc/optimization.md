@@ -41,13 +41,13 @@ description: "uiterm Phase 0 最終工程における実装整理・軽量化・
 
 ### 1.2 Vite+ ビルド警告の解消とバンドルサイズ削減
 
-| 指標 | 整理前 | 整理後 | 削減率 |
-| --- | ---: | ---: | ---: |
-| Vite+ ビルド警告数 | 3 件（`node:url`・`node:fs/promises` externalization + 500 kB 超過） | **0 件** | **-100%** |
-| `dist/` 合計サイズ | 3.4 MB | **1.1 MB** | **-67.6%** |
-| メイン JS チャンク（Raw / Gzip） | 1,577.66 kB / 452.01 kB | **474.50 kB / 146.33 kB** | **-69.9% / -67.6%** |
-| CSS（Raw / Gzip） | 26.39 kB / 6.54 kB | **22.42 kB / 6.06 kB** | **-15.0% / -7.3%** |
-| 同梱 WASM | 2 種計 1,789.53 kB | **1 種 599.62 kB**（gzip 199.83 kB） | **-66.5%** |
+| 指標                             |                                                               整理前 |                               整理後 |              削減率 |
+| -------------------------------- | -------------------------------------------------------------------: | -----------------------------------: | ------------------: |
+| Vite+ ビルド警告数               | 3 件（`node:url`・`node:fs/promises` externalization + 500 kB 超過） |                             **0 件** |           **-100%** |
+| `dist/` 合計サイズ               |                                                               3.4 MB |                           **1.1 MB** |          **-67.6%** |
+| メイン JS チャンク（Raw / Gzip） |                                              1,577.66 kB / 452.01 kB |            **474.50 kB / 146.33 kB** | **-69.9% / -67.6%** |
+| CSS（Raw / Gzip）                |                                                   26.39 kB / 6.54 kB |               **22.42 kB / 6.06 kB** |  **-15.0% / -7.3%** |
+| 同梱 WASM                        |                                                   2 種計 1,789.53 kB | **1 種 599.62 kB**（gzip 199.83 kB） |          **-66.5%** |
 
 ---
 
@@ -71,26 +71,26 @@ Tauri 2（macOS）の RSS（整理前 237.75 MiB）は、大きく以下の 2 �
 
 ### 2.2 実施した最適化と技術的根拠
 
-| 対象領域 | 発見した問題・根拠 | 実施した対策 | 対象ファイル |
-| --- | --- | --- | --- |
-| **ターミナル破棄時のリソース解放（重要）** | `@wterm/dom@0.6.0` の `WTerm.destroy()` をソース解析したところ、外部注入された `options.core`（`GhosttyCore`）の `dispose()` を**呼び出していない**ことを確認。結果として Zig 側の `deinit(termPtr)` と 5 種の内部転送バッファ解放が行われていなかった。 | `WTermGhosttyAdapter` で `core` 参照を保持し、`dispose()` および `mount()` のエラー・レース経路で `core.dispose()` を必ず呼び出すよう修正。`disposeSession()` で `pendingWrites` / `pendingResize` もクリア。 | [src/terminal/wtermAdapter.ts](../../src/terminal/wtermAdapter.ts), [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts) |
-| **WASM ロード方式** | `@wterm/ghostty/dist/wasm-bindings.js` を解析し、`WebAssembly.compileStreaming()` と `WebAssembly.Module` キャッシュ（最大 4 エントリ）によるネイティブコード共有、および端末別独立 `WebAssembly.Instance`（破棄時 GC で線形メモリ返却）が既に最適設計であることを確認。 | 既存方式を維持。なお `@wterm/dom` が推移依存する `@wterm/core` の `wasm-inline-*.js`（73.5 kB）は動的インポートであり、`core: GhosttyCore` 指定時は実行時未ロード（実行メモリ 0 B）であることを確認。 | [src/terminal/wtermAdapter.ts](../../src/terminal/wtermAdapter.ts) |
-| **スクロールバック上限** | `herdr-core` がバックエンド側で正の履歴を保持する二重 VT 構成において、フロントエンドのデフォルト `scrollbackLines = 5000` は 10 端末負荷時に +89.61 MB を消費していた。 | デフォルト `DEFAULT_SCROLLBACK_LINES` を **2,000 行**へ調整（`TerminalAdapterOptions` で上書き可能）。ヘッドレス実測で 10 端末負荷時 RSS 増分が **+89.61 MB → +49.81 MB（-44.4%）**、破棄+GC 後 **-0.17 MB**（完全回収）を確認。 | [src/terminal/wtermAdapter.ts](../../src/terminal/wtermAdapter.ts) |
-| **React 不要再レンダリング** | `App` ルートが `totalBytesReceived`・`logs`・`isComposing` を含む全 12 スライスを購読しており、PTY 出力フレームやキー入力ごとにヘッダー・タブバー・ビューポート全体が再レンダリングされていた。また `updateTabSize` が同値でも新配列を生成していた。 | `StatusSummary`・`BenchmarkPanel`・`DiagnosticLogPanel`・`TabBar` を独立コンポーネントへ分離し購読を局所化。`updateTabSize`・`setIsComposing` に同値スキップを追加。統計フラッシュを `queueMicrotask` から 100 ms スロットルへ変更。 | [src/App.tsx](../../src/App.tsx), [src/store/pocStore.ts](../../src/store/pocStore.ts), [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts) |
-| **非表示ターミナルの描画・IPC 負荷** | 非表示タブ生成時に `WTerm` 初期化完了まで `renderingPaused: false` で初回描画と `fit()` が走っていた。またタブ切替のたびに全非表示タブへ重複して `terminalFocus(..., false)` IPC を送信していた。 | `TerminalAdapterOptions.renderingPaused` を追加し、非表示タブは `new WTerm(..., { renderingPaused: true })` で初期化・初回 `fit()` をスキップ。`ManagedSession.focused` と `activeId` を追跡し、状態変化した端末のみ `terminalFocus` IPC を送信。 | [src/terminal/types.ts](../../src/terminal/types.ts), [src/terminal/wtermAdapter.ts](../../src/terminal/wtermAdapter.ts), [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts) |
-| **不要タイマー・イベント購読** | `eventsSubscribe()` に対応する `stopEventStream()` がなく、アンマウント時に `eventsUnsubscribe()` が呼ばれなかった。 | `stopEventStream()` を追加して `App` アンマウント時に購読解除。`disposeAll()` で統計フラッシュタイマーを確実にキャンセル。 | [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts), [src/App.tsx](../../src/App.tsx) |
-| **診断ログのメモリ消費** | 大きなペースト時に `formatControlBytes()` が入力全体を文字列化・置換し `pocStore.logs` に保持する構造だった。 | 入力プレビューを先頭 128 バイト（`MAX_LOG_BYTES_PREVIEW`）、ログ詳細を最大 160 文字（`MAX_LOG_DETAIL_CHARS`）に制限。さらに IME/入力/自動応答ログの記録を切り替える `diagnosticsEnabled` トグルを追加（デフォルト ON で Phase 0 診断機能を維持）。 | [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts), [src/store/pocStore.ts](../../src/store/pocStore.ts), [src/components/TerminalPane.tsx](../../src/components/TerminalPane.tsx) |
+| 対象領域                                   | 発見した問題・根拠                                                                                                                                                                                                                                                       | 実施した対策                                                                                                                                                                                                                                       | 対象ファイル                                                                                                                                                                                           |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **ターミナル破棄時のリソース解放（重要）** | `@wterm/dom@0.6.0` の `WTerm.destroy()` をソース解析したところ、外部注入された `options.core`（`GhosttyCore`）の `dispose()` を**呼び出していない**ことを確認。結果として Zig 側の `deinit(termPtr)` と 5 種の内部転送バッファ解放が行われていなかった。                 | `WTermGhosttyAdapter` で `core` 参照を保持し、`dispose()` および `mount()` のエラー・レース経路で `core.dispose()` を必ず呼び出すよう修正。`disposeSession()` で `pendingWrites` / `pendingResize` もクリア。                                      | [src/terminal/wtermAdapter.ts](../../src/terminal/wtermAdapter.ts), [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts)                                                             |
+| **WASM ロード方式**                        | `@wterm/ghostty/dist/wasm-bindings.js` を解析し、`WebAssembly.compileStreaming()` と `WebAssembly.Module` キャッシュ（最大 4 エントリ）によるネイティブコード共有、および端末別独立 `WebAssembly.Instance`（破棄時 GC で線形メモリ返却）が既に最適設計であることを確認。 | 既存方式を維持。なお `@wterm/dom` が推移依存する `@wterm/core` の `wasm-inline-*.js`（73.5 kB）は動的インポートであり、`core: GhosttyCore` 指定時は実行時未ロード（実行メモリ 0 B）であることを確認。                                              | [src/terminal/wtermAdapter.ts](../../src/terminal/wtermAdapter.ts)                                                                                                                                     |
+| **スクロールバック上限**                   | `herdr-core` がバックエンド側で正の履歴を保持する二重 VT 構成において、フロントエンドのデフォルト `scrollbackLines = 5000` は 10 端末負荷時に +89.61 MB を消費していた。                                                                                                 | デフォルト `DEFAULT_SCROLLBACK_LINES` を **2,000 行**へ調整（`TerminalAdapterOptions` で上書き可能）。ヘッドレス実測で 10 端末負荷時 RSS 増分が **+89.61 MB → +49.81 MB（-44.4%）**、破棄+GC 後 **-0.17 MB**（完全回収）を確認。                   | [src/terminal/wtermAdapter.ts](../../src/terminal/wtermAdapter.ts)                                                                                                                                     |
+| **React 不要再レンダリング**               | `App` ルートが `totalBytesReceived`・`logs`・`isComposing` を含む全 12 スライスを購読しており、PTY 出力フレームやキー入力ごとにヘッダー・タブバー・ビューポート全体が再レンダリングされていた。また `updateTabSize` が同値でも新配列を生成していた。                     | `StatusSummary`・`BenchmarkPanel`・`DiagnosticLogPanel`・`TabBar` を独立コンポーネントへ分離し購読を局所化。`updateTabSize`・`setIsComposing` に同値スキップを追加。統計フラッシュを `queueMicrotask` から 100 ms スロットルへ変更。               | [src/App.tsx](../../src/App.tsx), [src/store/pocStore.ts](../../src/store/pocStore.ts), [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts)                                         |
+| **非表示ターミナルの描画・IPC 負荷**       | 非表示タブ生成時に `WTerm` 初期化完了まで `renderingPaused: false` で初回描画と `fit()` が走っていた。またタブ切替のたびに全非表示タブへ重複して `terminalFocus(..., false)` IPC を送信していた。                                                                        | `TerminalAdapterOptions.renderingPaused` を追加し、非表示タブは `new WTerm(..., { renderingPaused: true })` で初期化・初回 `fit()` をスキップ。`ManagedSession.focused` と `activeId` を追跡し、状態変化した端末のみ `terminalFocus` IPC を送信。  | [src/terminal/types.ts](../../src/terminal/types.ts), [src/terminal/wtermAdapter.ts](../../src/terminal/wtermAdapter.ts), [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts)       |
+| **不要タイマー・イベント購読**             | `eventsSubscribe()` に対応する `stopEventStream()` がなく、アンマウント時に `eventsUnsubscribe()` が呼ばれなかった。                                                                                                                                                     | `stopEventStream()` を追加して `App` アンマウント時に購読解除。`disposeAll()` で統計フラッシュタイマーを確実にキャンセル。                                                                                                                         | [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts), [src/App.tsx](../../src/App.tsx)                                                                                               |
+| **診断ログのメモリ消費**                   | 大きなペースト時に `formatControlBytes()` が入力全体を文字列化・置換し `pocStore.logs` に保持する構造だった。                                                                                                                                                            | 入力プレビューを先頭 128 バイト（`MAX_LOG_BYTES_PREVIEW`）、ログ詳細を最大 160 文字（`MAX_LOG_DETAIL_CHARS`）に制限。さらに IME/入力/自動応答ログの記録を切り替える `diagnosticsEnabled` トグルを追加（デフォルト ON で Phase 0 診断機能を維持）。 | [src/terminal/sessionManager.ts](../../src/terminal/sessionManager.ts), [src/store/pocStore.ts](../../src/store/pocStore.ts), [src/components/TerminalPane.tsx](../../src/components/TerminalPane.tsx) |
 
 ### 2.3 スクロールバック上限変更のヘッドレス実測結果（`node --expose-gc scripts/bench-terminals.mjs`）
 
 10,000 行（996.1 KB、ANSI カラー＋日本語 UTF-8、`120x40`）を投入した場合の比較：
 
-| 設定 | 端末数 | 10k 行解析 | スループット | 負荷後 RSS 増分 | 破棄+GC 後 RSS 残 | 自動応答数 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `scrollbackLines = 5000`（変更前） | 5 | 9.9 ms | 98.2 MB/s | +44.84 MB | +0.38 MB | 2 |
-| `scrollbackLines = 5000`（変更前） | 10 | 9.8 ms | 99.3 MB/s | +89.61 MB | +0.55 MB | 2 |
-| **`scrollbackLines = 2000`（変更後）** | 5 | **9.4 ms** | **103.2 MB/s** | **+24.86 MB** (-44.6%) | **+0.02 MB** | 2 |
-| **`scrollbackLines = 2000`（変更後）** | 10 | **9.4 ms** | **103.2 MB/s** | **+49.81 MB** (-44.4%) | **-0.17 MB** | 2 |
+| 設定                                   | 端末数 | 10k 行解析 |   スループット |        負荷後 RSS 増分 | 破棄+GC 後 RSS 残 | 自動応答数 |
+| -------------------------------------- | -----: | ---------: | -------------: | ---------------------: | ----------------: | ---------: |
+| `scrollbackLines = 5000`（変更前）     |      5 |     9.9 ms |      98.2 MB/s |              +44.84 MB |          +0.38 MB |          2 |
+| `scrollbackLines = 5000`（変更前）     |     10 |     9.8 ms |      99.3 MB/s |              +89.61 MB |          +0.55 MB |          2 |
+| **`scrollbackLines = 2000`（変更後）** |      5 | **9.4 ms** | **103.2 MB/s** | **+24.86 MB** (-44.6%) |      **+0.02 MB** |          2 |
+| **`scrollbackLines = 2000`（変更後）** |     10 | **9.4 ms** | **103.2 MB/s** | **+49.81 MB** (-44.4%) |      **-0.17 MB** |          2 |
 
 ---
 
@@ -98,25 +98,26 @@ Tauri 2（macOS）の RSS（整理前 237.75 MiB）は、大きく以下の 2 �
 
 ### 3.1 Rust `[profile.release]` 比較実測（macOS arm64・整理済み `dist/` 同梱）
 
-| プロファイル構成 | ビルド時間 | `uiterm` バイナリサイズ | 削減率（対デフォルト） | 評価 |
-| --- | ---: | ---: | ---: | --- |
-| 0. デフォルト (`opt-level=3`, `lto=false`, `cgu=16`, `strip=false`) | 0.47 s *(キャッシュ済)* | 10.80 MiB (11,325,224 B) | — | 基準（整理前は ~12 MiB） |
-| A. Thin LTO + Strip (`opt-level=3`, `lto="thin"`, `cgu=1`, `strip=true`) | 96.30 s | 5.97 MiB (6,259,664 B) | -44.7% | 速度優先だがサイズ削減幅は中程度 |
-| **B. Tauri 推奨 (`opt-level="s"`, `lto=true`, `cgu=1`, `strip=true`, `panic="abort"`)** | **78.40 s** | **3.19 MiB (3,349,344 B)** | **-70.4%** | **採用**。ループベクタライズを維持しつつ大幅削減 |
-| C. 最小サイズ (`opt-level="z"`, `lto=true`, `cgu=1`, `strip=true`, `panic="abort"`) | 54.03 s | 2.41 MiB (2,531,472 B) | -77.7% | 追加削減は 0.78 MiB に留まり、インライン抑止による速度低下リスクあり |
+| プロファイル構成                                                                        |              ビルド時間 |    `uiterm` バイナリサイズ | 削減率（対デフォルト） | 評価                                                                 |
+| --------------------------------------------------------------------------------------- | ----------------------: | -------------------------: | ---------------------: | -------------------------------------------------------------------- |
+| 0. デフォルト (`opt-level=3`, `lto=false`, `cgu=16`, `strip=false`)                     | 0.47 s _(キャッシュ済)_ |   10.80 MiB (11,325,224 B) |                      — | 基準（整理前は ~12 MiB）                                             |
+| A. Thin LTO + Strip (`opt-level=3`, `lto="thin"`, `cgu=1`, `strip=true`)                |                 96.30 s |     5.97 MiB (6,259,664 B) |                 -44.7% | 速度優先だがサイズ削減幅は中程度                                     |
+| **B. Tauri 推奨 (`opt-level="s"`, `lto=true`, `cgu=1`, `strip=true`, `panic="abort"`)** |             **78.40 s** | **3.19 MiB (3,349,344 B)** |             **-70.4%** | **採用**。ループベクタライズを維持しつつ大幅削減                     |
+| C. 最小サイズ (`opt-level="z"`, `lto=true`, `cgu=1`, `strip=true`, `panic="abort"`)     |                 54.03 s |     2.41 MiB (2,531,472 B) |                 -77.7% | 追加削減は 0.78 MiB に留まり、インライン抑止による速度低下リスクあり |
 
 **採用設定（[src-tauri/Cargo.toml](../../src-tauri/Cargo.toml)）**:
+
 - `[profile.release]` に **構成 B**（`opt-level = "s"`, `lto = true`, `codegen-units = 1`, `strip = true`, `panic = "abort"`）を適用。
 - `[lib]` の `crate-type` をデスクトップ専用の `["rlib"]` へ整理（モバイル用の未使用 `staticlib` / `cdylib` を削減）。
 - Rust バックエンドは Unix Socket / IPC 中継が主体の I/O バウンド処理と想定しており、`opt-level = "s"` による体感性能への影響は未計測のため、統合後の性能測定で確認する。
 
 ### 3.2 配布容量（`herdr-core` を含む実質的な配布容量）
 
-| 対象 | 最適化前 | 最適化後 | 備考 |
-| --- | ---: | ---: | --- |
-| `uiterm.app`（macOS バンドル） | 13.73 MiB | **4.20 MiB** (-69.4%) | 内訳: `uiterm` 約 3.2 MiB（§3.1 のバイナリ 3.19 MiB）+ `poc_bench` 672 KiB + `Info.plist`/アイコン |
-| `herdr-core` v0.1.22（macOS arm64） | 6.30 MiB | 6.30 MiB | 必須バックエンドバイナリ（Linux x86_64 tarball は 3.30 MB） |
-| **実質合計配布容量（`uiterm.app` + `herdr-core`）** | **20.03 MiB** | **10.50 MiB** (-47.6%) | Ghostty 67 MiB の約 1/6、Herdr 82 MiB（59+23）の約 1/8 |
+| 対象                                                |      最適化前 |               最適化後 | 備考                                                                                               |
+| --------------------------------------------------- | ------------: | ---------------------: | -------------------------------------------------------------------------------------------------- |
+| `uiterm.app`（macOS バンドル）                      |     13.73 MiB |  **4.20 MiB** (-69.4%) | 内訳: `uiterm` 約 3.2 MiB（§3.1 のバイナリ 3.19 MiB）+ `poc_bench` 672 KiB + `Info.plist`/アイコン |
+| `herdr-core` v0.1.22（macOS arm64）                 |      6.30 MiB |               6.30 MiB | 必須バックエンドバイナリ（Linux x86_64 tarball は 3.30 MB）                                        |
+| **実質合計配布容量（`uiterm.app` + `herdr-core`）** | **20.03 MiB** | **10.50 MiB** (-47.6%) | Ghostty 67 MiB の約 1/6、Herdr 82 MiB（59+23）の約 1/8                                             |
 
 > [!TIP]
 > **追加削減余地（672 KiB）**: `uiterm.app/Contents/MacOS/` にベンチマーク用バイナリ `poc_bench`（672 KiB）が同梱されている。これは `src-tauri/src/bin/poc_bench.rs` が `[[bin]]` ターゲットとして認識されるためである。Codex 側と合意の上で `examples/poc_bench.rs`（`cargo run --example poc_bench`）へ移設すれば、`uiterm.app` は **約 3.55 MiB**（`herdr-core` 込み **約 9.85 MiB**）までさらに軽量化できる。
@@ -143,16 +144,16 @@ Tauri 2（macOS）の RSS（整理前 237.75 MiB）は、大きく以下の 2 �
 
 ## 4. 動作確認・テスト結果
 
-| 確認項目 | コマンド | 結果 |
-| --- | --- | --- |
-| 型検査 | `pnpm typecheck` (`tsc --noEmit`) | **合格**（0 errors） |
-| Lint | `pnpm lint` (`vp lint`, 22 files / 96 rules) | **合格**（0 warnings, 0 errors） |
-| フロントエンドテスト | `pnpm test -- --run` (Vitest 5.1.1) | **合格**（8 / 8 tests passed, 161 ms） |
-| Rust 静的解析 | `cargo clippy --all-targets -- -D warnings` | **合格**（0 warnings） |
-| Rust 単体・統合テスト | `cargo test -- --nocapture` | **合格**（unit 2/2 + integration 2/2 = 4/4 passed） |
-| リリースビルド | `pnpm tauri build --bundles app` | **合格**（`uiterm.app` 4.20 MiB, Vite+ 警告 0 件） |
-| Tauri 実ウィンドウ起動 | `nix develop --command .../uiterm.app/Contents/MacOS/uiterm` | **合格**（起動・WKWebView 描画・隔離 `herdr-core` v0.1.22 起動およびアタッチ動作を確認） |
-| 基本的なターミナル操作 | `herdr_integration`（シェル起動・I/O・リサイズ・自動応答分離・OSC 7501・再アタッチ） | **合格** |
+| 確認項目               | コマンド                                                                             | 結果                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| 型検査                 | `pnpm typecheck` (`tsc --noEmit`)                                                    | **合格**（0 errors）                                                                     |
+| Lint                   | `pnpm lint` (`vp lint`, 22 files / 96 rules)                                         | **合格**（0 warnings, 0 errors）                                                         |
+| フロントエンドテスト   | `pnpm test -- --run` (Vitest 5.1.1)                                                  | **合格**（8 / 8 tests passed, 161 ms）                                                   |
+| Rust 静的解析          | `cargo clippy --all-targets -- -D warnings`                                          | **合格**（0 warnings）                                                                   |
+| Rust 単体・統合テスト  | `cargo test -- --nocapture`                                                          | **合格**（unit 2/2 + integration 2/2 = 4/4 passed）                                      |
+| リリースビルド         | `pnpm tauri build --bundles app`                                                     | **合格**（`uiterm.app` 4.20 MiB, Vite+ 警告 0 件）                                       |
+| Tauri 実ウィンドウ起動 | `nix develop --command .../uiterm.app/Contents/MacOS/uiterm`                         | **合格**（起動・WKWebView 描画・隔離 `herdr-core` v0.1.22 起動およびアタッチ動作を確認） |
+| 基本的なターミナル操作 | `herdr_integration`（シェル起動・I/O・リサイズ・自動応答分離・OSC 7501・再アタッチ） | **合格**                                                                                 |
 
 ※ 参考値（並行作業中の 1 端末起動直後スナップショット）: `com.apple.WebKit.WebContent` RSS は 88.83 MiB → **77.67 MiB**（79,536 KiB）と約 11 MiB の減少傾向を確認。確定値は統合後に再測定する。
 

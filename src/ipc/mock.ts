@@ -49,8 +49,7 @@ export class MockIpcClient implements UitermBackendClient {
       pid: 0,
       uptimeMs: Math.floor(performance.now()),
       live: [...this.sessions.values()].filter((s) => s.state === "live").length,
-      finished: [...this.sessions.values()].filter((s) => s.state !== "live")
-        .length,
+      finished: [...this.sessions.values()].filter((s) => s.state !== "live").length,
       session: "mock",
       socketPath: "/tmp/uiterm-mock.sock",
       automaticInputSupported: true,
@@ -161,11 +160,7 @@ export class MockIpcClient implements UitermBackendClient {
     }
   }
 
-  async terminalResize(
-    attachId: AttachId,
-    cols: number,
-    rows: number,
-  ): Promise<void> {
+  async terminalResize(attachId: AttachId, cols: number, rows: number): Promise<void> {
     const entry = this.attachments.get(attachId);
     if (!entry) return;
     const info = this.sessions.get(entry.sessionId);
@@ -183,10 +178,7 @@ export class MockIpcClient implements UitermBackendClient {
 
   async terminalFocus(_attachId: AttachId, _focused: boolean): Promise<void> {}
 
-  async terminalFacts(
-    _attachId: AttachId,
-    _display: DisplayFacts,
-  ): Promise<void> {}
+  async terminalFacts(_attachId: AttachId, _display: DisplayFacts): Promise<void> {}
 
   async terminalAck(_attachId: AttachId, _bytes: number): Promise<void> {}
 
@@ -220,9 +212,7 @@ export class MockIpcClient implements UitermBackendClient {
     });
   }
 
-  async eventsSubscribe(
-    onEvent: (event: CoreEvent) => void,
-  ): Promise<EventsSubscribeResult> {
+  async eventsSubscribe(onEvent: (event: CoreEvent) => void): Promise<EventsSubscribeResult> {
     const subscriptionId = this.nextSub++;
     this.subscribers.set(subscriptionId, onEvent);
     return {

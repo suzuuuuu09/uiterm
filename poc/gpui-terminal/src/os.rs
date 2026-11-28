@@ -151,10 +151,7 @@ pub fn run_pty_iutf8_init(_args: &[OsString]) -> ! {
 /// Wraps `argv` with `[exe, "--uiterm-pty-init", "--", ...]` idempotently.
 pub fn wrap_argv_with_pty_iutf8_init(mut argv: Vec<String>, exe: &str) -> Vec<String> {
     if argv.is_empty()
-        || (argv.len() >= 3
-            && argv[0] == exe
-            && argv[1] == PTY_IUTF8_INIT_FLAG
-            && argv[2] == "--")
+        || (argv.len() >= 3 && argv[0] == exe && argv[1] == PTY_IUTF8_INIT_FLAG && argv[2] == "--")
     {
         return argv;
     }
@@ -289,10 +286,7 @@ mod tests {
         let after = unsafe { after.assume_init() };
 
         assert_ne!(after.c_iflag & libc::IUTF8, 0);
-        assert_eq!(
-            after.c_iflag & !libc::IUTF8,
-            before.c_iflag & !libc::IUTF8
-        );
+        assert_eq!(after.c_iflag & !libc::IUTF8, before.c_iflag & !libc::IUTF8);
     }
 
     #[test]
@@ -301,11 +295,19 @@ mod tests {
         assert_eq!(env.get("SHELL").map(String::as_str), Some("/bin/zsh"));
         assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
-        let expected = std::env::var("XDG_CONFIG_HOME").ok()
+        let expected = std::env::var("XDG_CONFIG_HOME")
+            .ok()
             .filter(|value| !value.trim().is_empty())
             .or_else(|| {
-                let home = std::env::var("HOME").ok().filter(|value| !value.trim().is_empty())?;
-                Some(Path::new(&home).join(".config").to_string_lossy().into_owned())
+                let home = std::env::var("HOME")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())?;
+                Some(
+                    Path::new(&home)
+                        .join(".config")
+                        .to_string_lossy()
+                        .into_owned(),
+                )
             });
         assert_eq!(env.get("XDG_CONFIG_HOME"), expected.as_ref());
     }

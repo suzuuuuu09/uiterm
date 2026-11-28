@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - ubuntu-24.04
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+        with:
+          extra_nix_config: experimental-features = nix-command flakes
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'poc/gpui-terminal/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Prepare isolated test home and runtime directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/uiterm-home" "$RUNNER_TEMP/uiterm-runtime"
+          chmod 700 "$RUNNER_TEMP/uiterm-runtime"
+
+      - name: Rustfmt
+        run: |
+          nix develop --no-write-lock-file --command cargo fmt --check --manifest-path src-tauri/Cargo.toml
+          nix develop --no-write-lock-file --command cargo fmt --check --manifest-path poc/gpui-terminal/Cargo.toml
+
+      - name: Clippy
+        run: |
+          nix develop --no-write-lock-file --command cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          nix develop .#gpui --no-write-lock-file --command cargo clippy --locked --manifest-path poc/gpui-terminal/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust tests
+        env:
+          HOME: ${{ runner.temp }}/uiterm-home
+          XDG_RUNTIME_DIR: ${{ runner.temp }}/uiterm-runtime
+        run: |
+          nix develop --no-write-lock-file --command cargo test --locked --manifest-path src-tauri/Cargo.toml
+          nix develop .#gpui --no-write-lock-file --command cargo test --locked --manifest-path poc/gpui-terminal/Cargo.toml
+
+      - name: Build Tauri backend
+        run: nix develop --no-write-lock-file --command cargo build --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Build GPUI PoC
+        run: nix develop .#gpui --no-write-lock-file --command cargo build --locked --manifest-path poc/gpui-terminal/Cargo.toml
+
+  typescript-and-flake:
+    name: TypeScript and Nix evaluation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: cachix/install-nix-action@382a9ed9481c7c1f94f68b72ef105b3417c73877 # v32.1.0
+        with:
+          extra_nix_config: experimental-features = nix-command flakes
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Configure pnpm store
+        run: nix develop --no-write-lock-file --command pnpm config set --global store-dir "$RUNNER_TEMP/pnpm-store"
+
+      - name: Evaluate every Flake system
+        run: nix flake check --no-build --all-systems --no-write-lock-file
+
+      - name: Install frontend dependencies
+        run: nix develop --no-write-lock-file --command pnpm install --frozen-lockfile
+
+      - name: Vite+ check
+        run: nix develop --no-write-lock-file --command pnpm check
+
+      - name: TypeScript typecheck
+        run: nix develop --no-write-lock-file --command pnpm typecheck
+
+      - name: Vite+ tests
+        run: nix develop --no-write-lock-file --command pnpm test
+
+      - name: Vite+ build
+        run: nix develop --no-write-lock-file --command pnpm build

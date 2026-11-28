@@ -74,7 +74,9 @@ fn apply_default_shell_and_env(params: &mut TerminalCreateParams) {
         && params.line.is_none()
         && let Some(shell) = resolve_os_default_shell()
     {
-        env_map.entry("SHELL".into()).or_insert_with(|| shell.clone());
+        env_map
+            .entry("SHELL".into())
+            .or_insert_with(|| shell.clone());
         params.argv = if supports_login_flag(&shell) {
             Some(vec![shell, "-l".to_string()])
         } else {
@@ -86,7 +88,9 @@ fn apply_default_shell_and_env(params: &mut TerminalCreateParams) {
     // private /tmp/uiterm.* directory. Restore the user's XDG directories for child shells
     // so fish (~/.config/fish), nvim, starship, etc. load the user's actual configuration.
     if let Some(xdg_config) = resolve_xdg_dir("XDG_CONFIG_HOME", ".config") {
-        env_map.entry("XDG_CONFIG_HOME".into()).or_insert(xdg_config);
+        env_map
+            .entry("XDG_CONFIG_HOME".into())
+            .or_insert(xdg_config);
     }
     if let Some(xdg_state) = resolve_xdg_dir("XDG_STATE_HOME", ".local/state") {
         env_map.entry("XDG_STATE_HOME".into()).or_insert(xdg_state);

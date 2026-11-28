@@ -26,11 +26,7 @@ import {
 } from "../validation/ipcSchemas.ts";
 import type { TerminalBackendId, UserSettings } from "../validation/settingsSchemas.ts";
 import { createTerminalAdapter } from "./createAdapter.ts";
-import type {
-  TerminalAdapter,
-  TerminalAdapterCallbacks,
-  TerminalAdapterOptions,
-} from "./types.ts";
+import type { TerminalAdapter, TerminalAdapterCallbacks, TerminalAdapterOptions } from "./types.ts";
 
 const encoder = new TextEncoder();
 const ACK_BATCH_THRESHOLD = 16 * 1024;
@@ -133,7 +129,10 @@ export class TerminalSessionManager {
   private reportError(context: string, err: unknown): AppError {
     const appErr = normalizeError(err, { context });
     this.logger.logError("terminal", appErr, { context });
-    this.diagnostics?.pushLog("system", `IPC error (${context}): ${appErr.formatDeveloperSummary()}`);
+    this.diagnostics?.pushLog(
+      "system",
+      `IPC error (${context}): ${appErr.formatDeveloperSummary()}`,
+    );
     return appErr;
   }
 
@@ -231,7 +230,10 @@ export class TerminalSessionManager {
     } else if (ev.type === "turn") {
       const parsed = parseTurnEventData(ev.data);
       if (parsed) {
-        this.diagnostics?.pushLog("system", `[${ev.terminal}] turn=${parsed.turn} (${parsed.state})`);
+        this.diagnostics?.pushLog(
+          "system",
+          `[${ev.terminal}] turn=${parsed.turn} (${parsed.state})`,
+        );
       }
     } else if (ev.type === "finished") {
       const parsed = parseTerminationEventData(ev.data);
@@ -428,7 +430,9 @@ export class TerminalSessionManager {
             if (attachId > 0) {
               void this.client
                 .terminalDetach(attachId)
-                .catch((detachError) => this.reportError(`terminalDetach:${session.id}`, detachError));
+                .catch((detachError) =>
+                  this.reportError(`terminalDetach:${session.id}`, detachError),
+                );
             }
           }
         },
@@ -651,7 +655,8 @@ export class TerminalSessionManager {
 
   pasteText(id: string, text: string): boolean {
     const session = this.sessions.get(id);
-    if (!session?.stream || session.stream.closed || session.disposed || text.length === 0) return false;
+    if (!session?.stream || session.stream.closed || session.disposed || text.length === 0)
+      return false;
     session.adapter.paste(text);
     return true;
   }
