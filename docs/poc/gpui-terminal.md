@@ -101,7 +101,7 @@ Stage 1・2 で検証した GPUI フォントシェーピング・IME 状態管�
 
 測定結果から、以下を **採用** し、不要な複雑化は **不採用** とした:
 
-- **採用**: (1) `TextRun` 統合による `ShapedLine` 削減（全シナリオでシェーピング回数 60〜80% 減・メモリ大幅削減）、(2) `RenderState::next_dirty()`（旧方式で入力遅延の p50 は 0.14 ms から 0.06 ms、部分更新の `prepaint` は 72.8% 短縮）、(3) `Screen::Primary` 限定・128 行上限の `RowId` + `content_hash` キャッシュ（スクロール時の CoreText シェーピングを -82〜-98% 削減、キャッシュメモリ 1.2〜2.0 MiB 以内）。
+- **採用**: (1) 同じフォント属性のセルをまとめ、`ShapedLine` の生成を減らす `TextRun` 統合、(2) `RenderState::next_dirty()`（旧方式で入力遅延の p50 は 0.14 ms から 0.06 ms、部分更新の `prepaint` は 72.8% 短縮）、(3) `Screen::Primary` 限定・128 行上限の `RowId` + `content_hash` キャッシュ（スクロール時の CoreText シェーピングを -82〜-98% 削減、キャッシュメモリ 1.2〜2.0 MiB 以内）。
 - **不採用**: `Screen::Alternate` の `Dirty::Full` に対する `RowId` ハッシュキャッシュは +44.6% 遅延と +30.5 MiB RSS 悪化を招き効果がマイナスであったため不採用とした。なお、`prepaint` 時間は 0.2〜1.3 ms と 16.67 ms (60Hz VSync) 予算に対して十分小さいため、`frame_interval` 中央値は全条件で VSync 律速（`16.67 ms`）となっているが、省電力・CPU 負荷抑制の観点で最適化維持が妥当である。
 
 ---
