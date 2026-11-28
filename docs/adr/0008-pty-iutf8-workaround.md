@@ -9,7 +9,7 @@ herdr-core v0.1.22の新規PTYではIUTF8が有効にならず、カノニカル
 
 ## Decision
 
-新規PTYのコマンドをuiterm自身の --uiterm-pty-init モードでラップする。Tokio・Tauriの起動前にtermiosのIUTF8だけを有効化し、execで対象プログラムへ置換する。公開argvから内部ラッパーを除去する。
+新規PTYのコマンドをuiterm自身の --uiterm-pty-init モードでラップする。非同期ランタイムとGUIの起動前にtermiosのIUTF8だけを有効化し、execで対象プログラムへ置換する。公開argvから内部ラッパーを除去する。
 
 ## Alternatives Considered
 
@@ -18,6 +18,8 @@ herdr-coreのソースビルドによるパッチはZigとGhosttyサブモジュ
 ## Consequences
 
 macOS実機と固定版coreの統合テストで修正を確認した。上流が新規PTYでIUTF8を設定する版に更新した際は回帰テストを維持して暫定ラッパーを撤去する。
+
+[ADR-0010](0010-evaluate-native-gpui-terminal.md) のGPUI構成にも、この初期化方式と撤去条件を引き継ぐ。
 
 ## References
 

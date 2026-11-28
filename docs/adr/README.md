@@ -2,18 +2,18 @@
 
 設計判断の背景、選択、代替案、影響を記録する。ADR-0001〜0009は現行の設計資料・実装記録から再構成したもので、日付は記録作成日であり、実際の決定日を推定したものではない。
 
-| ADR  | 判断                                                                                   | Status   |
-| ---- | -------------------------------------------------------------------------------------- | -------- |
-| 0001 | [TypeScript・Tauri・Rustの採用](0001-adopt-typescript-tauri-rust.md)                   | Accepted |
-| 0002 | [herdr-coreによるセッション管理](0002-adopt-herdr-core.md)                             | Accepted |
-| 0003 | [wterm・Ghostty WASMによる端末描画](0003-adopt-wterm-ghostty-wasm.md)                  | Accepted |
-| 0004 | [Zustand Vanilla・Action Registry](0004-zustand-action-registry.md)                    | Accepted |
-| 0005 | [IPC・プロセス隔離・セキュリティ](0005-ipc-process-isolation-security.md)              | Accepted |
-| 0006 | [外部Node.jsによるTypeScript設定](0006-external-node-typescript-config.md)             | Accepted |
-| 0007 | [Nix・pnpm・Vite+の採用](0007-nix-pnpm-vite-plus.md)                                   | Accepted |
-| 0008 | [PTYのIUTF8暫定対応](0008-pty-iutf8-workaround.md)                                     | Accepted |
-| 0009 | [TypeScript辞書による国際化](0009-typescript-dictionary-i18n.md)                       | Accepted |
-| 0010 | [ネイティブGUI・ターミナル描画基盤への移行検討](0010-evaluate-native-gpui-terminal.md) | Proposed |
+| ADR  | 判断                                                                       | Status     |
+| ---- | -------------------------------------------------------------------------- | ---------- |
+| 0001 | [TypeScript・Tauri・Rustの採用](0001-adopt-typescript-tauri-rust.md)       | Superseded |
+| 0002 | [herdr-coreによるセッション管理](0002-adopt-herdr-core.md)                 | Accepted   |
+| 0003 | [wterm・Ghostty WASMによる端末描画](0003-adopt-wterm-ghostty-wasm.md)      | Superseded |
+| 0004 | [Zustand Vanilla・Action Registry](0004-zustand-action-registry.md)        | Superseded |
+| 0005 | [IPC・プロセス隔離・セキュリティ](0005-ipc-process-isolation-security.md)  | Superseded |
+| 0006 | [外部Node.jsによるTypeScript設定](0006-external-node-typescript-config.md) | Accepted   |
+| 0007 | [Nix・pnpm・Vite+の採用](0007-nix-pnpm-vite-plus.md)                       | Accepted   |
+| 0008 | [PTYのIUTF8暫定対応](0008-pty-iutf8-workaround.md)                         | Accepted   |
+| 0009 | [TypeScript辞書による国際化](0009-typescript-dictionary-i18n.md)           | Superseded |
+| 0010 | [GPUIとネイティブ端末描画の採用](0010-evaluate-native-gpui-terminal.md)    | Accepted   |
 
 ## 運用
 

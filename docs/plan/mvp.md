@@ -10,15 +10,11 @@ CLIの自由度とGUIの利便性を両立し、軽量性・日本語環境で�
 
 ## 技術要件
 
-- TypeScript
-- Tauri
-- pnpm
-- 既存のターミナル関連技術の利用
+[採用構成](../architecture.md#採用した製品構成) に従い、Rust・GPUI・ネイティブ版libghostty-vt・herdr-coreで製品版を構築する。設定・拡張はTypeScriptと外部Node.jsを使い、開発環境はNixとする。
+
 - macOS（Apple Silicon）への対応
 - Linux（NixOS / Hyprland）への対応
 - ネイティブWaylandへの対応
-
-未確定の技術については、別途選定する。
 
 ## ターミナル
 
@@ -143,7 +139,7 @@ TypeScriptによる設定ファイルを利用できるようにする。
 ## 完成条件
 
 - [ ] macOSで正常に動作する。
-- [ ] NixOS / Hyprlandで正常に動作する。
+- [ ] NixOS / Hyprland実機でネイティブWaylandの描画・入力・Fcitx5を含め正常に動作する。
 - [ ] 日本語入力を快適に行える。
 - [ ] fish・Neovim・Codexが正常に動作する。
 - [ ] 複数のワークスペースで並行して作業できる。

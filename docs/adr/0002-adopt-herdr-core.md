@@ -19,6 +19,8 @@ herdr-coreをセッション状態の正とし、v0.1.22に固定する。専用
 
 更新時にプロトコルと終了処理の互換性を検証する。専用インスタンスを監視し、既定ソケットや他のインスタンスには干渉しない。
 
+GPUIへの移行後もセッション管理の責務と通信境界を維持する。 [ADR-0010](0010-evaluate-native-gpui-terminal.md) を参照。
+
 ## References
 
 - [関連する設計・実装記録](../implementation/phase1-backend.md)

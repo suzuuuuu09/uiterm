@@ -1,7 +1,9 @@
 # ADR-0009: TypeScript辞書による国際化
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-11-27
+
+製品GUIにおけるTypeScript辞書・Intl APIの採用は [ADR-0010](0010-evaluate-native-gpui-terminal.md) により置換された。日英対応、翻訳キー、書式の一貫性は引き継ぐ。
 
 ## Context
 
@@ -17,7 +19,7 @@ i18next等は現時点の要件に対する追加依存となる。
 
 ## Consequences
 
-キー一致を型とテストで検証する。複雑な翻訳要件が生じた場合は再評価する。ネイティブ移行時も日本語・英語を維持し実装方式は再検討する。
+キー一致を型とテストで検証する。複雑な翻訳要件が生じた場合は再評価する。
 
 ## References
 

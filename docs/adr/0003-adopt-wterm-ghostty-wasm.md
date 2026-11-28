@@ -1,7 +1,9 @@
 # ADR-0003: wterm・Ghostty WASMによる端末描画
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-11-27
+
+端末描画とVT処理の選択は [ADR-0010](0010-evaluate-native-gpui-terminal.md) により置換された。セッション管理と描画の分離は引き継ぐ。
 
 ## Context
 
@@ -13,7 +15,7 @@
 
 ## Alternatives Considered
 
-gespenst・xterm.jsを代替候補とする。ネイティブ描画は [ADR-0010](0010-evaluate-native-gpui-terminal.md) で再評価する。
+gespenst・xterm.jsを代替候補とする。ネイティブ描画も比較対象とした。
 
 ## Consequences
 

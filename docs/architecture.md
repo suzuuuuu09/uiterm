@@ -1,6 +1,20 @@
 # アーキテクチャ
 
-## 現行構成
+## 採用した製品構成
+
+```text
+GPUI（UI・端末描画）
+  ├─ 共通Action API・レイアウト状態（Rust）
+  └─ ネイティブ版libghostty-vt ↔ Rustアダプター ↔ herdr-core ↔ PTY / CLI
+```
+
+Rustを主要言語とする。herdr-coreがセッション状態の正で、uitermはWindow → Workspace → Tab → Paneのレイアウトと選択状態を所有する。設定・拡張は外部Node.jsでTypeScriptを実行し、JSON-RPC over stdioを介して接続する。開発環境はNixを使う。
+
+移行後の構成と引き継ぐ契約は [ADR-0010](adr/0010-evaluate-native-gpui-terminal.md) と [設計資料](plan/architecture.md) を参照。
+
+## 現行実装
+
+製品実装は以下のTauri版。GPUIは `poc/gpui-terminal/` に独立した評価用実装がある。
 
 ```text
 React UI / Action Registry / Zustand Vanilla
@@ -21,12 +35,4 @@ herdr-core → PTY / shell / CLI
 | src/i18n                        | 日本語・英語の翻訳キーと書式         |
 | src/poc                         | PoC専用診断                          |
 
-herdr-coreがセッション状態の正、uitermがWindow → Workspace → Tab → Paneのレイアウトと選択状態を所有する。端末出力はストアを経由させない。プロセス監視、クレジット、再同期、機密情報の非記録を維持する。
-
-外部Node.jsによるTypeScript設定はPoC検証済みで、製品機能は未完成。内蔵ブラウザはPost-MVPで、terminal-browserは候補外とする。
-
-## 構成の再評価
-
-Rust + GPUI + ネイティブlibghostty-vt + herdr-coreを第一候補として検証する。採用決定前は現行構成を維持する。[ADR-0010](adr/0010-evaluate-native-gpui-terminal.md) 参照。
-
-詳細：[設計資料](plan/architecture.md)、[ADR一覧](adr/README.md)。
+現行Tauri版の境界は [通信・操作契約](interfaces.md)、GPUIへの移行状況は [開発状況](status.md) を参照。外部Node.jsによるTypeScript設定は開発用PoCで方式を検証済みで、製品機能は未完成。

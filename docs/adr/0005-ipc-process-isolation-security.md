@@ -1,7 +1,9 @@
 # ADR-0005: IPC・プロセス隔離・セキュリティ
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-11-27
+
+Tauri固有のIPCと権限境界は [ADR-0010](0010-evaluate-native-gpui-terminal.md) により置換された。herdr-coreとの通信、プロセス隔離、フロー制御、入力検証と機密情報の非記録は引き継ぐ。
 
 ## Context
 

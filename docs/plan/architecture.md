@@ -4,46 +4,9 @@ description: "uitermのアーキテクチャをまとめる"
 
 ## 技術スタック
 
-| 分類         | 用途               | 技術                       |
-| ------------ | ------------------ | -------------------------- |
-| Core         | メイン言語         | TypeScript                 |
-| Core         | ネイティブ処理     | Rust                       |
-| Core         | デスクトップ基盤   | Tauri 2                    |
-| Frontend     | UI                 | React                      |
-| Frontend     | 最適化             | React Compiler             |
-| Frontend     | CSS                | Tailwind CSS v4            |
-| Frontend     | UIプリミティブ     | Base UI                    |
-| Frontend     | 状態管理           | Zustand Vanilla            |
-| Frontend     | 国際化             | TypeScript 辞書 + Intl API |
-| Frontend     | アイコン           | Lucide                     |
-| Frontend     | スキーマ検証       | Valibot                    |
-| Terminal     | セッション管理     | herdr-core                 |
-| Terminal     | VTエンジン         | libghostty-vt              |
-| Terminal     | 描画               | wterm                      |
-| Backend      | 非同期処理         | Tokio                      |
-| Backend      | シリアライズ       | Serde                      |
-| Backend      | 型生成             | ts-rs                      |
-| CLI          | 引数解析           | clap                       |
-| Config       | 設定言語           | TypeScript                 |
-| Config       | 実行環境           | Node.js LTS                |
-| Storage      | データ永続化       | JSON                       |
-| Development  | 開発ツールチェーン | Vite+                      |
-| Development  | パッケージ管理     | pnpm / Cargo               |
-| Development  | 開発環境           | Nix Flakes                 |
-| Testing      | 単体テスト         | Vitest / Cargo Test        |
-| Testing      | E2E                | Playwright / WebdriverIO   |
-| Distribution | Rustビルド         | crane                      |
-| Distribution | CI/CD              | GitHub Actions             |
-| Distribution | 依存関係更新       | Renovate                   |
+[採用構成](../architecture.md#採用した製品構成) の詳細設計。採用判断は [ADR-0010](../adr/0010-evaluate-native-gpui-terminal.md)、現在の実装は [開発状況](../status.md) を参照する。
 
-## アーキテクチャ方針
-
-- TypeScriptを主要な開発言語とする。
-- RustはOS連携やプロセス管理、IPCなどに利用する。
-- UIとアプリケーションのロジックを分離する。
-- 外部ライブラリへの依存をアダプターに集約する。
-- GUI・CLI・設定ファイルから共通の操作APIを利用する。
-- 将来的な拡張を考慮しつつ、不要な抽象化を避ける。
+RustでUIとアプリケーションロジックを分離し、外部依存との境界をアダプターに集約する。GUI、CLI、設定から共通の操作APIを使う。
 
 ## ターミナル基盤
 
@@ -58,38 +21,19 @@ herdr-coreをPTY・プロセス・セッション管理の基盤として利用�
 
 ## ターミナル描画
 
-wtermを第一候補とし、libghosttyを利用するWASMバックエンドを採用する。
+ネイティブ版libghostty-vtがVTを処理し、GPUIがセル、カーソルと選択範囲を描画する。出力とVT状態は端末単位で管理し、アプリケーションの状態管理から分離する。
 
-- ターミナル描画とセッション管理を分離する。
-- ターミナル出力をReactやZustandの状態管理に流さない。
-- 不要な再描画を抑える。
-- 非表示のターミナルによるリソース消費を抑える。
-- 日本語IMEや文字幅の正確性を重視する。
-
-wtermに重大な問題がある場合は、gespenst・xterm.jsなどを代替候補とする。
+- 日本語IME、文字幅、Nerd Fontの表示を維持する。
+- 出力バッファと履歴に上限を設ける。既定のスクロールバックは2,000行とする。
+- 不要な再描画と非表示ターミナルの負荷を抑える。
 
 ## UI
 
-Reactを利用してアプリケーションのUIを構築し、Window → Workspace → Tab の階層構造を採用する。
-
-- Window：アプリケーションウィンドウ
-- Workspace：リポジトリ・作業ディレクトリ
-- Tab：用途に応じた作業領域
-
-UIプリミティブにはBase UIを利用し、外観はTailwind CSSで構築する。特定のコンポーネントライブラリのデザインに依存せず、uiterm独自のUIを作る。
+GPUIでWindow → Workspace → Tab → Paneを表示する。Workspaceはリポジトリや作業ディレクトリ、Tabは用途ごとの作業領域、Paneは分割した表示領域を表す。
 
 ## 状態管理
 
-Zustand Vanillaで以下の状態を管理する。
-
-- ワークスペース
-- タブ・ペイン
-- 選択状態
-- エージェントの状態
-- UIの表示状態
-- ユーザー設定
-
-Reactに依存しない状態管理を行い、共通操作APIからも利用できるようにする。ターミナルの出力やVT状態は専用の描画ライブラリで管理する。
+uitermはレイアウト、選択、表示状態と設定をRust側で管理する。セッションとエージェントの実行状態はherdr-coreと同期し、表示に必要な情報を保持する。状態を更新する操作は共通Action APIを通す。
 
 ## 操作API
 
@@ -118,15 +62,13 @@ TypeScriptによるプログラマブルな設定を提供する。設定の実�
 
 ## プロセス間通信
 
-| 通信経路                | 方式                                   |
-| ----------------------- | -------------------------------------- |
-| Frontend → Tauri        | Tauri Commands                         |
-| Tauri → Frontend        | Tauri Channels                         |
-| Tauri ↔ herdr-core      | Unix Socket / JSON-RPC / Binary Stream |
-| CLI ↔ uiterm            | Unix Domain Socket                     |
-| 設定ランタイム ↔ uiterm | JSON-RPC over stdio                    |
+| 通信経路                | 方式                                    |
+| ----------------------- | --------------------------------------- |
+| Rust ↔ herdr-core       | 専用Unixソケット、JSON-RPC、Framed Mode |
+| CLI ↔ uiterm            | Unixソケット（Phase 4）                 |
+| 設定ランタイム ↔ uiterm | JSON-RPC over stdio                     |
 
-ターミナル出力はストリーミング方式で処理し、通信の滞留や過剰なバッファリングを防止する。IPCへのアクセスは原則として同一ユーザーに限定する。
+端末出力はRust側でストリーム処理する。出力クレジット、再同期、ユーザー入力と自動応答の分離は [通信・操作契約](../interfaces.md#移行後も維持する条件) に従う。
 
 ## AIエージェント連携
 
@@ -142,7 +84,7 @@ herdr-core・OSC 7501・エージェント固有のHooksを利用する。
 
 ## 国際化
 
-表示文言はキーを型で管理する TypeScript 辞書にまとめる。日付、数値、相対時間の書式化には選択中のロケールを渡して標準の Intl API を使う。初期対応言語は日本語・英語とする。
+初期対応言語は日本語・英語とする。表示文言は翻訳キーで管理し、日付、数値、相対時間は選択中のロケールで書式化する。Rust側の実装方式は移行時に決める。
 
 - メニュー
 - コンテキストメニュー
@@ -177,8 +119,8 @@ MVPではJSONによるファイル保存を採用する。
 
 ## セキュリティ
 
-- Tauriの権限を必要最小限にする。
-- IPCへのアクセスを制限する。
+- herdr-coreは専用ディレクトリ・ソケットで起動し、所有するプロセスだけを監視・終了する。
+- IPCへのアクセスを制限し、端末入力、IME文字列、認証情報をログに残さない。
 - 外部から受け取るデータを検証する。
 - 信頼できないコードを自動実行しない。
 - エージェントの既存設定を無断で変更しない。
@@ -186,18 +128,9 @@ MVPではJSONによるファイル保存を採用する。
 
 ## 開発環境
 
-Nix Flakesを利用し、macOS・NixOS間で再現可能な開発環境を構築する。パッケージ管理にはpnpmとCargoを利用する。
+Nix FlakesでmacOS・NixOSの開発環境を再現する。RustはCargo、TypeScriptの依存管理はpnpmを使い、固定版とロックファイルの整合を保つ。Rustの整形・静的検査にはrustfmt・Clippyを使う。実行可能な開発・検証コマンドは [開発手順](../development.md) を参照する。
 
-JavaScript・TypeScriptの開発ツールチェーンにはVite+を利用する。
-
-- Vite：開発サーバー
-- Rolldown：バンドル
-- Vitest：テスト
-- Oxlint：Lint
-- Oxfmt：フォーマット
-- tsdown：ライブラリのビルド（必要に応じて利用）
-
-Rustにはrustfmt・Clippyを利用する。
+配布ビルドはcrane、CIはGitHub Actions、依存関係の更新はRenovateを利用する方針とする。
 
 ## テスト
 
@@ -214,7 +147,6 @@ Rustにはrustfmt・Clippyを利用する。
 ### macOS
 
 - Apple Silicon
-- WKWebView
 - macOS標準の日本語IME
 
 ### Linux
@@ -222,21 +154,11 @@ Rustにはrustfmt・Clippyを利用する。
 - NixOS
 - Hyprland
 - ネイティブWayland
-- WebKitGTK
 - Fcitx5 + Mozc
 
 ## 技術検証
 
-以下の項目は本格的な実装に進む前に検証する。
-
-- herdr-coreとwtermの通信互換性
-- VTエンジンの二重動作によるリソース消費
-- ターミナルの自動応答とユーザー入力の分離
-- 日本語IME・全角文字の処理
-- 複数ターミナルの描画性能
-- TypeScript設定ランタイムの実行コスト
-- NixOSにおけるビルドと動作（Phase 0 では Flake 評価・依存整合などの静的検証までとし、実機確認は MVP 完成条件とする）
-- Vite+とTauri・Nixの連携
+GPUIの採用根拠と残課題は [ADR-0010](../adr/0010-evaluate-native-gpui-terminal.md)、製品版の回帰検証と実機検証は [ロードマップ](roadmap.md) を参照する。
 
 ## 将来的な検討事項
 
@@ -245,4 +167,3 @@ Rustにはrustfmt・Clippyを利用する。
 - セッション永続化・再接続
 - リモート操作
 - プラグインシステム
-- 設定ランタイムの組み込み

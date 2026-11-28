@@ -1,13 +1,17 @@
 # 開発・検証手順
 
-現行Tauri版を対象とする。リポジトリルートで実行する。
+現行Tauri版と独立したGPUI PoCの手順。採用後の製品構成は [ADR-0010](adr/0010-evaluate-native-gpui-terminal.md) を参照。コマンドはリポジトリルートで実行する。
 
-## 起動
+## Tauri版の起動
 
 ```sh
 nix develop --command pnpm install --frozen-lockfile
 nix develop --command pnpm tauri dev
 ```
+
+## GPUI PoCの起動
+
+隔離した実機検証と起動の手順は [GPUI PoC検証レポート §8](poc/gpui-terminal.md#8-実機検証手順と起動コマンド) を参照。
 
 ## 自動検証
 
@@ -35,7 +39,7 @@ CIは既存Flakeの開発シェルを使い、Cargoとpnpmのダウンロード�
 
 Flake評価やmacOS/Linuxランナーでのビルドは、NixOS/Hyprland実機、GUI、IME、Nerd Font、クリップボード、連続利用や性能の検証を代替しない。実機検証は「検証上の注意」に記載した手順で行う。
 
-## macOS配布ビルド
+## Tauri版のmacOS配布ビルド
 
 ```sh
 nix develop --command pnpm tauri build --bundles app
