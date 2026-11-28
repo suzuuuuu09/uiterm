@@ -100,20 +100,25 @@ pub fn classify_keydown(
     }
 
     let key = gpui_key_to_ghostty(&keystroke.key);
-    if key == Key::Unidentified && keystroke.key_char.is_none() {
+    let unshifted_codepoint = logical_codepoint(&keystroke.key);
+    if key == Key::Unidentified && unshifted_codepoint.is_none() && keystroke.key_char.is_none() {
         return KeyDispatchDecision::PassToIme;
     }
 
     let mods = gpui_mods_to_ghostty(&keystroke.modifiers);
-    let unshifted_codepoint = unshifted_char_for_key(&keystroke.key);
-
-    // Per ghostty-vt docs: do NOT pass C0 control characters or macOS PUA function codes as utf8.
-    let utf8 = if keystroke.modifiers.control
-        || keystroke.modifiers.alt
-        || keystroke.modifiers.function
-        || is_non_printing_named_key(&keystroke.key)
-    {
+    // GPUI reports the layout's symbol and removes Shift for punctuation. Passing
+    // that symbol as printable UTF-8 lets Ghostty encode Ctrl+@ independently of
+    // the physical key. Option-as-Meta uses the logical key, without Option's text.
+    let utf8 = if keystroke.modifiers.function || is_non_printing_named_key(&keystroke.key) {
         None
+    } else if keystroke.modifiers.control || keystroke.modifiers.alt {
+        unshifted_codepoint.map(|ch| {
+            if keystroke.modifiers.shift {
+                ch.to_ascii_uppercase().to_string()
+            } else {
+                ch.to_string()
+            }
+        })
     } else {
         keystroke.key_char.clone().filter(|s| {
             !s.is_empty()
@@ -131,11 +136,10 @@ pub fn classify_keydown(
 }
 
 pub fn match_app_action(keystroke: &Keystroke, has_selection: bool) -> Option<TerminalAppAction> {
-    let m = &keystroke.modifiers;
-    let key = keystroke.key.as_str();
-
     #[cfg(target_os = "macos")]
     {
+        let m = &keystroke.modifiers;
+        let key = keystroke.key.as_str();
         if !m.platform || m.control || m.alt {
             return None;
         }
@@ -163,27 +167,27 @@ pub fn match_app_action(keystroke: &Keystroke, has_selection: bool) -> Option<Te
 
     #[cfg(not(target_os = "macos"))]
     {
-        if !m.control || m.alt || m.platform {
-            return None;
-        }
-        if m.shift {
-            return match key {
-                "c" if has_selection => Some(TerminalAppAction::CopySelection),
-                "v" => Some(TerminalAppAction::Paste),
-                "a" => Some(TerminalAppAction::SelectAll),
-                "+" | "=" => Some(TerminalAppAction::ZoomIn),
-                "f" => Some(TerminalAppAction::CycleFont),
-                "n" => Some(TerminalAppAction::ToggleNerdFallback),
-                "r" => Some(TerminalAppAction::RestartSession),
-                _ => None,
-            };
-        }
-        match key {
-            "=" | "+" => Some(TerminalAppAction::ZoomIn),
-            "-" => Some(TerminalAppAction::ZoomOut),
-            "0" => Some(TerminalAppAction::ZoomReset),
-            _ => None,
-        }
+        match_linux_app_action(keystroke, has_selection)
+    }
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn match_linux_app_action(keystroke: &Keystroke, has_selection: bool) -> Option<TerminalAppAction> {
+    let m = &keystroke.modifiers;
+    if !m.control || !m.shift || m.alt || m.platform {
+        return None;
+    }
+    match keystroke.key.as_str() {
+        "c" if has_selection => Some(TerminalAppAction::CopySelection),
+        "v" => Some(TerminalAppAction::Paste),
+        "a" => Some(TerminalAppAction::SelectAll),
+        "up" => Some(TerminalAppAction::ZoomIn),
+        "down" => Some(TerminalAppAction::ZoomOut),
+        "home" => Some(TerminalAppAction::ZoomReset),
+        "f" => Some(TerminalAppAction::CycleFont),
+        "n" => Some(TerminalAppAction::ToggleNerdFallback),
+        "r" => Some(TerminalAppAction::RestartSession),
+        _ => None,
     }
 }
 
@@ -283,27 +287,27 @@ pub fn gpui_key_to_ghostty(key: &str) -> Key {
         "x" => Key::X,
         "y" => Key::Y,
         "z" => Key::Z,
-        "0" | ")" => Key::Digit0,
-        "1" | "!" => Key::Digit1,
-        "2" | "@" => Key::Digit2,
-        "3" | "#" => Key::Digit3,
-        "4" | "$" => Key::Digit4,
-        "5" | "%" => Key::Digit5,
-        "6" | "^" => Key::Digit6,
-        "7" | "&" => Key::Digit7,
-        "8" | "*" => Key::Digit8,
-        "9" | "(" => Key::Digit9,
-        "`" | "~" => Key::Backquote,
-        "-" | "_" => Key::Minus,
-        "=" | "+" => Key::Equal,
-        "[" | "{" => Key::BracketLeft,
-        "]" | "}" => Key::BracketRight,
-        "\\" | "|" => Key::Backslash,
-        ";" | ":" => Key::Semicolon,
-        "'" | "\"" => Key::Quote,
-        "," | "<" => Key::Comma,
-        "." | ">" => Key::Period,
-        "/" | "?" => Key::Slash,
+        "0" => Key::Digit0,
+        "1" => Key::Digit1,
+        "2" => Key::Digit2,
+        "3" => Key::Digit3,
+        "4" => Key::Digit4,
+        "5" => Key::Digit5,
+        "6" => Key::Digit6,
+        "7" => Key::Digit7,
+        "8" => Key::Digit8,
+        "9" => Key::Digit9,
+        "`" => Key::Backquote,
+        "-" => Key::Minus,
+        "=" => Key::Equal,
+        "[" => Key::BracketLeft,
+        "]" => Key::BracketRight,
+        "\\" => Key::Backslash,
+        ";" => Key::Semicolon,
+        "'" => Key::Quote,
+        "," => Key::Comma,
+        "." => Key::Period,
+        "/" => Key::Slash,
         "space" | " " => Key::Space,
         "enter" => Key::Enter,
         "tab" => Key::Tab,
@@ -347,39 +351,14 @@ pub fn gpui_key_to_ghostty(key: &str) -> Key {
     }
 }
 
-fn unshifted_char_for_key(key: &str) -> Option<char> {
+fn logical_codepoint(key: &str) -> Option<char> {
+    if key == "space" {
+        return Some(' ');
+    }
+
     let mut chars = key.chars();
     let ch = chars.next()?;
-    if chars.next().is_some() {
-        return match key {
-            "space" => Some(' '),
-            _ => None,
-        };
-    }
-    Some(match ch {
-        ')' => '0',
-        '!' => '1',
-        '@' => '2',
-        '#' => '3',
-        '$' => '4',
-        '%' => '5',
-        '^' => '6',
-        '&' => '7',
-        '*' => '8',
-        '(' => '9',
-        '~' => '`',
-        '_' => '-',
-        '+' => '=',
-        '{' => '[',
-        '}' => ']',
-        '|' => '\\',
-        ':' => ';',
-        '"' => '\'',
-        '<' => ',',
-        '>' => '.',
-        '?' => '/',
-        other => other,
-    })
+    (chars.next().is_none() && !ch.is_control()).then_some(ch)
 }
 
 #[cfg(test)]
@@ -442,10 +421,127 @@ mod tests {
             KeyDispatchDecision::SendToTerminal {
                 key: Key::B,
                 mods,
-                utf8: None,
+                utf8: Some(ref text),
                 ..
-            } if mods == Mods::ALT
+            } if mods == Mods::ALT && text == "b"
         ));
+    }
+
+    #[test]
+    fn modified_punctuation_uses_the_layout_symbol_on_the_wire() {
+        let mut vt = crate::vt::VtTerminal::new(80, 24, 0).unwrap();
+        for (symbol, expected) in [
+            ("@", b"\0".as_slice()),
+            (":", b"\x1b[58;5u".as_slice()),
+            ("-", b"\x1f".as_slice()),
+            ("^", b"\x1e".as_slice()),
+            ("_", b"\x1f".as_slice()),
+        ] {
+            let keystroke = Keystroke {
+                modifiers: Modifiers {
+                    control: true,
+                    ..Modifiers::none()
+                },
+                key: symbol.into(),
+                key_char: None,
+            };
+            let KeyDispatchDecision::SendToTerminal {
+                key,
+                mods,
+                utf8,
+                unshifted_codepoint,
+            } = classify_keydown(&keystroke, false, false, true)
+            else {
+                panic!("Ctrl+{symbol} did not reach the terminal");
+            };
+            assert_eq!(
+                vt.encode_key(key, mods, utf8.as_deref(), unshifted_codepoint),
+                expected
+            );
+        }
+
+        for (shift, symbol, expected) in [
+            (false, "@", b"\x1b@".as_slice()),
+            (true, "b", b"\x1bB".as_slice()),
+        ] {
+            let keystroke = Keystroke {
+                modifiers: Modifiers {
+                    alt: true,
+                    shift,
+                    ..Modifiers::none()
+                },
+                key: symbol.into(),
+                key_char: None,
+            };
+            let KeyDispatchDecision::SendToTerminal {
+                key,
+                mods,
+                utf8,
+                unshifted_codepoint,
+            } = classify_keydown(&keystroke, false, false, true)
+            else {
+                panic!("Alt+{symbol} did not reach the terminal");
+            };
+            assert_eq!(
+                vt.encode_key(key, mods, utf8.as_deref(), unshifted_codepoint),
+                expected
+            );
+        }
+
+        vt.feed(b"\x1b[>1u");
+        let ctrl_minus = Keystroke {
+            modifiers: Modifiers {
+                control: true,
+                ..Modifiers::none()
+            },
+            key: "-".into(),
+            key_char: None,
+        };
+        let KeyDispatchDecision::SendToTerminal {
+            key,
+            mods,
+            utf8,
+            unshifted_codepoint,
+        } = classify_keydown(&ctrl_minus, false, false, true)
+        else {
+            panic!("Ctrl+- did not reach the terminal in Kitty mode");
+        };
+        assert_eq!(
+            vt.encode_key(key, mods, utf8.as_deref(), unshifted_codepoint),
+            b"\x1b[45;5u"
+        );
+    }
+
+    #[test]
+    fn linux_zoom_uses_shifted_navigation_keys_and_leaves_control_symbols_to_pty() {
+        let mut key = Keystroke {
+            modifiers: Modifiers {
+                control: true,
+                ..Modifiers::none()
+            },
+            key: String::new(),
+            key_char: None,
+        };
+        for symbol in ["-", "=", "+", "0"] {
+            key.key = symbol.into();
+            assert_eq!(match_linux_app_action(&key, false), None);
+        }
+        key.modifiers.shift = true;
+        for (name, has_selection, expected) in [
+            ("c", false, None),
+            ("c", true, Some(TerminalAppAction::CopySelection)),
+            ("v", false, Some(TerminalAppAction::Paste)),
+            ("a", false, Some(TerminalAppAction::SelectAll)),
+            ("up", false, Some(TerminalAppAction::ZoomIn)),
+            ("down", false, Some(TerminalAppAction::ZoomOut)),
+            ("home", false, Some(TerminalAppAction::ZoomReset)),
+            ("f", false, Some(TerminalAppAction::CycleFont)),
+            ("n", false, Some(TerminalAppAction::ToggleNerdFallback)),
+            ("r", false, Some(TerminalAppAction::RestartSession)),
+        ] {
+            key.key = name.into();
+            assert_eq!(match_linux_app_action(&key, has_selection), expected);
+        }
     }
 
     #[test]

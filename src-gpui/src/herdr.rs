@@ -158,13 +158,23 @@ impl Drop for DirCleanupGuard {
 }
 
 fn create_private_dir(tag: &str) -> io::Result<PathBuf> {
-    let seq = INSTANCE_SEQ.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    // Keep Unix domain socket path well below macOS SUN_LEN (104 bytes).
-    let dir = PathBuf::from(format!("/tmp/u-gp-{tag}-{pid}-{seq}"));
+    create_private_dir_in(Path::new("/tmp"), tag, &INSTANCE_SEQ)
+}
+
+fn create_private_dir_in(base: &Path, tag: &str, seq: &AtomicU64) -> io::Result<PathBuf> {
     use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
-    Ok(dir)
+
+    let pid = std::process::id();
+    loop {
+        let id = seq.fetch_add(1, Ordering::Relaxed);
+        // Keep Unix domain socket path well below macOS SUN_LEN (104 bytes).
+        let dir = base.join(format!("u-gp-{tag}-{pid}-{id}"));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -931,6 +941,27 @@ mod tests {
         drop(owned);
         assert!(!path.exists());
         assert!(sibling.path().is_dir());
+    }
+
+    #[test]
+    fn create_private_dir_skips_existing_directory_collisions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let parent = DirCleanupGuard::create("collision-parent").unwrap();
+        let seq = AtomicU64::new(0);
+        let pid = std::process::id();
+        let occupied = parent.path().join(format!("u-gp-sock-{pid}-0"));
+        std::fs::create_dir(&occupied).unwrap();
+        let sentinel = occupied.join("keep");
+        std::fs::write(&sentinel, b"active").unwrap();
+
+        let created = create_private_dir_in(parent.path(), "sock", &seq).unwrap();
+        assert_eq!(created, parent.path().join(format!("u-gp-sock-{pid}-1")));
+        assert_eq!(
+            created.metadata().unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"active");
     }
 
     #[tokio::test]

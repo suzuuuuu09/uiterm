@@ -77,51 +77,20 @@ const TERM_PAD_Y: f32 = 6.0;
 const SYNC_HOLD_TIMEOUT: Duration = Duration::from_millis(100);
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
-#[cfg(unix)]
-static mut SIGNAL_PIPE_WR: libc::c_int = -1;
+fn install_signal_cleanup_watcher(
+    runtime: &tokio::runtime::Runtime,
+) -> std::io::Result<tokio::task::JoinHandle<libc::c_int>> {
+    use tokio::signal::unix::{SignalKind, signal};
 
-#[cfg(unix)]
-extern "C" fn handle_term_signal(sig: libc::c_int) {
-    unsafe {
-        if SIGNAL_PIPE_WR >= 0 {
-            let b = sig as u8;
-            let _ = libc::write(SIGNAL_PIPE_WR, (&raw const b).cast(), 1);
+    let _entered = runtime.enter();
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    Ok(runtime.spawn(async move {
+        tokio::select! {
+            _ = terminate.recv() => libc::SIGTERM,
+            _ = interrupt.recv() => libc::SIGINT,
         }
-    }
-}
-
-#[cfg(unix)]
-fn install_signal_cleanup_watcher() -> Option<tokio::sync::oneshot::Receiver<u8>> {
-    let mut fds = [0 as libc::c_int; 2];
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    let read_fd = fds[0];
-    let write_fd = fds[1];
-    unsafe {
-        for fd in fds {
-            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
-        }
-        libc::fcntl(write_fd, libc::F_SETFL, libc::O_NONBLOCK);
-        SIGNAL_PIPE_WR = write_fd;
-        let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = handle_term_signal as *const () as usize;
-        libc::sigemptyset(&raw mut sa.sa_mask);
-        sa.sa_flags = libc::SA_RESTART;
-        libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
-        libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
-    }
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
-        .name("sig-cleanup".into())
-        .spawn(move || {
-            let mut signal = 0u8;
-            if unsafe { libc::read(read_fd, (&raw mut signal).cast(), 1) } > 0 {
-                let _ = tx.send(signal);
-            }
-        })
-        .expect("start signal cleanup watcher");
-    Some(rx)
+    }))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1728,14 +1697,21 @@ fn main() {
         return;
     }
 
-    #[cfg(unix)]
-    let quit_signal = install_signal_cleanup_watcher();
+    let signal_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_io()
+        .build()
+        .expect("start signal cleanup runtime");
+    let quit_signal =
+        install_signal_cleanup_watcher(&signal_runtime).expect("install signal cleanup watcher");
 
     let started_at = Instant::now();
 
     Application::new().run(move |cx: &mut App| {
-        #[cfg(unix)]
-        if let Some(signal) = quit_signal {
+        #[cfg(target_os = "linux")]
+        fonts::init_linux_font_families(cx.text_system().all_font_names());
+
+        {
             let exit_signal = std::rc::Rc::new(std::cell::Cell::new(None));
             cx.on_app_quit({
                 let exit_signal = exit_signal.clone();
@@ -1744,7 +1720,6 @@ fn main() {
                     async move {
                         // GPUI polls shutdown futures after running the synchronous cleanup callbacks.
                         if let Some(signal) = signal {
-                            let signal = libc::c_int::from(signal);
                             unsafe {
                                 libc::signal(signal, libc::SIG_DFL);
                                 libc::raise(signal);
@@ -1755,7 +1730,7 @@ fn main() {
             })
             .detach();
             cx.spawn(async move |cx| {
-                if let Ok(signal) = signal.await {
+                if let Ok(signal) = quit_signal.await {
                     exit_signal.set(Some(signal));
                     let _ = cx.update(|cx| cx.quit());
                 }
@@ -1825,6 +1800,41 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signal_watcher_delivers_sigterm_and_sigint_in_an_isolated_process() {
+        const CHILD: &str = "UITERM_TEST_SIGNAL_WATCHER";
+        if std::env::var_os(CHILD).is_some() {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .unwrap();
+            for sig in [libc::SIGTERM, libc::SIGINT] {
+                let received = install_signal_cleanup_watcher(&runtime).unwrap();
+                assert_eq!(unsafe { libc::raise(sig) }, 0);
+                assert_eq!(
+                    runtime
+                        .block_on(async {
+                            tokio::time::timeout(Duration::from_secs(2), received).await
+                        })
+                        .unwrap()
+                        .unwrap(),
+                    sig,
+                );
+            }
+            return;
+        }
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::signal_watcher_delivers_sigterm_and_sigint_in_an_isolated_process",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
 
     #[test]
     fn command_line_dimensions_and_history_are_bounded() {

@@ -534,6 +534,16 @@ impl VtTerminal {
             .set_unshifted_codepoint(unshifted_codepoint.unwrap_or('\0'));
         let mut out = Vec::with_capacity(16);
         let _ = self.key_encoder.encode_to_vec(&self.key_event, &mut out);
+        // Shells use Ctrl+- as an alias of Ctrl+_ in legacy mode.
+        if key == Key::Minus
+            && out == b"\x1b[45;5u"
+            && self
+                .terminal
+                .kitty_keyboard_flags()
+                .is_ok_and(|flags| flags.is_empty())
+        {
+            return vec![0x1f];
+        }
         out
     }
 
@@ -855,12 +865,30 @@ pub fn extract_row_cells(
     Ok(row_cells)
 }
 
-/// Returns current process resident set size (RSS) in MiB on macOS.
+/// Returns current process resident set size (RSS) in MiB.
 pub fn current_rss_mib() -> Option<f64> {
     #[cfg(target_os = "macos")]
     return mach_current_rss_mib();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    return linux_current_rss_mib();
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     None
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_linux_statm_rss_mib(statm: &str, page_size: libc::c_long) -> Option<f64> {
+    if page_size <= 0 {
+        return None;
+    }
+    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages as f64 * page_size as f64 / (1024.0 * 1024.0))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_current_rss_mib() -> Option<f64> {
+    let stat = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    parse_linux_statm_rss_mib(&stat, page_size)
 }
 
 #[cfg(target_os = "macos")]
@@ -1234,5 +1262,17 @@ mod tests {
             },
         );
         assert_eq!(mouse_bytes, b"\x1b[<0;2;2M");
+    }
+
+    #[test]
+    fn parses_linux_proc_statm_resident_pages_into_mib() {
+        assert_eq!(
+            parse_linux_statm_rss_mib("1000 256 100 1 0 50 0", 4096),
+            Some(1.0)
+        );
+        assert_eq!(parse_linux_statm_rss_mib("1000", 4096), None);
+        assert_eq!(parse_linux_statm_rss_mib("1000 invalid", 4096), None);
+        assert_eq!(parse_linux_statm_rss_mib("1000 256", 0), None);
+        assert_eq!(parse_linux_statm_rss_mib("1000 256", -1), None);
     }
 }
