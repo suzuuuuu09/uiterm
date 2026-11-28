@@ -126,20 +126,17 @@ pub fn run_pty_iutf8_init(args: &[OsString]) -> ! {
         other => other,
     };
     let Some(program) = program else {
-        eprintln!("uiterm-gpui-poc: {PTY_IUTF8_INIT_FLAG} requires a target command");
+        eprintln!("uiterm: {PTY_IUTF8_INIT_FLAG} requires a target command");
         std::process::exit(2);
     };
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     if let Err(err) = enable_pty_iutf8(libc::STDIN_FILENO) {
-        eprintln!("uiterm-gpui-poc: failed to enable IUTF8 on stdin: {err}");
+        eprintln!("uiterm: failed to enable IUTF8 on stdin: {err}");
     }
 
     let err = std::process::Command::new(program).args(iter).exec();
-    eprintln!(
-        "uiterm-gpui-poc: failed to exec {}: {err}",
-        program.to_string_lossy()
-    );
+    eprintln!("uiterm: failed to exec PTY command: {err}");
     std::process::exit(127);
 }
 
@@ -225,7 +222,7 @@ pub fn build_child_shell_env(shell: Option<&str>) -> HashMap<String, String> {
 
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
-    env.insert("TERM_PROGRAM".to_string(), "uiterm-gpui-poc".to_string());
+    env.insert("TERM_PROGRAM".to_string(), "uiterm".to_string());
     env
 }
 
@@ -235,7 +232,7 @@ mod tests {
 
     #[test]
     fn wrap_argv_is_idempotent_and_preserves_unrelated_flags() {
-        let exe = "/tmp/uiterm-gpui-poc";
+        let exe = "/tmp/uiterm";
         let argv = vec!["/bin/fish".to_string(), "-l".to_string()];
         let wrapped = wrap_argv_with_pty_iutf8_init(argv, exe);
         assert_eq!(

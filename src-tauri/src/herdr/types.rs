@@ -44,6 +44,12 @@ impl std::fmt::Display for IpcError {
 
 impl std::error::Error for IpcError {}
 
+impl From<super::process::CoreProcessError> for IpcError {
+    fn from(error: super::process::CoreProcessError) -> Self {
+        Self::with_hint(error.code, error.message, error.hint)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]

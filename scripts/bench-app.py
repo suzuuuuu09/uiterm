@@ -150,24 +150,34 @@ def workload(args):
     print(f"BENCH_DONE bytes={count} seconds={time.monotonic() - start:.3f}", flush=True)
 
 
+def private_core_sockets():
+    runtime = Path("/tmp")
+    return set(runtime.glob("uiterm.*/hc.sock")) | set(runtime.glob("u-gp-*/hc.sock"))
+
+
 def measure(args):
-    with (args.app / "Contents/Info.plist").open("rb") as stream:
-        info = plistlib.load(stream)
-    executable = args.app / "Contents/MacOS" / info["CFBundleExecutable"]
+    info = {}
+    executable = args.binary
+    if args.app is not None:
+        with (args.app / "Contents/Info.plist").open("rb") as stream:
+            info = plistlib.load(stream)
+        executable = args.app / "Contents/MacOS" / info["CFBundleExecutable"]
     apps = processes()
     own = {pid for pid, row in apps.items() if Path(row["binary"]).resolve() == executable.resolve()}
     if args.pid is None and own:
         raise SystemExit(f"既存の起動を検出しました。PID {sorted(own)} を指定してください。")
 
     print(json.dumps({
-        "record": "environment", "bundle": str(args.app), "version": info.get("CFBundleShortVersionString"),
+        "record": "environment", "bundle": str(args.app) if args.app else None,
+        "executable": str(executable), "version": info.get("CFBundleShortVersionString"),
         "machine": os.uname().machine, "darwin": os.uname().release,
-        "bundle_logical_bytes": logical_size(args.app),
+        "bundle_logical_bytes": logical_size(args.app) if args.app else None,
+        "executable_logical_bytes": logical_size(executable),
         "extra_logical_bytes": {str(item): logical_size(item) for item in args.extra},
         "launch_label": args.label, "stage": args.stage, "condition": args.condition,
         "attribution": "root/descendant + explicit roots + isolated socket + optional WebKit delta",
     }), flush=True)
-    core_sockets_before_launch = set(Path("/tmp").glob("uiterm.*/hc.sock"))
+    core_sockets_before_launch = private_core_sockets()
     if args.pid is None:
         visible = window_detector()
         start = time.monotonic()
@@ -191,7 +201,7 @@ def measure(args):
     else:
         pid = args.pid
         if pid not in own:
-            raise SystemExit("指定 PID の実行ファイルが .app と一致しません。")
+            raise SystemExit("指定 PID の実行ファイルが計測対象と一致しません。")
 
     if args.stage is None:
         return
@@ -204,7 +214,7 @@ def measure(args):
         if pid not in rows and args.stage != "post-close":
             raise SystemExit("計測中にアプリが終了しました。")
         if args.core_socket == "auto" and selected_socket is None:
-            candidates = set(Path("/tmp").glob("uiterm.*/hc.sock")) - core_sockets_before_launch
+            candidates = private_core_sockets() - core_sockets_before_launch
             if len(candidates) > 1:
                 raise SystemExit("対象の core を一意に特定できません。--core-socket に実パスを指定してください。")
             if candidates:
@@ -269,7 +279,9 @@ def main():
     load.add_argument("--seconds", type=int, default=0)
     load.add_argument("--rate-kib", type=int, default=256)
     sample = commands.add_parser("measure")
-    sample.add_argument("--app", required=True, type=lambda path: Path(path).resolve(strict=True))
+    target = sample.add_mutually_exclusive_group(required=True)
+    target.add_argument("--app", type=lambda path: Path(path).resolve(strict=True))
+    target.add_argument("--binary", type=lambda path: Path(path).resolve(strict=True))
     sample.add_argument("--pid", type=int)
     sample.add_argument("--label", choices=("first-after-login", "warm"), default="warm")
     sample.add_argument("--wait-ready", action="store_true")
@@ -296,6 +308,8 @@ def main():
             sample.error("WebKit の差分検出とソケットの自動検出には起動前の一覧が必要です。")
         if args.seconds <= 0 or args.interval <= 0:
             sample.error("計測時間と間隔は正の数を指定してください。")
+        if args.binary is not None and (not args.binary.is_file() or not os.access(args.binary, os.X_OK)):
+            sample.error("--binary には実行ファイルを指定してください。")
         measure(args)
 
 

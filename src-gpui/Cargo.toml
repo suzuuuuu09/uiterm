@@ -1,9 +1,10 @@
 [package]
-name = "uiterm-gpui-poc"
+name = "uiterm"
 version = "0.0.1"
 edition = "2024"
 publish = false
-description = "ADR-0010 PoC: GPUI rendering, Japanese IME, Nerd Font quality, and herdr-core integration"
+default-run = "uiterm"
+description = "uiterm native terminal"
 
 [features]
 # Allow building on macOS with Xcode Command Line Tools (without full Xcode's xcrun metal).

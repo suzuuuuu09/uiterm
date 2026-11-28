@@ -5895,7 +5895,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "uiterm-gpui-poc"
+name = "uiterm"
 version = "0.0.1"
 dependencies = [
  "ghostty-vt",

@@ -1,4 +1,5 @@
 pub mod client;
+#[path = "../../../native/herdr/process.rs"]
 pub mod process;
 pub mod protocol;
 pub mod types;

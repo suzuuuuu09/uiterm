@@ -40,7 +40,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'poc/gpui-terminal/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'src-gpui/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Prepare isolated test home and runtime directory
@@ -51,12 +51,12 @@ jobs:
       - name: Rustfmt
         run: |
           nix develop --no-write-lock-file --command cargo fmt --check --manifest-path src-tauri/Cargo.toml
-          nix develop --no-write-lock-file --command cargo fmt --check --manifest-path poc/gpui-terminal/Cargo.toml
+          nix develop .#gpui --no-write-lock-file --command cargo fmt --check --manifest-path src-gpui/Cargo.toml
 
       - name: Clippy
         run: |
           nix develop --no-write-lock-file --command cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-          nix develop .#gpui --no-write-lock-file --command cargo clippy --locked --manifest-path poc/gpui-terminal/Cargo.toml --all-targets -- -D warnings
+          nix develop .#gpui --no-write-lock-file --command cargo clippy --locked --manifest-path src-gpui/Cargo.toml --all-targets -- -D warnings
 
       - name: Rust tests
         env:
@@ -64,13 +64,15 @@ jobs:
           XDG_RUNTIME_DIR: ${{ runner.temp }}/uiterm-runtime
         run: |
           nix develop --no-write-lock-file --command cargo test --locked --manifest-path src-tauri/Cargo.toml
-          nix develop .#gpui --no-write-lock-file --command cargo test --locked --manifest-path poc/gpui-terminal/Cargo.toml
+          nix develop .#gpui --no-write-lock-file --command cargo test --locked --manifest-path src-gpui/Cargo.toml
 
       - name: Build Tauri backend
         run: nix develop --no-write-lock-file --command cargo build --locked --manifest-path src-tauri/Cargo.toml
 
-      - name: Build GPUI PoC
-        run: nix develop .#gpui --no-write-lock-file --command cargo build --locked --manifest-path poc/gpui-terminal/Cargo.toml
+      - name: Build GPUI product
+        run: |
+          nix develop .#gpui --no-write-lock-file --command cargo build --locked --manifest-path src-gpui/Cargo.toml
+          nix develop .#gpui --no-write-lock-file --command cargo build --locked --release --manifest-path src-gpui/Cargo.toml
 
   typescript-and-flake:
     name: TypeScript and Nix evaluation

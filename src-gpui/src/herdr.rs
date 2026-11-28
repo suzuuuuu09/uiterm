@@ -1,4 +1,4 @@
-//! Isolated `herdr-core` v0.1.22 Framed Mode client for the GPUI PoC.
+//! Isolated `herdr-core` v0.1.22 Framed Mode client for the GPUI terminal.
 //!
 //! Strictly obeys AGENTS.md invariants:
 //! - Always spawns a dedicated `herdr-core` in a private `0700` directory and socket.
@@ -10,19 +10,23 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
-use crate::os;
+use crate::{
+    os,
+    vt::{MAX_SCROLLBACK_LINES, valid_grid},
+};
 
-pub const CORE_VERSION: &str = "0.1.22";
+#[path = "../../native/herdr/process.rs"]
+pub(crate) mod process;
+
+use process::{CORE_VERSION, CoreProcessError, CoreSupervisor, STOP_TIMEOUT};
 pub const HEADER_LEN: usize = 9;
 pub const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 
@@ -133,23 +137,6 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Fram
     })
 }
 
-pub fn resolve_herdr_core_bin() -> PathBuf {
-    if let Ok(path) = std::env::var("HERDR_CORE_BIN")
-        && !path.is_empty()
-    {
-        return PathBuf::from(path);
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let sibling = dir.join("herdr-core");
-        if sibling.is_file() {
-            return sibling;
-        }
-    }
-    PathBuf::from("herdr-core")
-}
-
 pub(crate) struct DirCleanupGuard(Option<PathBuf>);
 
 impl DirCleanupGuard {
@@ -159,10 +146,6 @@ impl DirCleanupGuard {
 
     pub(crate) fn path(&self) -> &Path {
         self.0.as_deref().expect("private directory is owned")
-    }
-
-    fn disarm(&mut self) {
-        self.0 = None;
     }
 }
 
@@ -204,15 +187,33 @@ impl CloseInfo {
             let exit_code = val
                 .get("exit_code")
                 .and_then(Value::as_i64)
-                .map(|n| n as i32);
+                .and_then(|n| i32::try_from(n).ok());
             let signal = match val.get("signal") {
-                Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+                Some(Value::String(s))
+                    if matches!(
+                        s.as_str(),
+                        "SIGHUP" | "SIGINT" | "SIGQUIT" | "SIGKILL" | "SIGTERM"
+                    ) =>
+                {
+                    Some(s.clone())
+                }
                 Some(Value::Number(n)) => n.as_i64().map(format_signal_number),
                 _ => None,
             };
             let reason = val
                 .get("reason")
                 .and_then(Value::as_str)
+                .filter(|reason| {
+                    matches!(
+                        *reason,
+                        "exited"
+                            | "signaled"
+                            | "closed"
+                            | "disconnected"
+                            | "killed"
+                            | "server_stop"
+                    )
+                })
                 .unwrap_or("closed")
                 .to_string();
             return Self {
@@ -224,17 +225,29 @@ impl CloseInfo {
         Self {
             exit_code: None,
             signal: None,
-            reason: String::from_utf8_lossy(payload).into_owned(),
+            reason: "closed".into(),
         }
     }
 
-    pub fn summary(&self) -> String {
-        if let Some(sig) = &self.signal {
-            format!("signal {sig} ({})", self.reason)
-        } else if let Some(code) = self.exit_code {
-            format!("exit {code} ({})", self.reason)
+    pub fn summary(&self, japanese: bool) -> String {
+        let reason = if japanese {
+            match self.reason.as_str() {
+                "exited" => "終了",
+                "signaled" => "シグナルによる終了",
+                "disconnected" => "接続切断",
+                "killed" => "強制終了",
+                "server_stop" => "core停止",
+                _ => "閉鎖",
+            }
         } else {
-            self.reason.clone()
+            &self.reason
+        };
+        if let Some(sig) = &self.signal {
+            format!("{reason} ({sig})")
+        } else if let Some(code) = self.exit_code {
+            format!("{reason} ({code})")
+        } else {
+            reason.to_owned()
         }
     }
 }
@@ -259,7 +272,6 @@ pub enum SessionOutput {
 
 #[derive(Debug, Clone)]
 pub struct HerdrStartOptions {
-    pub tag: String,
     pub argv: Option<Vec<String>>,
     pub cwd: Option<String>,
     pub env: HashMap<String, String>,
@@ -275,7 +287,6 @@ impl Default for HerdrStartOptions {
         let shell = argv.first().map(String::as_str);
         let env = os::build_child_shell_env(shell);
         Self {
-            tag: "live".to_string(),
             argv: Some(argv),
             cwd: None,
             env,
@@ -314,6 +325,9 @@ impl HerdrHandle {
         rows: u16,
         resize: impl FnOnce() -> Result<Vec<Vec<u8>>, String>,
     ) -> Result<bool, String> {
+        if !valid_grid(cols, rows) {
+            return Err("invalid terminal dimensions".into());
+        }
         let permit = match self.writer_tx.try_reserve() {
             Ok(permit) => permit,
             Err(mpsc::error::TrySendError::Full(())) => return Ok(false),
@@ -396,22 +410,37 @@ struct Attachment {
 pub struct HerdrGuard {
     runtime: Option<tokio::runtime::Runtime>,
     session: Option<IsolatedHerdrSession>,
+    supervisor: CoreSupervisor,
 }
 
 impl HerdrGuard {
     pub fn start_live(
         opts: HerdrStartOptions,
-    ) -> Result<(Self, HerdrHandle, HerdrOutputStream), String> {
+    ) -> Result<(Self, HerdrHandle, HerdrOutputStream), CoreProcessError> {
+        let executable = std::env::current_exe()
+            .map_err(|e| CoreProcessError::new("spawn_failed", e.to_string()))?;
+        Self::start_with_executable(opts, &executable)
+    }
+
+    pub fn start_with_executable(
+        opts: HerdrStartOptions,
+        executable: &Path,
+    ) -> Result<(Self, HerdrHandle, HerdrOutputStream), CoreProcessError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
-            .map_err(|e| format!("tokio runtime: {e}"))?;
-        let mut session = runtime.block_on(IsolatedHerdrSession::start_with_options(opts))?;
-        let (handle, stream) = Self::take_stream(&mut session)?;
+            .map_err(|e| CoreProcessError::new("runtime_failed", e.to_string()))?;
+        let supervisor = runtime.block_on(CoreSupervisor::start(executable))?;
+        let mut session = runtime
+            .block_on(IsolatedHerdrSession::open(supervisor.endpoint().0, opts))
+            .map_err(|error| CoreProcessError::new("attach_failed", error))?;
+        let (handle, stream) = Self::take_stream(&mut session)
+            .map_err(|error| CoreProcessError::new("attach_failed", error))?;
         let guard = Self {
             runtime: Some(runtime),
             session: Some(session),
+            supervisor,
         };
         Ok((guard, handle, stream))
     }
@@ -445,7 +474,7 @@ impl HerdrGuard {
                 tokio::time::timeout(
                     Duration::from_secs(5),
                     IsolatedHerdrSession::attach(
-                        &session.socket_path,
+                        self.supervisor.endpoint().0,
                         opts,
                         Some(&session.address),
                         false,
@@ -462,18 +491,15 @@ impl HerdrGuard {
         Self::take_stream(session)
     }
 
-    pub fn core_pid(&self) -> u32 {
-        self.session.as_ref().map(|s| s.core_pid).unwrap_or(0)
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn socket_path(&self) -> &Path {
+        self.supervisor.endpoint().0
     }
 
     pub fn stop_blocking(&mut self) {
-        if let Some(mut session) = self.session.take() {
-            if let Some(rt) = &self.runtime {
-                rt.block_on(session.stop());
-            } else {
-                drop(session);
-            }
-        }
+        drop(self.session.take());
+        self.supervisor.stop_blocking();
         if let Some(rt) = self.runtime.take() {
             rt.shutdown_timeout(Duration::from_millis(500));
         }
@@ -486,93 +512,29 @@ impl Drop for HerdrGuard {
     }
 }
 
-pub struct IsolatedHerdrSession {
-    binary: PathBuf,
-    session_name: String,
+struct IsolatedHerdrSession {
     address: String,
-    base_dir: PathBuf,
-    pub socket_path: PathBuf,
-    child: Option<Child>,
-    pub core_pid: u32,
-    pub attach_channel: u32,
-    pub automatic_input_supported: bool,
+    attach_channel: u32,
+    automatic_input_supported: bool,
     writer_tx: mpsc::Sender<Vec<Frame>>,
     output_rx: Option<mpsc::Receiver<SessionOutput>>,
     connection: Option<tokio::task::JoinHandle<()>>,
-    stopped: bool,
 }
 
 impl IsolatedHerdrSession {
-    #[cfg(test)]
-    pub async fn start(
-        tag: &str,
-        argv: Option<Vec<String>>,
-        cols: u16,
-        rows: u16,
-    ) -> Result<Self, String> {
-        Self::start_with_options(HerdrStartOptions {
-            tag: tag.to_string(),
-            argv,
-            cwd: None,
-            env: HashMap::new(),
-            cols,
-            rows,
-            history_lines: 2000,
-            wrap_iutf8: false,
-        })
-        .await
-    }
+    async fn open(socket_path: &Path, opts: HerdrStartOptions) -> Result<Self, String> {
+        let attachment =
+            tokio::time::timeout(STOP_TIMEOUT, Self::attach(socket_path, opts, None, false))
+                .await
+                .map_err(|_| "herdr startup timed out".to_string())??;
 
-    pub async fn start_with_options(opts: HerdrStartOptions) -> Result<Self, String> {
-        let binary = resolve_herdr_core_bin();
-        let mut dir_cleanup =
-            DirCleanupGuard::create(&opts.tag).map_err(|e| format!("create private dir: {e}"))?;
-        let base_dir = dir_cleanup.path().to_path_buf();
-        let socket_path = base_dir.join("hc.sock");
-        let session_name = format!(
-            "gpui-poc-{}-{}",
-            std::process::id(),
-            INSTANCE_SEQ.fetch_add(1, Ordering::Relaxed)
-        );
-
-        let cmd = Self::build_core_cmd(&binary, &session_name, &base_dir, &socket_path, &["serve"]);
-        let child = Command::from(cmd)
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| format!("spawn herdr-core ({}): {e}", binary.display()))?;
-        let core_pid = child.id().unwrap_or(0);
-
-        let attached = tokio::time::timeout(
-            Duration::from_secs(5),
-            Self::attach(&socket_path, opts, None, false),
-        )
-        .await;
-        let attachment = match attached {
-            Ok(Ok(attachment)) => attachment,
-            result => {
-                let mut child = child;
-                stop_core(&binary, &session_name, &base_dir, &socket_path, &mut child).await;
-                return Err(match result {
-                    Ok(Err(error)) => error,
-                    _ => "herdr startup timed out".to_string(),
-                });
-            }
-        };
-        dir_cleanup.disarm();
         Ok(Self {
-            binary,
-            session_name,
             address: attachment.address,
-            base_dir,
-            socket_path,
-            child: Some(child),
-            core_pid,
             attach_channel: attachment.channel,
             automatic_input_supported: attachment.automatic_input,
             writer_tx: attachment.writer_tx,
             output_rx: Some(attachment.output_rx),
             connection: Some(attachment.connection),
-            stopped: false,
         })
     }
 
@@ -582,7 +544,10 @@ impl IsolatedHerdrSession {
         address: Option<&str>,
         observe: bool,
     ) -> Result<Attachment, String> {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        if !valid_grid(opts.cols, opts.rows) || opts.history_lines > MAX_SCROLLBACK_LINES {
+            return Err("invalid terminal dimensions or history limit".into());
+        }
+        let deadline = Instant::now() + STOP_TIMEOUT;
         let stream = loop {
             match UnixStream::connect(socket_path).await {
                 Ok(s) => break s,
@@ -628,11 +593,15 @@ impl IsolatedHerdrSession {
             .map_err(|e| format!("read hello: {e}"))?;
         let resp_val: Value =
             serde_json::from_str(&resp_line).map_err(|e| format!("parse hello: {e}"))?;
-        let hello_res = resp_val
-            .get("result")
-            .ok_or_else(|| format!("hello error: {resp_val}"))?;
+        if resp_val["id"].as_u64() != Some(1) {
+            return Err("invalid herdr hello reply id".into());
+        }
+        let hello_res = resp_val.get("result").ok_or("herdr hello failed")?;
+        if hello_res["framed"].as_bool() != Some(true) {
+            return Err("herdr-core refused framed mode".into());
+        }
         if hello_res.get("version").and_then(Value::as_str) != Some(CORE_VERSION) {
-            return Err(format!("unexpected herdr-core version: {hello_res}"));
+            return Err("unexpected herdr-core version".into());
         }
         let features: HashSet<String> = hello_res
             .get("features")
@@ -688,12 +657,19 @@ impl IsolatedHerdrSession {
             let run_reply_frame = read_frame(&mut reader)
                 .await
                 .map_err(|e| format!("read terminal.run reply: {e}"))?;
+            if run_reply_frame.channel != 0 || run_reply_frame.kind != FRAME_DATA {
+                return Err("invalid terminal.run reply frame".into());
+            }
             let run_reply: Value = serde_json::from_slice(&run_reply_frame.payload)
                 .map_err(|e| format!("parse terminal.run: {e}"))?;
+            if run_reply["id"].as_u64() != Some(2) {
+                return Err("invalid terminal.run reply id".into());
+            }
             run_reply
                 .pointer("/result/address")
                 .and_then(Value::as_str)
-                .ok_or_else(|| format!("missing terminal address: {run_reply}"))?
+                .filter(|address| !address.is_empty() && address.len() <= 1024)
+                .ok_or("missing or invalid terminal address")?
                 .to_string()
         };
 
@@ -731,14 +707,13 @@ impl IsolatedHerdrSession {
                 let v: Value = serde_json::from_slice(&f.payload)
                     .map_err(|e| format!("parse terminal.attach: {e}"))?;
                 if v.get("id").and_then(Value::as_u64) == Some(3) {
-                    let res = v
-                        .get("result")
-                        .ok_or_else(|| format!("terminal.attach error: {v}"))?;
+                    let res = v.get("result").ok_or("terminal.attach failed")?;
                     let ch = res
                         .get("channel")
                         .and_then(Value::as_u64)
-                        .ok_or_else(|| format!("missing channel: {res}"))?
-                        as u32;
+                        .and_then(|channel| u32::try_from(channel).ok())
+                        .filter(|channel| *channel != 0)
+                        .ok_or("invalid attachment channel")?;
                     let auto = res
                         .get("automatic_input")
                         .and_then(Value::as_bool)
@@ -785,7 +760,7 @@ impl IsolatedHerdrSession {
                             };
                             let cols = u16::from_le_bytes([*c0, *c1]);
                             let rows = u16::from_le_bytes([*r0, *r1]);
-                            if !(1..=1000).contains(&cols) || !(1..=1000).contains(&rows) {
+                            if !valid_grid(cols, rows) {
                                 break;
                             }
                             SessionOutput::Resize { cols, rows }
@@ -844,30 +819,6 @@ impl IsolatedHerdrSession {
         self.output_rx.take()
     }
 
-    fn build_core_cmd(
-        binary: &Path,
-        session: &str,
-        base_dir: &Path,
-        socket_path: &Path,
-        args: &[&str],
-    ) -> std::process::Command {
-        let mut cmd = std::process::Command::new(binary);
-        cmd.args(args)
-            .env_remove("HC_SCOPE")
-            .env("HC_RUNTIME", "1")
-            .env("HC_LAUNCHD_DIRECT", std::process::id().to_string())
-            .env_remove("HC_LAUNCHD_DETACH")
-            .env("HC_SESSION", session)
-            .env("HC_SOCKET", socket_path)
-            .env("XDG_STATE_HOME", base_dir.join("st"))
-            .env("XDG_CONFIG_HOME", base_dir.join("cf"))
-            .env("XDG_RUNTIME_DIR", base_dir.join("rt"))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        cmd
-    }
-
     #[cfg(test)]
     pub async fn write_user(&self, bytes: Vec<u8>) -> Result<(), String> {
         if self.attach_channel == 0 || bytes.is_empty() {
@@ -916,68 +867,12 @@ impl IsolatedHerdrSession {
         }
         Some(ev)
     }
-
-    pub async fn stop(&mut self) {
-        if self.stopped {
-            return;
-        }
-        self.stopped = true;
-        if let Some(connection) = self.connection.take() {
-            connection.abort();
-            let _ = connection.await;
-        }
-        if let Some(child) = &mut self.child {
-            stop_core(
-                &self.binary,
-                &self.session_name,
-                &self.base_dir,
-                &self.socket_path,
-                child,
-            )
-            .await;
-        }
-        let _ = std::fs::remove_dir_all(&self.base_dir);
-    }
-}
-
-async fn stop_core(
-    binary: &Path,
-    session: &str,
-    base_dir: &Path,
-    socket: &Path,
-    child: &mut Child,
-) {
-    if socket.exists() {
-        let mut command = Command::from(IsolatedHerdrSession::build_core_cmd(
-            binary,
-            session,
-            base_dir,
-            socket,
-            &["--json", "server", "stop"],
-        ));
-        command.kill_on_drop(true);
-        let _ = tokio::time::timeout(Duration::from_secs(2), command.status()).await;
-    }
-    if !matches!(
-        tokio::time::timeout(Duration::from_secs(2), child.wait()).await,
-        Ok(Ok(_))
-    ) {
-        let _ = child.start_kill();
-        let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
-    }
 }
 
 impl Drop for IsolatedHerdrSession {
     fn drop(&mut self) {
-        if !self.stopped {
-            self.stopped = true;
-            if let Some(connection) = self.connection.take() {
-                connection.abort();
-            }
-            if let Some(child) = &mut self.child {
-                let _ = child.start_kill();
-            }
-            let _ = std::fs::remove_dir_all(&self.base_dir);
+        if let Some(connection) = self.connection.take() {
+            connection.abort();
         }
     }
 }
@@ -985,6 +880,24 @@ impl Drop for IsolatedHerdrSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use process::{HerdrDaemon, HerdrLaunchConfig};
+
+    async fn start(tag: &str, argv: Vec<String>) -> (HerdrDaemon, IsolatedHerdrSession) {
+        let daemon = HerdrDaemon::start(HerdrLaunchConfig::isolated(tag).unwrap())
+            .await
+            .expect("start isolated herdr-core");
+        let session = IsolatedHerdrSession::open(
+            daemon.socket_path(),
+            HerdrStartOptions {
+                argv: Some(argv),
+                wrap_iutf8: false,
+                ..HerdrStartOptions::default()
+            },
+        )
+        .await
+        .expect("attach to isolated herdr-core");
+        (daemon, session)
+    }
 
     #[test]
     fn scratch_cleanup_only_removes_its_owned_directory() {
@@ -1003,21 +916,14 @@ mod tests {
 
     #[tokio::test]
     async fn receives_the_controlling_viewers_resize_as_an_observer() {
-        let mut session = IsolatedHerdrSession::start(
-            "resize-notice",
-            Some(vec!["/bin/cat".to_string()]),
-            80,
-            24,
-        )
-        .await
-        .expect("start isolated core");
+        let (mut daemon, session) = start("resize-notice", vec!["/bin/cat".to_string()]).await;
         let opts = HerdrStartOptions {
             cols: 80,
             rows: 24,
             ..HerdrStartOptions::default()
         };
         let mut observer =
-            IsolatedHerdrSession::attach(&session.socket_path, opts, Some(&session.address), true)
+            IsolatedHerdrSession::attach(daemon.socket_path(), opts, Some(&session.address), true)
                 .await
                 .expect("attach observer");
         session
@@ -1040,7 +946,8 @@ mod tests {
         })
         .await;
         observer.connection.abort();
-        session.stop().await;
+        drop(session);
+        daemon.stop().await.unwrap();
         notice.expect("observer received resize");
     }
 
@@ -1106,6 +1013,29 @@ mod tests {
     }
 
     #[test]
+    fn close_info_rejects_unknown_payloads_and_overflowing_exit_codes() {
+        let unknown = CloseInfo::from_payload(b"private terminal data");
+        assert_eq!(unknown.summary(false), "closed");
+
+        let invalid = CloseInfo::from_payload(
+            br#"{"reason":"disconnected","exit_code":4294967297,"signal":"private"}"#,
+        );
+        assert_eq!(invalid.reason, "disconnected");
+        assert_eq!(invalid.exit_code, None);
+        assert_eq!(invalid.signal, None);
+    }
+
+    #[test]
+    fn close_info_preserves_core_stop_reasons() {
+        for (reason, label) in [("killed", "強制終了"), ("server_stop", "core停止")] {
+            let payload = serde_json::to_vec(&serde_json::json!({ "reason": reason })).unwrap();
+            let info = CloseInfo::from_payload(&payload);
+            assert_eq!(info.reason, reason);
+            assert_eq!(info.summary(true), label);
+        }
+    }
+
+    #[test]
     fn close_info_handles_numeric_and_string_signals() {
         let num_sig =
             CloseInfo::from_payload(br#"{"reason":"signaled","exit_code":null,"signal":9}"#);
@@ -1121,9 +1051,7 @@ mod tests {
 
     #[tokio::test]
     async fn isolated_herdr_core_roundtrip_resize_and_auto_input() {
-        let mut sess = IsolatedHerdrSession::start("unit", Some(vec!["/bin/sh".into()]), 80, 24)
-            .await
-            .expect("start isolated herdr-core");
+        let (mut daemon, mut sess) = start("unit", vec!["/bin/sh".into()]).await;
         assert!(sess.automatic_input_supported);
         assert!(sess.attach_channel > 0);
 
@@ -1144,7 +1072,8 @@ mod tests {
                 Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
             }
         }
-        sess.stop().await;
+        drop(sess);
+        daemon.stop().await.unwrap();
         assert!(
             captured.contains("32 110"),
             "expected resized 32 110 in output, got: {captured:?}"
@@ -1157,18 +1086,11 @@ mod tests {
 
     #[tokio::test]
     async fn focus_frame_delivers_csi_i_o_when_mode_1004_enabled() {
-        let mut sess = IsolatedHerdrSession::start(
-            "focus",
-            Some(vec![
+        let (mut daemon, mut sess) = start("focus", vec![
                 "/bin/sh".into(),
                 "-c".into(),
                 "stty raw -echo; printf 'READY\\n'; dd bs=1 count=6 2>/dev/null | od -An -tx1; stty sane".into(),
-            ]),
-            80,
-            24,
-        )
-        .await
-        .expect("start isolated herdr-core");
+            ]).await;
 
         let mut ready_buf = String::new();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1186,20 +1108,14 @@ mod tests {
         // Send FOCUS(true) and FOCUS(false); herdr-core emits CSI I (1b 5b 49) & CSI O (1b 5b 4f)
         // when mode 1004 is enabled via VT, OR let's enable 1004 before FOCUS if herdr-core tracks it!
         // Note: herdr-core's VT parser tracks DEC 1004 on PTY output, so let's send it via printf first.
-        sess.stop().await;
+        drop(sess);
+        daemon.stop().await.unwrap();
 
-        let mut sess = IsolatedHerdrSession::start(
-            "focus2",
-            Some(vec![
+        let (mut daemon, mut sess) = start("focus2", vec![
                 "/bin/sh".into(),
                 "-c".into(),
                 "stty raw -echo; printf '\\033[?1004hREADY\\n'; dd bs=1 count=6 2>/dev/null | od -An -tx1; stty sane".into(),
-            ]),
-            80,
-            24,
-        )
-        .await
-        .expect("start isolated herdr-core");
+            ]).await;
 
         let mut out = String::new();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1228,7 +1144,8 @@ mod tests {
                 Ok(Some(SessionOutput::Resize { .. })) | Err(_) => {}
             }
         }
-        sess.stop().await;
+        drop(sess);
+        daemon.stop().await.unwrap();
         let normalized: String = out.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
             normalized.contains("1b 5b 49") && normalized.contains("1b 5b 4f"),
