@@ -306,7 +306,7 @@ impl TerminalImeState {
         });
     }
 
-    /// Sends the committed prefix and retains the remaining marked text.
+    /// Sends the replacement and retains marked text outside its range.
     pub fn replace_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
@@ -314,15 +314,16 @@ impl TerminalImeState {
     ) -> Option<String> {
         let committed = if let Some(range_utf16) = range_utf16 {
             let range = self.range_from_utf16(&range_utf16);
-            let commit_end = range.start + new_text.len();
-            self.preedit.replace_range(range, new_text);
-            self.preedit.drain(..commit_end).collect::<String>()
+            let caret = range.start;
+            self.preedit.replace_range(range, "");
+            self.selected_range = caret..caret;
+            new_text.to_owned()
         } else {
             self.preedit.clear();
+            self.selected_range = 0..0;
             new_text.to_owned()
         };
         self.marked_range = (!self.preedit.is_empty()).then_some(0..self.preedit.len());
-        self.selected_range = 0..0;
         self.record(ImeEventKind::Committed {
             utf16_len: committed.encode_utf16().count(),
         });
@@ -448,6 +449,22 @@ mod tests {
     }
 
     #[test]
+    fn deleting_or_replacing_a_middle_range_never_commits_its_prefix() {
+        let mut ime = TerminalImeState::new();
+        ime.replace_and_mark_text_in_range(None, "🦀かな", None);
+        assert_eq!(ime.replace_text_in_range(Some(2..3), ""), None);
+        assert_eq!(ime.preedit_text(), "🦀な");
+        assert_eq!(ime.selected_range_utf16(), 2..2);
+        ime.replace_and_mark_text_in_range(None, "🦀かな", None);
+        assert_eq!(
+            ime.replace_text_in_range(Some(2..3), "蚊").as_deref(),
+            Some("蚊")
+        );
+        assert_eq!(ime.preedit_text(), "🦀な");
+        assert_eq!(ime.marked_range_utf16(), Some(0..3));
+    }
+
+    #[test]
     fn live_ime_partial_commit_keeps_the_suffix_marked_until_its_own_commit() {
         let mut ime = TerminalImeState::new();
         ime.replace_and_mark_text_in_range(None, "にほん🦀ご", None);
@@ -503,10 +520,10 @@ mod tests {
         assert_eq!(
             ime.replace_text_in_range(Some(Range { start: 100, end: 1 }), "語")
                 .as_deref(),
-            Some("🦀語")
+            Some("語")
         );
-        assert!(!ime.is_composing());
-        assert!(ime.preedit_text().is_empty());
+        assert!(ime.is_composing());
+        assert_eq!(ime.preedit_text(), "🦀");
 
         let mut multi = TerminalImeState::new();
         multi.replace_and_mark_text_in_range(None, "🦀ごテスト", None);
@@ -514,10 +531,10 @@ mod tests {
             multi
                 .replace_text_in_range(Some(Range { start: 3, end: 1 }), "A")
                 .as_deref(),
-            Some("🦀A")
+            Some("A")
         );
-        assert_eq!(multi.preedit_text(), "テスト");
-        assert_eq!(multi.marked_range_utf16(), Some(0..3));
+        assert_eq!(multi.preedit_text(), "🦀テスト");
+        assert_eq!(multi.marked_range_utf16(), Some(0..5));
     }
 
     #[test]

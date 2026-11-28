@@ -1057,6 +1057,9 @@ impl EntityInputHandler for GpuiPocView {
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
         let bounds = self.last_ime_bounds?;
+        if self.ime.content.is_empty() {
+            return bounds.contains(&point).then_some(0);
+        }
         let line = self
             .last_ime_line
             .as_ref()

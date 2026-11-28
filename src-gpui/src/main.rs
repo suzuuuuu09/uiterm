@@ -308,6 +308,7 @@ impl LiveTerminalView {
             font_size: config.font_size,
             line_height: DEFAULT_LINE_HEIGHT,
         };
+        let metrics = measure_cell_metrics(window.text_system(), &style);
         let vt = VtTerminal::new(config.cols, config.rows, config.scrollback_lines)
             .expect("create VtTerminal");
         let cache = RowShapeCache::new(config.render_mode);
@@ -333,8 +334,8 @@ impl LiveTerminalView {
             last_content_bounds: None,
             last_requested_grid: None,
             mouse_presses: Vec::new(),
-            last_cell_w: 8.43,
-            last_row_h: (config.font_size * DEFAULT_LINE_HEIGHT).ceil(),
+            last_cell_w: f32::from(metrics.cell_width),
+            last_row_h: f32::from(metrics.row_height),
             last_ime_anchor: None,
             last_ime_overlay: None,
             scroll_px_accum: 0.0,
@@ -444,7 +445,12 @@ impl LiveTerminalView {
         mut stream: HerdrOutputStream,
         cx: &mut Context<Self>,
     ) {
-        self.session_error = handle.try_send_focus(self.window_active).err();
+        let geometry_error = self
+            .vt
+            .initialize_cell_size(self.last_cell_w, self.last_row_h)
+            .err();
+        let focus_error = handle.try_send_focus(self.window_active).err();
+        self.session_error = geometry_error.or(focus_error);
         self.herdr_handle = Some(handle);
         self._output_task = Some(cx.spawn(async move |this, cx| {
             Self::pump_pty_output(this, &mut stream, cx).await;
@@ -1538,6 +1544,7 @@ impl Render for LiveTerminalView {
                             )
                             .child(preset.label())
                     }))
+                    .children(zoom_controls(cx))
                     .child(
                         div()
                             .id("live-toggle-nf")
@@ -1673,6 +1680,33 @@ impl Render for LiveTerminalView {
 // ---------------------------------------------------------------------------
 // Stage 1/2 Probe UI + Stage 2/3 Window Benchmarks (shared RenderStyle/Cache)
 // ---------------------------------------------------------------------------
+
+fn zoom_controls(
+    cx: &Context<LiveTerminalView>,
+) -> impl IntoIterator<Item = gpui::Stateful<gpui::Div>> {
+    #[cfg(target_os = "linux")]
+    return [
+        ("zoom-out", "A−", TerminalAppAction::ZoomOut),
+        ("zoom-reset", "A", TerminalAppAction::ZoomReset),
+        ("zoom-in", "A+", TerminalAppAction::ZoomIn),
+    ]
+    .into_iter()
+    .map(move |(id, label, action)| {
+        session_button(id, label).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, window, cx| {
+                this.perform_app_action(action, window, cx);
+                window.focus(&this.focus_handle);
+                cx.stop_propagation();
+            }),
+        )
+    });
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = cx;
+        std::iter::empty()
+    }
+}
 
 fn session_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
     div()

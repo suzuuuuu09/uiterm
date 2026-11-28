@@ -100,6 +100,8 @@ pub fn classify_keydown(
     }
 
     let key = gpui_key_to_ghostty(&keystroke.key);
+    // GPUI discards the base key for shifted punctuation on macOS and Linux.
+    // Use the reported symbol for Kitty too, since a US base key would mislabel JIS input.
     let unshifted_codepoint = logical_codepoint(&keystroke.key);
     if key == Key::Unidentified && unshifted_codepoint.is_none() && keystroke.key_char.is_none() {
         return KeyDispatchDecision::PassToIme;
@@ -181,9 +183,6 @@ fn match_linux_app_action(keystroke: &Keystroke, has_selection: bool) -> Option<
         "c" if has_selection => Some(TerminalAppAction::CopySelection),
         "v" => Some(TerminalAppAction::Paste),
         "a" => Some(TerminalAppAction::SelectAll),
-        "up" => Some(TerminalAppAction::ZoomIn),
-        "down" => Some(TerminalAppAction::ZoomOut),
-        "home" => Some(TerminalAppAction::ZoomReset),
         "f" => Some(TerminalAppAction::CycleFont),
         "n" => Some(TerminalAppAction::ToggleNerdFallback),
         "r" => Some(TerminalAppAction::RestartSession),
@@ -513,7 +512,45 @@ mod tests {
     }
 
     #[test]
-    fn linux_zoom_uses_shifted_navigation_keys_and_leaves_control_symbols_to_pty() {
+    fn gpui_logical_punctuation_encodes_without_inventing_a_physical_layout() {
+        for (kitty, cases) in [
+            (false, [b"\x1b@".as_slice(), b"\x1b:".as_slice()]),
+            (true, [b"\x1b[64;3u".as_slice(), b"\x1b[58;3u".as_slice()]),
+        ] {
+            let mut vt = crate::vt::VtTerminal::new(80, 24, 0).unwrap();
+            if kitty {
+                vt.feed(b"\x1b[>5u");
+            }
+            // GPUI clears Shift for punctuation. US Shift+2 and unshifted
+            // JIS @ arrive identically for Meta; : likewise has no base key.
+            for (symbol, expected) in ["@", ":"].into_iter().zip(cases) {
+                let stroke = Keystroke {
+                    modifiers: Modifiers {
+                        alt: true,
+                        ..Modifiers::none()
+                    },
+                    key: symbol.into(),
+                    key_char: None,
+                };
+                let KeyDispatchDecision::SendToTerminal {
+                    key,
+                    mods,
+                    utf8,
+                    unshifted_codepoint,
+                } = classify_keydown(&stroke, false, false, true)
+                else {
+                    panic!("layout symbol must reach the terminal");
+                };
+                assert_eq!(
+                    vt.encode_key(key, mods, utf8.as_deref(), unshifted_codepoint),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn linux_leaves_navigation_and_control_symbols_to_pty() {
         let mut key = Keystroke {
             modifiers: Modifiers {
                 control: true,
@@ -532,9 +569,9 @@ mod tests {
             ("c", true, Some(TerminalAppAction::CopySelection)),
             ("v", false, Some(TerminalAppAction::Paste)),
             ("a", false, Some(TerminalAppAction::SelectAll)),
-            ("up", false, Some(TerminalAppAction::ZoomIn)),
-            ("down", false, Some(TerminalAppAction::ZoomOut)),
-            ("home", false, Some(TerminalAppAction::ZoomReset)),
+            ("up", false, None),
+            ("down", false, None),
+            ("home", false, None),
             ("f", false, Some(TerminalAppAction::CycleFont)),
             ("n", false, Some(TerminalAppAction::ToggleNerdFallback)),
             ("r", false, Some(TerminalAppAction::RestartSession)),

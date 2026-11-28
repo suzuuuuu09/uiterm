@@ -402,6 +402,18 @@ impl VtTerminal {
         self.cell_pixel_size
     }
 
+    pub fn initialize_cell_size(&mut self, width: f32, height: f32) -> Result<(), String> {
+        if self.cell_pixel_size.is_none() {
+            self.resize(
+                self.cols,
+                self.rows,
+                width.round() as u32,
+                height.round() as u32,
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn active_screen(&self) -> Screen {
         self.terminal.active_screen().unwrap_or(Screen::Primary)
     }
@@ -1274,7 +1286,7 @@ mod tests {
         assert_eq!(vt.cell_pixel_size(), None);
         assert!(vt.feed_raw(b"\x1b[16t").is_empty());
 
-        vt.resize(106, 32, 8, 18).unwrap();
+        vt.initialize_cell_size(8.43, 18.0).unwrap();
         assert_eq!(
             vt.feed_raw(b"\x1b[14t\x1b[16t"),
             [b"\x1b[4;576;848t".to_vec(), b"\x1b[6;18;8t".to_vec()]
