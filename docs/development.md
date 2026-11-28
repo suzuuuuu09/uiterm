@@ -11,6 +11,12 @@ nix develop --command pnpm tauri dev
 
 ## GPUI PoCの起動
 
+まずリポジトリルートでリリースビルドする。
+
+```sh
+nix develop .#gpui --no-write-lock-file --command cargo build --locked --release --manifest-path poc/gpui-terminal/Cargo.toml
+```
+
 隔離した実機検証と起動の手順は [GPUI PoC検証レポート §8](poc/gpui-terminal.md#8-実機検証手順と起動コマンド) を参照。
 
 ## 自動検証

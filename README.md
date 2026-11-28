@@ -8,7 +8,7 @@ CLIの自由度とGUIの利便性を両立する、日本語環境とキーボ�
 
 開発中。Phase 0・1を完了し、Phase 2でGPUIへの移行を進める。MVPは未完成で、macOS Apple SiliconとNixOS / Hyprland（ネイティブWayland）を対象とする。Linux実機検証は未完了。
 
-製品構成としてRust、GPUI、ネイティブ版libghostty-vt、herdr-coreを正式採用した。TypeScriptによる設定・拡張は外部Node.jsで実行する。現在の製品実装はTauri版で、GPUI版は独立したPoCとして収録している。[ADR-0010](docs/adr/0010-evaluate-native-gpui-terminal.md) を参照。
+移行後の製品構成としてRust、GPUI、ネイティブ版libghostty-vt、herdr-coreを正式採用した。TypeScriptによる設定・拡張は外部Node.jsで実行する方針だが、製品機能は未完成である。現在の製品実装はTauri版で、GPUI版は独立したPoCとして収録している。[ADR-0010](docs/adr/0010-evaluate-native-gpui-terminal.md) を参照。
 
 ## 開発環境
 

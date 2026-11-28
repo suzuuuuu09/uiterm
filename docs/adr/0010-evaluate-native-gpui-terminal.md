@@ -30,7 +30,7 @@ Rustを主要言語とし、GUIとターミナル描画にGPUI、VT処理にネ�
 
 - 性能測定では、Stage 3時点の256 KiB/sの30秒負荷でGPUI PoCのピークPhysical Footprintは154.51 MiB、比較基準のTauri版は435.44 MiBだった。平均CPUはそれぞれ6.62%と27.30%だった。測定条件とGhosttyとの比較はレポートの§4を参照する。
 - 自動検証はIUTF8、IMEイベント、文字幅・Nerd Font、リサイズとAlternate Screen、貼り付け、選択などをカバーした。隔離PTYでのCLI検証と実画面での手動操作は検証範囲が異なる。
-- ユーザーによるmacOS実機検証は採用判断に含めた。GPUI PoCレポートの§5.1・§8は当時の記録で、今回のユーザー確認について項目ごとの結果は確認できていない。Tauri版で記録されたNerd Font表示やmacSKKのフォーカス復帰も、その版での結果として扱う。
+- ユーザーによるmacOS実機検証の結果も採用判断に含めた。PoCレポートの§5.1・§8に記載されたチェック項目は検証当時の記録として維持し、今回の確認で個別にどの項目を実施したかは補わない。Tauri版で記録されたNerd Font表示やmacSKKのフォーカス復帰は、その版での結果として扱う。
 
 ## Alternatives Considered
 
@@ -46,7 +46,7 @@ Rustを主要言語とし、GUIとターミナル描画にGPUI、VT処理にネ�
 
 - NixOS / Hyprland実機でのネイティブWayland、描画、Fcitx5の検証。[MVP完成条件](../plan/mvp.md#完成条件) に含める。
 - 可視ウィンドウのアイドル時CPU使用率とGPUIの表示同期通知。計測条件と調査結果はPoCレポートの§4.3を参照する。
-- 依存クレート `grid` の脆弱性に対する上流の対応待ち。修正版が利用可能になった時点で依存更新と影響を確認する。
+- GPUI PoCの依存 `grid 0.18.0` は、GPUI 0.2.2から使うTaffy 0.9.0経由で入る。Taffy 0.9.0は`grid 0.18.0`を要求し、脆弱性の対象は`grid 0.17.0`以上1.0.1未満であるため、修正版への直接更新はできない。GPUI / Taffy側の互換更新を追い、製品移行前に更新可否と回帰を確認する。移行時は外部入力から任意のグリッド寸法を渡さないよう、サイズを境界で検証する。
 
 内蔵ブラウザはPost-MVPとし、`terminal-browser` は候補外とする。
 
@@ -55,4 +55,5 @@ Rustを主要言語とし、GUIとターミナル描画にGPUI、VT処理にネ�
 - 置換した判断：[ADR-0001](0001-adopt-typescript-tauri-rust.md)、[ADR-0003](0003-adopt-wterm-ghostty-wasm.md)、[ADR-0004](0004-zustand-action-registry.md)、[ADR-0005](0005-ipc-process-isolation-security.md)、[ADR-0009](0009-typescript-dictionary-i18n.md)
 - 継続する判断：[ADR-0002](0002-adopt-herdr-core.md)、[ADR-0006](0006-external-node-typescript-config.md)、[ADR-0007](0007-nix-pnpm-vite-plus.md)、[ADR-0008](0008-pty-iutf8-workaround.md)
 - [GPUI PoC検証レポート](../poc/gpui-terminal.md)、[Tauri版Phase 2実装・検証レポート](../implementation/phase2-terminal.md)
+- [`grid` の脆弱性 GHSA-38c5-483c-4qqp](https://github.com/advisories/GHSA-38c5-483c-4qqp)、[Taffy 0.9.0の依存定義](https://github.com/DioxusLabs/taffy/blob/v0.9.0/Cargo.toml)、[`grid` 1.0.1](https://github.com/becheran/grid/releases/tag/v1.0.1)
 - [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)、[Ghostty / libghostty](https://github.com/ghostty-org/ghostty)
