@@ -99,6 +99,7 @@
               freetype
               libxcb
               libxkbcommon
+              openssl
               vulkan-loader
               wayland
             ]

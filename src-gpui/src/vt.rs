@@ -970,6 +970,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn terminal_grid_stays_within_protocol_limits() {
+        let max = MAX_GRID_DIMENSION;
+        for (dimension, valid) in [(0, false), (1, true), (max, true), (max + 1, false)] {
+            assert_eq!(valid_grid(dimension, 1), valid);
+            assert_eq!(valid_grid(1, dimension), valid);
+        }
+
+        let mut vt = VtTerminal::new(max + 1, 0, DEFAULT_SCROLLBACK_LINES).unwrap();
+        assert_eq!((vt.cols(), vt.rows()), (max, 1));
+        vt.resize(0, max + 1, 8, 16).unwrap();
+        assert_eq!((vt.cols(), vt.rows()), (1, max));
+    }
+
+    #[test]
     fn mouse_report_column_matches_a_fractional_render_grid() {
         let mut vt = VtTerminal::new(106, 32, DEFAULT_SCROLLBACK_LINES).unwrap();
         vt.feed(b"\x1b[?1000h\x1b[?1006h");

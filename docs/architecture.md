@@ -33,7 +33,7 @@ herdr-core → PTY / shell / CLI
 | src/app, src/state, src/actions | アプリ状態、共通操作API、レイアウト  |
 | src/terminal                    | 入出力、VT描画、アタッチ、フォーカス |
 | src/ipc, src/validation         | IPC契約と外部入力検証                |
-| src-tauri/src                   | ネイティブ処理、core接続、監視、DTO  |
+| src-tauri/src                   | ネイティブ処理、core接続、DTO        |
 | src/i18n                        | 日本語・英語の翻訳キーと書式         |
 | src/poc                         | PoC専用診断                          |
 

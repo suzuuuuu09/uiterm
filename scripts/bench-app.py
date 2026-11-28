@@ -308,6 +308,8 @@ def main():
             sample.error("WebKit の差分検出とソケットの自動検出には起動前の一覧が必要です。")
         if args.seconds <= 0 or args.interval <= 0:
             sample.error("計測時間と間隔は正の数を指定してください。")
+        if args.binary is not None and not args.binary.is_file():
+            sample.error("--binary には実行ファイルを指定してください。")
         measure(args)
 
 

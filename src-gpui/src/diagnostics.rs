@@ -73,7 +73,7 @@ fn contains_stream_marker(tail: &mut Vec<u8>, bytes: &[u8], marker: &[u8]) -> bo
 struct BenchState {
     scenario: BenchScenario,
     started_at: Instant,
-    first_paint_ms: Option<f64>,
+    first_render_ms: Option<f64>,
     herdr_guard: Option<HerdrGuard>,
     herdr_handle: Option<HerdrHandle>,
     herdr_stream: Option<HerdrOutputStream>,
@@ -225,32 +225,44 @@ impl GpuiPocView {
                 let (guard, handle, mut stream) = HerdrGuard::start_live(opts).expect("start nvim");
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let deadline = Instant::now() + Duration::from_secs(5);
-                let mut seen = Vec::new();
+                let marker = b"sample_fn_0000";
+                let mut tail = Vec::new();
+                let mut ready = false;
                 while Instant::now() < deadline {
-                    if let Ok(Some(SessionOutput::Data(bytes))) = rt.block_on(async {
-                        tokio::time::timeout(Duration::from_millis(120), stream.recv_uncredited())
-                            .await
+                    match rt.block_on(async {
+                        tokio::time::timeout_at(deadline.into(), stream.recv_uncredited()).await
                     }) {
-                        seen.extend_from_slice(&bytes);
-                        if let Err(error) = feed_benchmark_output(&rt, &stream, &mut vt, &bytes) {
-                            failure = Some(error);
-                            break;
+                        Ok(Some(SessionOutput::Data(bytes))) => {
+                            aux_bytes += bytes.len();
+                            if let Err(error) = feed_benchmark_output(&rt, &stream, &mut vt, &bytes)
+                            {
+                                failure = Some(error);
+                                break;
+                            }
+                            if contains_stream_marker(&mut tail, &bytes, marker) {
+                                ready = true;
+                                break;
+                            }
                         }
-                        if seen
-                            .windows(b"sample_fn_0000".len())
-                            .any(|w| w == b"sample_fn_0000")
-                        {
-                            break;
-                        }
+                        Ok(Some(SessionOutput::Resize { .. })) => continue,
+                        Ok(Some(SessionOutput::Closed(_)) | None) | Err(_) => break,
                     }
                 }
-                aux_bytes = seen.len();
+                if !ready {
+                    failure.get_or_insert("Neovim did not reach the benchmark sample");
+                }
                 (Some(guard), Some(handle), Some(stream))
             }
             BenchScenario::Burst5MiB | BenchScenario::InputLatency => {
                 let opts = HerdrStartOptions {
                     argv: Some(vec!["/bin/sh".into()]),
-                    cwd: None,
+                    cwd: (cfg.scenario == BenchScenario::Burst5MiB).then(|| {
+                        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .parent()
+                            .expect("repository root")
+                            .to_string_lossy()
+                            .into_owned()
+                    }),
                     env: os::build_child_shell_env(Some("/bin/sh")),
                     cols: cfg.cols,
                     rows: cfg.rows,
@@ -326,7 +338,7 @@ impl GpuiPocView {
         BenchState {
             scenario: cfg.scenario,
             started_at,
-            first_paint_ms: None,
+            first_render_ms: None,
             herdr_guard,
             herdr_handle,
             herdr_stream,
@@ -400,8 +412,8 @@ impl GpuiPocView {
             return;
         }
         let now = Instant::now();
-        if bench.first_paint_ms.is_none() {
-            bench.first_paint_ms =
+        if bench.first_render_ms.is_none() {
+            bench.first_render_ms =
                 Some(now.duration_since(bench.started_at).as_secs_f64() * 1000.0);
         }
         if let Some(prev) = bench.last_frame_at {
@@ -462,8 +474,12 @@ impl GpuiPocView {
                     if frame_idx < 120 {
                         let byte = if frame_idx % 2 == 0 { b"\x04" } else { b"\x15" };
                         let t_action = Instant::now();
-                        if let Some(h) = &bench.herdr_handle {
-                            let _ = h.try_send_user(byte.to_vec());
+                        if bench
+                            .herdr_handle
+                            .as_ref()
+                            .is_none_or(|handle| handle.try_send_user(byte.to_vec()).is_err())
+                        {
+                            bench.failure = Some("could not send Neovim scroll input");
                         }
                         let mut got_output = false;
                         if let Some(stream) = &mut bench.herdr_stream {
@@ -500,11 +516,18 @@ impl GpuiPocView {
                                         )
                                         .err();
                                     }
+                                    Ok(Some(SessionOutput::Closed(_)) | None) => {
+                                        bench.failure = Some("Neovim connection closed");
+                                    }
                                     _ => break,
                                 }
                             }
                         }
-                        if got_output {
+                        if !got_output {
+                            bench
+                                .failure
+                                .get_or_insert("Neovim scroll produced no output");
+                        } else if bench.failure.is_none() {
                             bench
                                 .latencies_ms
                                 .push(t_action.elapsed().as_secs_f64() * 1000.0);
@@ -567,8 +590,8 @@ impl GpuiPocView {
                             }
                         }
                     }
-                    let elapsed_ms = now.duration_since(bench.started_at).as_secs_f64() * 1000.0
-                        - bench.first_paint_ms.unwrap_or(0.0);
+                    let elapsed_ms = bench.started_at.elapsed().as_secs_f64() * 1000.0
+                        - bench.first_render_ms.unwrap_or(0.0);
                     if saw_end {
                         bench.aux_metric_ms = elapsed_ms;
                     } else if elapsed_ms > 20_000.0 {
@@ -722,8 +745,8 @@ impl GpuiPocView {
             bench.vt.rows()
         );
         println!(
-            "  first_paint_ms   : {:.2} ms",
-            bench.first_paint_ms.unwrap_or(0.0)
+            "  first_render_ms   : {:.2} ms",
+            bench.first_render_ms.unwrap_or(0.0)
         );
         if let Some(failure) = bench.failure {
             eprintln!("  status           : failed ({failure})");
@@ -1010,7 +1033,14 @@ impl EntityInputHandler for GpuiPocView {
     ) -> Option<usize> {
         let bounds = self.last_ime_bounds?;
         let line = self.last_ime_line.as_ref()?;
-        let local_x = (point.x - bounds.left()).max(px(0.0));
+        let local_x = point.x - bounds.left();
+        if local_x < px(0.0)
+            || local_x >= line.width
+            || point.y < bounds.top()
+            || point.y >= bounds.bottom()
+        {
+            return None;
+        }
         let utf8_idx = line.closest_index_for_x(local_x);
         Some(self.ime.offset_to_utf16(utf8_idx))
     }

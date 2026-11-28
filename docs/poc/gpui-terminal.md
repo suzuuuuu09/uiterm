@@ -300,7 +300,7 @@ nix develop .#gpui --command cargo test --locked --manifest-path src-gpui/Cargo.
 3. **対話 CLI・Neovim・スクロール・後始末**
    - [ ] `nvim` で日本語編集、`Ctrl+D`/`Ctrl+U` 高速スクロール、ウィンドウドラッグリサイズ、フォーカス離脱・復帰時の `FocusLost`/`FocusGained`、`macism` 応答体感（Phase 2 の 4.5 秒待ちが起きないこと）を確認。
    - [ ] `seq 1 10000` 出力後にトラックパッドで 2,000 行スクロールバックを行き来し、カクつきや文字崩れがないこと。
-   - [ ] `Cmd+Q` またはウィンドウ閉鎖後、`ps aux | rg 'uiterm|herdr-core'` で起動した `uiterm` と専用の監視プロセス・`herdr-core`・`holder`・`/tmp/uiterm.*` が残存していないこと（既存ユーザーセッションに影響がないこと）。
+   - [ ] `Cmd+Q` またはウィンドウ閉鎖後、`ps aux | rg 'uiterm|herdr-core'` で起動した `uiterm` と専用の監視プロセス・`herdr-core`・`holder` が残存していないこと。起動時に確認した専用ディレクトリ `/tmp/uiterm.*` は、終了後に `test ! -e` で別途確認する。
 
 ---
 

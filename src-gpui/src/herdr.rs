@@ -26,7 +26,7 @@ use crate::{
 #[path = "../../native/herdr/process.rs"]
 pub(crate) mod process;
 
-use process::{CORE_VERSION, CoreSupervisor, STOP_TIMEOUT};
+use process::{CORE_VERSION, CoreProcessError, CoreSupervisor, STOP_TIMEOUT};
 pub const HEADER_LEN: usize = 9;
 pub const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024;
 
@@ -203,7 +203,17 @@ impl CloseInfo {
             let reason = val
                 .get("reason")
                 .and_then(Value::as_str)
-                .filter(|reason| matches!(*reason, "exited" | "signaled" | "closed"))
+                .filter(|reason| {
+                    matches!(
+                        *reason,
+                        "exited"
+                            | "signaled"
+                            | "closed"
+                            | "disconnected"
+                            | "killed"
+                            | "server_stop"
+                    )
+                })
                 .unwrap_or("closed")
                 .to_string();
             return Self {
@@ -225,6 +235,8 @@ impl CloseInfo {
                 "exited" => "終了",
                 "signaled" => "シグナルによる終了",
                 "disconnected" => "接続切断",
+                "killed" => "強制終了",
+                "server_stop" => "core停止",
                 _ => "閉鎖",
             }
         } else {
@@ -404,26 +416,27 @@ pub struct HerdrGuard {
 impl HerdrGuard {
     pub fn start_live(
         opts: HerdrStartOptions,
-    ) -> Result<(Self, HerdrHandle, HerdrOutputStream), String> {
-        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    ) -> Result<(Self, HerdrHandle, HerdrOutputStream), CoreProcessError> {
+        let executable = std::env::current_exe()
+            .map_err(|e| CoreProcessError::new("spawn_failed", e.to_string()))?;
         Self::start_with_executable(opts, &executable)
     }
 
     pub fn start_with_executable(
         opts: HerdrStartOptions,
         executable: &Path,
-    ) -> Result<(Self, HerdrHandle, HerdrOutputStream), String> {
+    ) -> Result<(Self, HerdrHandle, HerdrOutputStream), CoreProcessError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
-            .map_err(|e| format!("tokio runtime: {e}"))?;
-        let supervisor = runtime
-            .block_on(CoreSupervisor::start(executable))
-            .map_err(|e| e.to_string())?;
-        let mut session =
-            runtime.block_on(IsolatedHerdrSession::open(supervisor.endpoint().0, opts))?;
-        let (handle, stream) = Self::take_stream(&mut session)?;
+            .map_err(|e| CoreProcessError::new("runtime_failed", e.to_string()))?;
+        let supervisor = runtime.block_on(CoreSupervisor::start(executable))?;
+        let mut session = runtime
+            .block_on(IsolatedHerdrSession::open(supervisor.endpoint().0, opts))
+            .map_err(|error| CoreProcessError::new("attach_failed", error))?;
+        let (handle, stream) = Self::take_stream(&mut session)
+            .map_err(|error| CoreProcessError::new("attach_failed", error))?;
         let guard = Self {
             runtime: Some(runtime),
             session: Some(session),
@@ -1007,7 +1020,7 @@ mod tests {
         let invalid = CloseInfo::from_payload(
             br#"{"reason":"disconnected","exit_code":4294967297,"signal":"private"}"#,
         );
-        assert_eq!(invalid.reason, "closed");
+        assert_eq!(invalid.reason, "disconnected");
         assert_eq!(invalid.exit_code, None);
         assert_eq!(invalid.signal, None);
     }

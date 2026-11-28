@@ -10,13 +10,13 @@ impl Locale {
             .into_iter()
             .filter_map(|name| std::env::var(name).ok())
             .find(|value| !value.is_empty());
-        if let Some(locale) = locale.filter(|value| value != "C" && value != "POSIX") {
+        if let Some(locale) = locale {
             return Self::from_identifier(&locale);
         }
 
         #[cfg(target_os = "macos")]
-        if let Some(locale) = macos_locale() {
-            return Self::from_identifier(&locale);
+        if let Some(locale) = macos_preferred_language() {
+            return locale;
         }
 
         Self::English
@@ -38,20 +38,36 @@ impl Locale {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_locale() -> Option<String> {
+fn macos_preferred_language() -> Option<Locale> {
     let output = std::process::Command::new("/usr/bin/defaults")
-        .args(["read", "-g", "AppleLocale"])
+        .args(["read", "-g", "AppleLanguages"])
         .output()
         .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| {
+            let id = line.trim().trim_end_matches(',').trim_matches('"');
+            match id.split(['-', '_']).next() {
+                Some("ja") => Some(Locale::Japanese),
+                Some("en") => Some(Locale::English),
+                _ => None,
+            }
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::Locale;
+
+    #[test]
+    fn c_and_posix_locales_use_english() {
+        for id in ["C", "POSIX", "C.UTF-8"] {
+            assert!(Locale::from_identifier(id) == Locale::English);
+        }
+    }
 
     #[test]
     fn chooses_japanese_for_both_os_locale_formats() {

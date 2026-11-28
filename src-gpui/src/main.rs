@@ -324,6 +324,7 @@ struct LiveTerminalView {
     last_ime_anchor: Option<Bounds<Pixels>>,
     last_ime_line: Option<ShapedLine>,
     scroll_px_accum: f32,
+    startup_task: Option<gpui::Task<()>>,
     _output_task: Option<gpui::Task<()>>,
 }
 
@@ -368,6 +369,7 @@ impl LiveTerminalView {
             last_ime_anchor: None,
             last_ime_line: None,
             scroll_px_accum: 0.0,
+            startup_task: None,
             _output_task: None,
         };
 
@@ -438,13 +440,33 @@ impl LiveTerminalView {
             wrap_iutf8: self.config.wrap_iutf8,
         };
 
-        match HerdrGuard::start_live(opts) {
-            Ok((guard, handle, stream)) => {
-                self.herdr_guard = Some(guard);
-                self.start_output_pump(handle, stream, cx);
-            }
-            Err(err) => self.session_error = Some(err),
-        }
+        let startup = cx
+            .background_executor()
+            .spawn(async move { HerdrGuard::start_live(opts) });
+        self.startup_task = Some(cx.spawn(async move |this, cx| {
+            let result = startup.await;
+            let _ = this.update(cx, |view, cx| {
+                view.startup_task = None;
+                match result {
+                    Ok((guard, handle, stream)) => {
+                        view.herdr_guard = Some(guard);
+                        view.start_output_pump(handle, stream, cx);
+                    }
+                    Err(error) => {
+                        let mut message = error.to_string();
+                        if error.code == "herdr_core_not_found" || error.code == "invalid_core_path" {
+                            message.push(' ');
+                            message.push_str(view.locale.label(
+                                "Run inside nix develop or set HERDR_CORE_BIN to an absolute path.",
+                                "nix develop で起動するか、HERDR_CORE_BIN に絶対パスを指定してください。",
+                            ));
+                        }
+                        view.session_error = Some(message);
+                    }
+                }
+                cx.notify();
+            });
+        }));
     }
 
     fn start_output_pump(
@@ -624,6 +646,7 @@ impl LiveTerminalView {
     }
 
     fn shutdown(&mut self) {
+        self.startup_task = None;
         self._output_task = None;
         self.herdr_handle = None;
         if let Some(mut guard) = self.herdr_guard.take() {
@@ -1007,6 +1030,9 @@ impl LiveTerminalView {
         cell_w: f32,
         row_h: f32,
     ) -> bool {
+        if self.startup_task.is_some() {
+            return false;
+        }
         let usable_w = f32::from(content_bounds.size.width).max(cell_w);
         let usable_h = f32::from(content_bounds.size.height).max(row_h);
         let new_cols = ((usable_w / cell_w).floor() as u16).clamp(1, MAX_GRID_DIMENSION);
@@ -1580,7 +1606,7 @@ impl Render for LiveTerminalView {
                             ),
                         )
                     })
-                    .when(!can_reconnect, |row| {
+                    .when(!can_reconnect || self.session_error.is_some(), |row| {
                         row.child(
                             session_button(
                                 "live-restart-btn",
@@ -1596,6 +1622,15 @@ impl Render for LiveTerminalView {
                             ),
                         )
                     }),
+            );
+        }
+        if self.startup_task.is_some() {
+            root = root.child(
+                div()
+                    .px_3()
+                    .py_1p5()
+                    .text_size(px(12.0))
+                    .child(self.locale.label("Starting terminal…", "端末を起動中…")),
             );
         }
         if let Some(err) = &self.session_error {
