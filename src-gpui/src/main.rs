@@ -738,6 +738,10 @@ impl LiveTerminalView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.startup_task.is_some() {
+            cx.stop_propagation();
+            return;
+        }
         let is_composing = self.ime.is_composing();
         let has_selection = self.vt.has_selection();
         match classify_keydown(
@@ -1573,6 +1577,17 @@ impl Render for LiveTerminalView {
                 }),
         );
 
+        let restart_button = || {
+            session_button("live-restart-btn", self.locale.label("Restart", "再起動"))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        this.start_session(cx);
+                        window.focus(&this.focus_handle);
+                        cx.notify();
+                    }),
+                )
+        };
         if let Some(info) = &self.session_closed {
             let can_reconnect = info.reason == "disconnected" && self.herdr_guard.is_some();
             let summary = info.summary(self.locale == locale::Locale::Japanese);
@@ -1607,20 +1622,7 @@ impl Render for LiveTerminalView {
                         )
                     })
                     .when(!can_reconnect || self.session_error.is_some(), |row| {
-                        row.child(
-                            session_button(
-                                "live-restart-btn",
-                                self.locale.label("Restart", "再起動"),
-                            )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, window, cx| {
-                                    this.start_session(cx);
-                                    window.focus(&this.focus_handle);
-                                    cx.notify();
-                                }),
-                            ),
-                        )
+                        row.child(restart_button())
                     }),
             );
         }
@@ -1630,7 +1632,10 @@ impl Render for LiveTerminalView {
                     .px_3()
                     .py_1p5()
                     .text_size(px(12.0))
-                    .child(self.locale.label("Starting terminal…", "端末を起動中…")),
+                    .child(self.locale.label(
+                        "Starting terminal… Input is unavailable.",
+                        "端末を起動中です。起動が完了すると入力できます。",
+                    )),
             );
         }
         if let Some(err) = &self.session_error {
@@ -1645,7 +1650,11 @@ impl Render for LiveTerminalView {
                     .child(format!(
                         "{}: {err}",
                         self.locale.label("herdr-core error", "herdr-core エラー")
-                    )),
+                    ))
+                    .when(
+                        self.session_closed.is_none() && self.herdr_guard.is_none(),
+                        |row| row.child(restart_button()),
+                    ),
             );
         }
 

@@ -15,7 +15,7 @@
 
 GPUIの描画、IME、Nerd Font、Unicode幅、スクロール、選択、クリップボード、Alternate Screen、同期出力はPoCから引き継いだ。共通Action API、内部設定、TypeScript設定・拡張、タブや分割は別工程。現在の端末UIは呼び出し箇所に日英の文言を持ち、OSロケールで選択する。翻訳キーは共通Action APIの移植と合わせて扱う。coreの標準エラー出力は、端末データを診断ログに残さないため両版で破棄する。
 
-GPUIの公開クレートは0.2.2までで、Taffyを `=0.9.0` に固定する。このTaffyは `grid 0.18.0` を要求するため、修正版 `grid 1.0.1` への互換更新はできない。依存の固定を維持し、CLI・ウィンドウ計算・通信・VTの寸法を各軸1〜1,000に制限した。端末セルはGPUIのCSS Gridに渡さず、測定済みセル幅に基づいて描画する。[GPUIパッケージ索引](https://index.crates.io/gp/ui/gpui) · [Taffy 0.9.0依存定義](https://github.com/DioxusLabs/taffy/blob/v0.9.0/Cargo.toml)
+GPUI 0.2.2の配布クレートはTaffyを `=0.9.0` と指定しており、`src-gpui/Cargo.lock` でもTaffy 0.9.0が解決されている。このTaffyは `grid 0.18.0` を要求するため、修正版 `grid 1.0.1` への互換更新はできない。依存の固定を維持し、CLI・ウィンドウ計算・通信・VTの寸法を各軸1〜1,000に制限した。端末セルはGPUIのCSS Gridに渡さず、測定済みセル幅に基づいて描画する。[GPUIパッケージ索引](https://index.crates.io/gp/ui/gpui) · [Taffy 0.9.0依存定義](https://github.com/DioxusLabs/taffy/blob/v0.9.0/Cargo.toml)
 
 ## 検証と性能
 

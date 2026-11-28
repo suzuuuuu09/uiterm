@@ -1026,6 +1026,16 @@ mod tests {
     }
 
     #[test]
+    fn close_info_preserves_core_stop_reasons() {
+        for (reason, label) in [("killed", "強制終了"), ("server_stop", "core停止")] {
+            let payload = serde_json::to_vec(&serde_json::json!({ "reason": reason })).unwrap();
+            let info = CloseInfo::from_payload(&payload);
+            assert_eq!(info.reason, reason);
+            assert_eq!(info.summary(true), label);
+        }
+    }
+
+    #[test]
     fn close_info_handles_numeric_and_string_signals() {
         let num_sig =
             CloseInfo::from_payload(br#"{"reason":"signaled","exit_code":null,"signal":9}"#);
