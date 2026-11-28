@@ -11,7 +11,7 @@ import {
   TerminalSessionManager,
 } from "../terminal/sessionManager.ts";
 
-interface AppRuntime {
+export interface AppRuntime {
   readonly store: StoreApi<AppState>;
   readonly logger: Logger;
   readonly sessionManager: TerminalSessionManager;
@@ -21,7 +21,7 @@ interface AppRuntime {
   dispose: () => void;
 }
 
-interface CreateAppRuntimeOptions {
+export interface CreateAppRuntimeOptions {
   store?: StoreApi<AppState>;
   logger?: Logger;
   client?: UitermBackendClient;

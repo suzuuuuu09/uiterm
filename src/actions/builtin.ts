@@ -22,7 +22,7 @@ import {
 } from "../validation/settingsSchemas.ts";
 import type { ActionRegistry } from "./registry.ts";
 
-interface BuiltinActionDeps {
+export interface BuiltinActionDeps {
   readonly store: StoreApi<AppState>;
   readonly sessionManager: TerminalSessionManager;
   readonly getMountRoot: () => HTMLElement | null;

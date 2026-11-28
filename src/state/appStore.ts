@@ -17,7 +17,7 @@ import type {
   WorkspaceState,
 } from "./types.ts";
 
-interface CreateTerminalTabInput {
+export interface CreateTerminalTabInput {
   readonly tabId: TabId;
   readonly paneId?: PaneId;
   readonly workspaceId?: WorkspaceId;
@@ -28,7 +28,7 @@ interface CreateTerminalTabInput {
   readonly activate?: boolean;
 }
 
-interface AppStoreActions {
+export interface AppStoreActions {
   // Workspace / Window hierarchy
   createWorkspace: (input: {
     id: WorkspaceId;

@@ -29,7 +29,7 @@ description: "uitermの開発ロードマップをまとめる"
 - [x] プロセスのライフサイクル管理（専用 0700 ディレクトリ・専用ソケット・パイプ監視による監視プロセスで、通常終了・SIGTERM・SIGINT・SIGKILL 時の確実な終了と core クラッシュ復旧を macOS 実機検証済み）
 - [x] 状態管理（React 非依存の Zustand Vanilla ストア `src/state/` で Window → Workspace → Tab → Pane・選択状態・`herdr-core` セッションミラー・OSC 7501 エージェント状態・UI/設定を管理。端末出力はストア非経由を厳守）
 - [x] Action Registry（`src/actions/` にて `ActionCaller` / `ActionOwner`・Valibot 引数検証・`canExecute`・エラー正規化・i18n ラベルを備えた組み込みアクション 9 種を実装）
-- [x] 型定義・データ検証（Rust 所有 DTO を `ts-rs` で `src-tauri/bindings/ipc.ts` へ自動生成し `cargo test` でドリフト検知。`src/ipc/types.ts` から生成型を再エクスポートし、`src/validation/` の Valibot スキーマで外部入力および `CoreEvent.data` を実行時検証）
+- [x] 型定義・データ検証（Rust 所有 DTO を `ts-rs` で `src-tauri/bindings/ipc.ts` へ自動生成し `cargo test` でドリフト検知。`src/ipc/generated/index.ts` → `src/ipc/types.ts` へ統合し、`src/validation/` の Valibot スキーマで外部入力および `CoreEvent.data` を実行時検証）
 - [x] エラーハンドリング（`AppError` でユーザー向け国際化文言と開発者向け診断情報を分離し、Rust 側の全主要 `IpcError` コードをマッピング、`runSafeAsync` で非同期例外を捕捉）
 - [x] ログ管理（`src/logging/logger.ts` にてレベルフィルタ・リングバッファ上限・認証情報/端末入力/IME テキストの自動マスクを実装）
 - [x] 国際化の基盤（TypeScript 辞書 `ja.ts` / `en.ts` のキー型強制・テンプレート補間・`Intl` API フォーマットラッパーを実装）

@@ -71,7 +71,7 @@ export interface SessionDiagnosticsSink {
   pushLog: (kind: "ime" | "input" | "auto-reply" | "system", detail: string) => void;
 }
 
-interface TerminalSessionManagerOptions {
+export interface TerminalSessionManagerOptions {
   store?: StoreApi<AppState>;
   logger?: Logger;
   diagnostics?: SessionDiagnosticsSink;

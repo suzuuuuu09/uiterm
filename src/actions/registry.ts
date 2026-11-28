@@ -15,7 +15,7 @@ import type {
   ActionResultOf,
 } from "./types.ts";
 
-interface ExecuteActionOptions {
+export interface ExecuteActionOptions {
   readonly caller?: ActionCaller;
   readonly signal?: AbortSignal;
 }

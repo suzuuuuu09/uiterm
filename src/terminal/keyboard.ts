@@ -1,6 +1,6 @@
 import type { BuiltinActionId } from "../actions/types.ts";
 
-interface KeyboardEventLike {
+export interface KeyboardEventLike {
   readonly key: string;
   readonly code: string;
   readonly ctrlKey: boolean;
@@ -13,19 +13,19 @@ interface KeyboardEventLike {
   readonly target?: EventTarget | null;
 }
 
-interface AppShortcutMatch {
+export interface AppShortcutMatch {
   readonly actionId: BuiltinActionId;
   readonly args: Record<string, unknown>;
 }
 
-interface MatchAppShortcutOptions {
+export interface MatchAppShortcutOptions {
   readonly isMac: boolean;
   readonly isComposing: boolean;
   readonly hasSelection: boolean;
   readonly isEditableTarget?: boolean;
 }
 
-interface TranslateMacOptionOptions {
+export interface TranslateMacOptionOptions {
   readonly isMac: boolean;
   readonly macOptionAsMeta: boolean;
   readonly isComposing: boolean;

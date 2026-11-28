@@ -1,6 +1,6 @@
 import { AppError } from "../errors/appError.ts";
 
-type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogLevel = "debug" | "info" | "warn" | "error";
 
 const LOG_LEVEL_PRIORITY: Readonly<Record<LogLevel, number>> = {
   debug: 10,
@@ -9,7 +9,7 @@ const LOG_LEVEL_PRIORITY: Readonly<Record<LogLevel, number>> = {
   error: 40,
 };
 
-interface LogEntry {
+export interface LogEntry {
   readonly id: number;
   readonly timestamp: number;
   readonly level: LogLevel;
@@ -18,13 +18,13 @@ interface LogEntry {
   readonly data?: Readonly<Record<string, unknown>>;
 }
 
-interface LoggerOptions {
+export interface LoggerOptions {
   minLevel?: LogLevel;
   maxEntries?: number;
   sink?: (entry: LogEntry) => void;
 }
 
-const DEFAULT_MAX_LOG_ENTRIES = 200;
+export const DEFAULT_MAX_LOG_ENTRIES = 200;
 const MAX_STRING_CHARS = 160;
 const MAX_DEPTH = 4;
 
@@ -121,7 +121,7 @@ function normalizeMaxEntries(limit: number | undefined): number {
 }
 
 export class Logger {
-  private readonly minLevel: LogLevel;
+  private minLevel: LogLevel;
   private maxEntries: number;
   private readonly sink?: (entry: LogEntry) => void;
   private entries: LogEntry[] = [];
@@ -132,6 +132,14 @@ export class Logger {
     this.minLevel = options.minLevel ?? "info";
     this.maxEntries = normalizeMaxEntries(options.maxEntries);
     this.sink = options.sink;
+  }
+
+  getMinLevel(): LogLevel {
+    return this.minLevel;
+  }
+
+  setMinLevel(level: LogLevel): void {
+    this.minLevel = level;
   }
 
   getMaxEntries(): number {

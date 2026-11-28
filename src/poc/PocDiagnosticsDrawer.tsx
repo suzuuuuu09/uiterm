@@ -34,7 +34,7 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-interface PocDiagnosticsDrawerProps {
+export interface PocDiagnosticsDrawerProps {
   readonly onSpawnTabs: (count: number, replace?: boolean) => Promise<void>;
   readonly onCloseAll: () => void;
 }

@@ -9,7 +9,7 @@ import {
 } from "../validation/ipcSchemas.ts";
 import type { AgentState, AgentStatusKind, CoreSessionSnapshot } from "./types.ts";
 
-function normalizeAgentStatusKind(rawState: string | undefined): AgentStatusKind {
+export function normalizeAgentStatusKind(rawState: string | undefined): AgentStatusKind {
   switch (rawState?.toLowerCase()) {
     case "working":
     case "running":
@@ -38,7 +38,7 @@ function normalizeAgentStatusKind(rawState: string | undefined): AgentStatusKind
   }
 }
 
-function agentStateFromStatusRecord(
+export function agentStateFromStatusRecord(
   sessionId: SessionId,
   record: StatusRecord | null,
   turn: number,
@@ -56,7 +56,7 @@ function agentStateFromStatusRecord(
   };
 }
 
-function terminalInfoToSnapshot(
+export function terminalInfoToSnapshot(
   info: TerminalInfo,
   nowMs: number = Date.now(),
 ): CoreSessionSnapshot {
@@ -80,13 +80,13 @@ function terminalInfoToSnapshot(
   };
 }
 
-interface CoreSyncStateSlice {
+export interface CoreSyncStateSlice {
   readonly sessions: Readonly<Record<SessionId, CoreSessionSnapshot>>;
   readonly agentStates: Readonly<Record<SessionId, AgentState>>;
   readonly lastSeq: number;
 }
 
-interface CoreSyncPatch {
+export interface CoreSyncPatch {
   readonly sessions: Readonly<Record<SessionId, CoreSessionSnapshot>>;
   readonly agentStates: Readonly<Record<SessionId, AgentState>>;
   readonly lastSeq: number;

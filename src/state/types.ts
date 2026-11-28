@@ -7,7 +7,7 @@ export type WorkspaceId = string;
 export type TabId = string;
 export type PaneId = string;
 
-type TabKind = "terminal";
+export type TabKind = "terminal";
 
 export interface WindowState {
   readonly id: WindowId;
@@ -49,7 +49,7 @@ export interface PaneState {
   readonly createdAt: number;
 }
 
-interface SelectionState {
+export interface SelectionState {
   readonly activeWindowId: WindowId | null;
   readonly activeWorkspaceId: WorkspaceId | null;
   readonly activeTabId: TabId | null;
@@ -81,7 +81,7 @@ export interface CoreSessionSnapshot {
 
 export type CoreConnectionStatus = "disconnected" | "connected" | "reconnecting";
 
-interface CoreConnectionState {
+export interface CoreConnectionState {
   readonly status: CoreConnectionStatus;
   readonly lastSeq: number;
   readonly coreStatus: CoreStatus | null;
@@ -110,14 +110,14 @@ export interface AgentState {
   readonly updatedAt: number;
 }
 
-interface UiNotification {
+export interface UiNotification {
   readonly id: number;
   readonly severity: "info" | "warn" | "error";
   readonly message: string;
   readonly timestamp: number;
 }
 
-interface UiState {
+export interface UiState {
   readonly sidebarVisible: boolean;
   readonly isComposing: boolean;
   readonly diagnosticsPanelVisible: boolean;

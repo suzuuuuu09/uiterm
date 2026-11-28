@@ -2,7 +2,7 @@ import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { TerminalBackendId } from "../validation/settingsSchemas.ts";
 
-interface DiagnosticEvent {
+export interface DiagnosticEvent {
   readonly id: number;
   readonly time: string;
   readonly kind: "ime" | "input" | "auto-reply" | "system";
@@ -21,7 +21,7 @@ export interface BenchmarkRow {
   readonly heapDeltaMB: number | null;
 }
 
-interface PocDiagnosticsState {
+export interface PocDiagnosticsState {
   /**
    * Explicit opt-in for verbose Phase 0 PoC diagnostics (disabled by default in product mode
    * so terminal input metadata / IME events are not recorded unless requested).
