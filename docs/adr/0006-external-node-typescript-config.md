@@ -19,6 +19,8 @@
 
 Phase 0で方式を検証済み。現在は明示的に有効化した開発用PoCに限り、製品向けAPI、信頼付与、復旧はPhase 4で扱う。
 
+GPUIへの移行後もTypeScriptによる設定・拡張と外部Node.jsの実行境界を維持する。 [ADR-0010](0010-evaluate-native-gpui-terminal.md) を参照。
+
 ## References
 
 - [関連する設計・実装記録](../implementation/phase1-backend.md)

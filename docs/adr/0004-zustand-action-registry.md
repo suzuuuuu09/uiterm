@@ -1,7 +1,9 @@
 # ADR-0004: Zustand Vanilla・Action Registry
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-11-27
+
+Zustandによる状態管理は [ADR-0010](0010-evaluate-native-gpui-terminal.md) により置換された。共通Action APIと端末出力を状態ストアから分離する方針は引き継ぐ。
 
 ## Context
 

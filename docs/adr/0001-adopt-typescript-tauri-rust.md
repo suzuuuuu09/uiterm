@@ -1,7 +1,9 @@
 # ADR-0001: TypeScript・Tauri・Rustの採用
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-11-27
+
+製品GUIと主要言語の選択は [ADR-0010](0010-evaluate-native-gpui-terminal.md) により置換された。Tauri版の実装は移行中の比較基準として残る。
 
 ## Context
 
@@ -17,7 +19,7 @@ ElectronはChromiumを同梱するため軽量性の目標と合わない。Rust
 
 ## Consequences
 
-WebViewの性能とOSごとの入力互換性に依存する。Phase 2で見つかった問題により [ADR-0010](0010-evaluate-native-gpui-terminal.md) でネイティブ構成を再評価する。採用確定までは本ADRを維持する。
+WebViewの性能とOSごとの入力互換性に依存する。Phase 2で見つかった問題を受けてネイティブ構成を評価した。
 
 ## References
 

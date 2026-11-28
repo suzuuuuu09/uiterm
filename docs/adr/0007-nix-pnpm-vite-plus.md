@@ -17,7 +17,9 @@ OSごとの手動導入は環境差を増やす。Chromiumや不要なランタ�
 
 ## Consequences
 
-Flake評価と実機動作を区別する。Linux実機はMVP完成条件。ネイティブGUI採用時にVite+等の必要性を再評価する。
+Flake評価と実機動作を区別する。Linux実機はMVP完成条件。
+
+Nix・Cargo・pnpmと依存固定を維持する。Vite+は既存Tauri版で引き続き使用し、設定・拡張の開発で必要なツールは移行時に見直す。 [ADR-0010](0010-evaluate-native-gpui-terminal.md) を参照。
 
 ## References
 
