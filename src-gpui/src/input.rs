@@ -34,8 +34,6 @@ pub enum KeyDispatchDecision {
     PassToIme,
     /// Suppress without forwarding to PTY (e.g. IME composing fallback).
     ConsumeNoPty,
-    /// Cancel stuck local IME mark without sending Escape to PTY.
-    CancelStuckImeMark,
     /// Execute a terminal application shortcut.
     AppAction(TerminalAppAction),
     /// Encode key through `libghostty-vt` key encoder and send to PTY.
@@ -55,12 +53,10 @@ pub fn classify_keydown(
     mac_option_as_meta: bool,
 ) -> KeyDispatchDecision {
     if is_composing {
-        if keystroke.key == "escape"
-            && !keystroke.modifiers.control
-            && !keystroke.modifiers.alt
-            && !keystroke.modifiers.platform
-        {
-            return KeyDispatchDecision::CancelStuckImeMark;
+        // GPUI lets the platform IME handle composition before dispatching fallback
+        // commands. Leave cancellation and platform shortcuts to the OS.
+        if keystroke.modifiers.platform || keystroke.key == "escape" {
+            return KeyDispatchDecision::PassToIme;
         }
         return KeyDispatchDecision::ConsumeNoPty;
     }
@@ -455,13 +451,16 @@ mod tests {
     #[test]
     fn composing_suppresses_shortcuts_option_meta_and_pty_writes() {
         let cmd_c = Keystroke {
-            modifiers: Modifiers::command(),
+            modifiers: Modifiers {
+                platform: true,
+                ..Modifiers::none()
+            },
             key: "c".into(),
             key_char: None,
         };
         assert_eq!(
             classify_keydown(&cmd_c, true, true, true),
-            KeyDispatchDecision::ConsumeNoPty
+            KeyDispatchDecision::PassToIme
         );
 
         let enter = Keystroke {
@@ -481,7 +480,7 @@ mod tests {
         };
         assert_eq!(
             classify_keydown(&escape, true, false, true),
-            KeyDispatchDecision::CancelStuckImeMark
+            KeyDispatchDecision::PassToIme
         );
     }
 
@@ -495,7 +494,7 @@ mod tests {
         };
         assert_eq!(
             classify_keydown(&cmd_q, true, false, true),
-            KeyDispatchDecision::ConsumeNoPty
+            KeyDispatchDecision::PassToIme
         );
         assert_eq!(
             classify_keydown(&cmd_q, false, false, true),

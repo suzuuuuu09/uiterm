@@ -756,12 +756,6 @@ impl LiveTerminalView {
             KeyDispatchDecision::ConsumeNoPty => {
                 cx.stop_propagation();
             }
-            KeyDispatchDecision::CancelStuckImeMark => {
-                if self.ime.cancel_mark_if_any() {
-                    cx.notify();
-                }
-                cx.stop_propagation();
-            }
             KeyDispatchDecision::AppAction(action) => {
                 self.perform_app_action(action, window, cx);
                 cx.stop_propagation();
@@ -1163,23 +1157,45 @@ impl EntityInputHandler for LiveTerminalView {
         &mut self,
         range_utf16: Range<usize>,
         element_bounds: Bounds<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let anchor = self.last_ime_anchor.unwrap_or(element_bounds);
         let row_h = px(self.last_row_h.max(1.0));
-        if let Some(line) = self.last_ime_line.as_ref()
-            && !line.text.is_empty()
-        {
+        let preedit = self.ime.preedit_text();
+        if !preedit.is_empty() {
+            let fresh_line;
+            let (line, left) = if let Some(line) = self.last_ime_line.as_ref()
+                && line.text.as_ref() == preedit
+            {
+                (line, anchor.left())
+            } else {
+                fresh_line = window.text_system().shape_line(
+                    SharedString::from(preedit.to_owned()),
+                    px(self.style.font_size),
+                    &[TextRun {
+                        len: preedit.len(),
+                        font: self.current_ime_font(),
+                        color: rgb(FG_PRIMARY).into(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                );
+                let left = self.last_content_bounds.map_or(anchor.left(), |bounds| {
+                    anchor
+                        .left()
+                        .min((bounds.right() - fresh_line.width - px(4.0)).max(bounds.left()))
+                });
+                (&fresh_line, left)
+            };
             let range = self.ime.range_from_utf16(&range_utf16);
-            let start_x = line.x_for_index(range.start.min(line.text.len()));
-            let end_x = line.x_for_index(range.end.min(line.text.len()));
+            let start_x = line.x_for_index(range.start);
+            let end_x = line.x_for_index(range.end);
             return Some(Bounds::from_corners(
-                point(anchor.left() + start_x, anchor.top()),
-                point(
-                    anchor.left() + end_x.max(start_x + px(2.0)),
-                    anchor.top() + row_h,
-                ),
+                point(left + start_x, anchor.top()),
+                point(left + end_x.max(start_x + px(2.0)), anchor.top() + row_h),
             ));
         }
         Some(Bounds::new(
@@ -1195,7 +1211,10 @@ impl EntityInputHandler for LiveTerminalView {
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
         let anchor = self.last_ime_anchor?;
-        let line = self.last_ime_line.as_ref()?;
+        let line = self
+            .last_ime_line
+            .as_ref()
+            .filter(|line| line.text.as_ref() == self.ime.preedit_text())?;
         let local_x = (point.x - anchor.left()).max(px(0.0));
         let utf8_idx = line.closest_index_for_x(local_x);
         Some(self.ime.offset_to_utf16(utf8_idx))

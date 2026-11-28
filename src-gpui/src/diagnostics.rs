@@ -1008,14 +1008,39 @@ impl EntityInputHandler for GpuiPocView {
         &mut self,
         range_utf16: Range<usize>,
         bounds: Bounds<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let line = self.last_ime_line.as_ref()?;
+        let row_h = px((self.font_size * DEFAULT_LINE_HEIGHT).ceil());
+        if self.ime.content.is_empty() {
+            return Some(Bounds::new(bounds.origin, size(px(2.0), row_h)));
+        }
+        let fresh_line;
+        let line = if let Some(line) = self
+            .last_ime_line
+            .as_ref()
+            .filter(|line| line.text.as_ref() == self.ime.content)
+        {
+            line
+        } else {
+            fresh_line = window.text_system().shape_line(
+                SharedString::from(self.ime.content.clone()),
+                px(self.font_size),
+                &[TextRun {
+                    len: self.ime.content.len(),
+                    font: self.current_font(),
+                    color: rgb(FG_PRIMARY).into(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }],
+                None,
+            );
+            &fresh_line
+        };
         let range = self.ime.range_from_utf16(&range_utf16);
         let start_x = line.x_for_index(range.start);
         let end_x = line.x_for_index(range.end);
-        let row_h = px((self.font_size * DEFAULT_LINE_HEIGHT).ceil());
         Some(Bounds::from_corners(
             point(bounds.left() + start_x, bounds.top()),
             point(
@@ -1032,7 +1057,10 @@ impl EntityInputHandler for GpuiPocView {
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
         let bounds = self.last_ime_bounds?;
-        let line = self.last_ime_line.as_ref()?;
+        let line = self
+            .last_ime_line
+            .as_ref()
+            .filter(|line| line.text.as_ref() == self.ime.content)?;
         let local_x = point.x - bounds.left();
         if local_x < px(0.0)
             || local_x >= line.width
