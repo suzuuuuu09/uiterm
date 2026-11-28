@@ -1,19 +1,21 @@
 //! Lifecycle of the app's private herdr-core instance.
 
-use crate::herdr::types::IpcError;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
 
+#[path = "supervisor.rs"]
 mod supervisor;
 pub(crate) use supervisor::CoreSupervisor;
+pub use supervisor::SUPERVISOR_FLAG;
 pub use supervisor::run_supervisor;
 
 static INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub(crate) const CORE_VERSION: &str = "0.1.22";
-const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct HerdrLaunchConfig {
@@ -22,7 +24,7 @@ pub struct HerdrLaunchConfig {
 }
 
 impl HerdrLaunchConfig {
-    pub fn isolated(prefix: &str) -> Result<Self, IpcError> {
+    pub fn isolated(prefix: &str) -> Result<Self, CoreProcessError> {
         let binary = resolve_herdr_core_bin()?;
         let pid = std::process::id();
         let seq = INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -33,16 +35,24 @@ impl HerdrLaunchConfig {
     }
 }
 
-pub fn resolve_herdr_core_bin() -> Result<PathBuf, IpcError> {
+pub fn resolve_herdr_core_bin() -> Result<PathBuf, CoreProcessError> {
     if let Some(explicit) = std::env::var_os("HERDR_CORE_BIN") {
         let path = PathBuf::from(explicit);
         if path.is_absolute() && path.is_file() {
             return Ok(path);
         }
-        return Err(IpcError::new(
+        return Err(CoreProcessError::new(
             "invalid_core_path",
             "HERDR_CORE_BIN must be an absolute file path",
         ));
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(dir) = executable.parent()
+    {
+        let sibling = dir.join("herdr-core");
+        if sibling.is_file() {
+            return Ok(sibling);
+        }
     }
     if let Some(path_var) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_var).filter(|path| path.is_absolute()) {
@@ -54,7 +64,7 @@ pub fn resolve_herdr_core_bin() -> Result<PathBuf, IpcError> {
             }
         }
     }
-    Err(IpcError::with_hint(
+    Err(CoreProcessError::with_hint(
         "herdr_core_not_found",
         "herdr-core binary not found in HERDR_CORE_BIN or PATH",
         Some("Run inside `nix develop` or set HERDR_CORE_BIN".into()),
@@ -72,7 +82,7 @@ pub struct HerdrDaemon {
 }
 
 impl HerdrDaemon {
-    pub async fn start(config: HerdrLaunchConfig) -> Result<Self, IpcError> {
+    pub async fn start(config: HerdrLaunchConfig) -> Result<Self, CoreProcessError> {
         let version = tokio::time::timeout(
             STOP_TIMEOUT,
             Command::new(&config.binary)
@@ -83,12 +93,14 @@ impl HerdrDaemon {
                 .output(),
         )
         .await
-        .map_err(|_| IpcError::new("core_start_timeout", "herdr-core version check timed out"))?
-        .map_err(|err| IpcError::new("spawn_failed", err.to_string()))?;
+        .map_err(|_| {
+            CoreProcessError::new("core_start_timeout", "herdr-core version check timed out")
+        })?
+        .map_err(|err| CoreProcessError::new("spawn_failed", err.to_string()))?;
         if !version.status.success()
             || String::from_utf8_lossy(&version.stdout).trim() != format!("hc {CORE_VERSION}")
         {
-            return Err(IpcError::new(
+            return Err(CoreProcessError::new(
                 "core_version_mismatch",
                 format!("herdr-core v{CORE_VERSION} is required"),
             ));
@@ -97,7 +109,7 @@ impl HerdrDaemon {
         let mut template = *b"/tmp/uiterm.XXXXXXXX\0";
         // mkdtemp creates the directory atomically with mode 0700 and substitutes ASCII.
         if unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) }.is_null() {
-            return Err(IpcError::new(
+            return Err(CoreProcessError::new(
                 "io_error",
                 std::io::Error::last_os_error().to_string(),
             ));
@@ -120,18 +132,17 @@ impl HerdrDaemon {
         Ok(daemon)
     }
 
-    fn spawn_core(&mut self) -> Result<(), IpcError> {
+    fn spawn_core(&mut self) -> Result<(), CoreProcessError> {
         self.child = Some(
             Command::from(self.command(&["serve"]))
-                .stderr(Stdio::inherit())
                 .kill_on_drop(true)
                 .spawn()
-                .map_err(|err| IpcError::new("spawn_failed", err.to_string()))?,
+                .map_err(|err| CoreProcessError::new("spawn_failed", err.to_string()))?,
         );
         Ok(())
     }
 
-    async fn wait_for_socket(&mut self, recovering: bool) -> Result<(), IpcError> {
+    async fn wait_for_socket(&mut self, recovering: bool) -> Result<(), CoreProcessError> {
         let deadline = Instant::now() + STOP_TIMEOUT;
         tokio::time::timeout_at(deadline.into(), async {
             loop {
@@ -142,14 +153,12 @@ impl HerdrDaemon {
                     return Ok(());
                 }
                 if !recovering
-                    && let Some(status) = self
-                        .child
-                        .as_mut()
-                        .unwrap()
-                        .try_wait()
-                        .map_err(|err| IpcError::new("core_start_failed", err.to_string()))?
+                    && let Some(status) =
+                        self.child.as_mut().unwrap().try_wait().map_err(|err| {
+                            CoreProcessError::new("core_start_failed", err.to_string())
+                        })?
                 {
-                    return Err(IpcError::new(
+                    return Err(CoreProcessError::new(
                         "core_start_failed",
                         format!("herdr-core exited before opening its socket ({status})"),
                     ));
@@ -158,10 +167,12 @@ impl HerdrDaemon {
             }
         })
         .await
-        .map_err(|_| IpcError::new("core_start_timeout", "herdr-core did not open its socket"))?
+        .map_err(|_| {
+            CoreProcessError::new("core_start_timeout", "herdr-core did not open its socket")
+        })?
     }
 
-    async fn recover(&mut self) -> Result<(), IpcError> {
+    async fn recover(&mut self) -> Result<(), CoreProcessError> {
         // The holder may win the core lock. A socket in this instance's private
         // directory is the authority, even when the original child has exited.
         if tokio::net::UnixStream::connect(self.socket_path())
@@ -207,7 +218,7 @@ impl HerdrDaemon {
         &self.socket_path
     }
 
-    pub async fn stop(&mut self) -> Result<(), IpcError> {
+    pub async fn stop(&mut self) -> Result<(), CoreProcessError> {
         if self.stopped {
             return Ok(());
         }
@@ -232,7 +243,7 @@ impl HerdrDaemon {
         .map_err(|_| stop_error("graceful stop timed out"))?
     }
 
-    fn ensure_graceful_stop_possible(&self) -> Result<(), IpcError> {
+    fn ensure_graceful_stop_possible(&self) -> Result<(), CoreProcessError> {
         if !self.socket_path.exists() {
             return Err(stop_error(
                 "core socket is missing; preserved state for its holders",
@@ -241,14 +252,14 @@ impl HerdrDaemon {
         Ok(())
     }
 
-    fn remove_state(&mut self) -> Result<(), IpcError> {
+    fn remove_state(&mut self) -> Result<(), CoreProcessError> {
         std::fs::remove_dir_all(&self.base_dir)
-            .map_err(|err| IpcError::new("io_error", err.to_string()))?;
+            .map_err(|err| CoreProcessError::new("io_error", err.to_string()))?;
         self.stopped = true;
         Ok(())
     }
 
-    fn stop_sync(&mut self) -> Result<(), IpcError> {
+    fn stop_sync(&mut self) -> Result<(), CoreProcessError> {
         if self.stopped {
             return Ok(());
         }
@@ -308,11 +319,11 @@ impl Drop for HerdrDaemon {
     }
 }
 
-fn stop_error(err: impl std::fmt::Display) -> IpcError {
-    IpcError::new("core_stop_failed", err.to_string())
+fn stop_error(err: impl std::fmt::Display) -> CoreProcessError {
+    CoreProcessError::new("core_stop_failed", err.to_string())
 }
 
-fn check_stop_reply(output: std::process::Output) -> Result<(), IpcError> {
+fn check_stop_reply(output: std::process::Output) -> Result<(), CoreProcessError> {
     if !output.status.success() {
         return Err(stop_error(output.status));
     }
@@ -327,3 +338,41 @@ fn check_stop_reply(output: std::process::Output) -> Result<(), IpcError> {
     }
     Ok(())
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoreProcessError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+impl CoreProcessError {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            hint: None,
+        }
+    }
+
+    pub fn with_hint(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        hint: Option<String>,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            hint,
+        }
+    }
+}
+
+impl std::fmt::Display for CoreProcessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for CoreProcessError {}

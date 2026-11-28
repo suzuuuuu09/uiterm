@@ -15,17 +15,17 @@ description: "ADR-0010 GPUI PoC（Stage 1〜3）実装・描画最適化・3者�
 
 Stage 1・2 で検証した GPUI フォントシェーピング・IME 状態管理・ネイティブ `libghostty-vt` ベンチマークを基盤とし、Stage 3 では実際に `fish`・Neovim・Codex 等の対話型 CLI を操作できるライブターミナルと最適化レンダラを `poc/gpui-terminal/` に実装した。
 
-| モジュール                                                                                   | 主な責務・実装記号                                                                                                                                                                                                                                                                                       |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`poc/gpui-terminal/src/main.rs`](../../poc/gpui-terminal/src/main.rs)                       | `--uiterm-pty-init` 最速エントリ、シグナル監視（`SIGTERM`/`SIGINT` self-pipe による `herdr-core` クリーンアップ）、`LiveTerminalView`、PTY 非同期ポンプ、`sync_resize_if_needed`、`TerminalInputHandler`（`apple_press_and_hold_enabled() -> false`）、`BenchScenario` / `--bench-window`、`GpuiPocView` |
-| [`poc/gpui-terminal/src/renderer.rs`](../../poc/gpui-terminal/src/renderer.rs)               | `RowShapeCache`（`RenderState::next_dirty()` + `RowId` + `hash_styled_cells`、`MAX_CACHED_ROWS = 128`）、`shape_extracted_row`（複数 `TextRun` 統合、一様背景行右端延長、SGR 2/8/7）、`paint_terminal_frame`（選択ハイライト、カーソル描画、IME オーバーレイ、スクロールバー）                           |
-| [`poc/gpui-terminal/src/vt.rs`](../../poc/gpui-terminal/src/vt.rs)                           | `VtTerminal`（`ghostty-vt 0.9.0` / `libghostty-vt 1.0.1`、2,000 行 / 10 MiB 履歴、`DEFAULT_TERMINAL_THEME`）、`Osc133Normalizer`（`redraw=0` 補完）、Mode 2026（`render_hold` + 100ms 解除）、Mode 2048（リサイズ応答）、`KeyEncoder`/`MouseEncoder`/`paste::encode`/`SelectionGesture`、`--bench-vt`    |
-| [`poc/gpui-terminal/src/herdr.rs`](../../poc/gpui-terminal/src/herdr.rs)                     | `herdr-core` v0.1.22（`CORE_VERSION`）隔離起動、`DirCleanupGuard`、`HerdrHandle`（`FRAME_DATA` と `FRAME_AUTOMATIC_INPUT` の厳密分離）、`HerdrOutputStream`（VT 処理後の `FRAME_CREDIT` 返却）、`CloseInfo`、`HerdrGuard::stop_blocking`                                                                 |
-| [`poc/gpui-terminal/src/input.rs`](../../poc/gpui-terminal/src/input.rs)                     | `classify_keydown`・`match_app_action`・`gpui_key_to_ghostty`（通常印字キー/Space は IME (`NSTextInputContext`) へ委譲、`Cmd` 各種 / `Option-as-Meta` / Ctrl / 特殊キー分離、IME 変換中ショートカット抑止）                                                                                              |
-| [`poc/gpui-terminal/src/ime.rs`](../../poc/gpui-terminal/src/ime.rs)                         | `TerminalImeState`（Cmd+Tab / focus-blur 間の未確定文字列維持、`Commit` 直接返却、`"あ"` → `"あ"` 連続確定、Esc/unmark 安全消去、`--probe-ui` 用 `ImeBuffer` 維持）                                                                                                                                      |
-| [`poc/gpui-terminal/src/os.rs`](../../poc/gpui-terminal/src/os.rs)                           | `PTY_IUTF8_INIT_FLAG`、`enable_pty_iutf8`、`wrap_argv_with_pty_iutf8_init`、`resolve_os_default_shell`（`getpwuid_r`）、`build_child_shell_env`（隔離 XDG の子シェル復元）                                                                                                                               |
-| [`poc/gpui-terminal/src/fonts.rs`](../../poc/gpui-terminal/src/fonts.rs)                     | `FontPreset`（Default / `UDEV Gothic 35NF` / Menlo）、`build_terminal_font_styled`、Unicode / PUA / 結合文字 / ZWJ セル幅計算                                                                                                                                                                            |
-| [`poc/gpui-terminal/tests/compatibility.rs`](../../poc/gpui-terminal/tests/compatibility.rs) | 実 `herdr-core` + `--uiterm-pty-init` + `fish` + `nvim` + `codex` 互換性統合テスト                                                                                                                                                                                                                       |
+| モジュール                                                                                                                               | 主な責務・実装記号                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`poc/gpui-terminal/src/main.rs`](https://github.com/suzuuuuu09/uiterm/blob/0d34b0a/poc/gpui-terminal/src/main.rs)                       | `--uiterm-pty-init` 最速エントリ、シグナル監視（`SIGTERM`/`SIGINT` self-pipe による `herdr-core` クリーンアップ）、`LiveTerminalView`、PTY 非同期ポンプ、`sync_resize_if_needed`、`TerminalInputHandler`（`apple_press_and_hold_enabled() -> false`）、`BenchScenario` / `--bench-window`、`GpuiPocView` |
+| [`poc/gpui-terminal/src/renderer.rs`](https://github.com/suzuuuuu09/uiterm/blob/0d34b0a/poc/gpui-terminal/src/renderer.rs)               | `RowShapeCache`（`RenderState::next_dirty()` + `RowId` + `hash_styled_cells`、`MAX_CACHED_ROWS = 128`）、`shape_extracted_row`（複数 `TextRun` 統合、一様背景行右端延長、SGR 2/8/7）、`paint_terminal_frame`（選択ハイライト、カーソル描画、IME オーバーレイ、スクロールバー）                           |
+| [`poc/gpui-terminal/src/vt.rs`](https://github.com/suzuuuuu09/uiterm/blob/0d34b0a/poc/gpui-terminal/src/vt.rs)                           | `VtTerminal`（`ghostty-vt 0.9.0` / `libghostty-vt 1.0.1`、2,000 行 / 10 MiB 履歴、`DEFAULT_TERMINAL_THEME`）、`Osc133Normalizer`（`redraw=0` 補完）、Mode 2026（`render_hold` + 100ms 解除）、Mode 2048（リサイズ応答）、`KeyEncoder`/`MouseEncoder`/`paste::encode`/`SelectionGesture`、`--bench-vt`    |
+| [`poc/gpui-terminal/src/herdr.rs`](https://github.com/suzuuuuu09/uiterm/blob/0d34b0a/poc/gpui-terminal/src/herdr.rs)                     | `herdr-core` v0.1.22（`CORE_VERSION`）隔離起動、`DirCleanupGuard`、`HerdrHandle`（`FRAME_DATA` と `FRAME_AUTOMATIC_INPUT` の厳密分離）、`HerdrOutputStream`（VT 処理後の `FRAME_CREDIT` 返却）、`CloseInfo`、`HerdrGuard::stop_blocking`                                                                 |
+| [`poc/gpui-terminal/src/input.rs`](https://github.com/suzuuuuu09/uiterm/blob/0d34b0a/poc/gpui-terminal/src/input.rs)                     | `classify_keydown`・`match_app_action`・`gpui_key_to_ghostty`（通常印字キー/Space は IME (`NSTextInputContext`) へ委譲、`Cmd` 各種 / `Option-as-Meta` / Ctrl / 特殊キー分離、IME 変換中ショートカット抑止）                                                                                              |
+| [`poc/gpui-terminal/src/ime.rs`](https://github.com/suzuuuuu09/uiterm/blob/0d34b0a/poc/gpui-terminal/src/ime.rs)                         | `TerminalImeState`（Cmd+Tab / focus-blur 間の未確定文字列維持、`Commit` 直接返却、`"あ"` → `"あ"` 連続確定、Esc/unmark 安全消去、`--probe-ui` 用 `ImeBuffer` 維持）                                                                                                                                      |
+| [`poc/gpui-terminal/src/os.rs`](https://github.com/suzuuuuu09/uiterm/blob/0d34b0a/poc/gpui-terminal/src/os.rs)                           | `PTY_IUTF8_INIT_FLAG`、`enable_pty_iutf8`、`wrap_argv_with_pty_iutf8_init`、`resolve_os_default_shell`（`getpwuid_r`）、`build_child_shell_env`（隔離 XDG の子シェル復元）                                                                                                                               |
+| [`poc/gpui-terminal/src/fonts.rs`](https://github.com/suzuuuuu09/uiterm/blob/0d34b0a/poc/gpui-terminal/src/fonts.rs)                     | `FontPreset`（Default / `UDEV Gothic 35NF` / Menlo）、`build_terminal_font_styled`、Unicode / PUA / 結合文字 / ZWJ セル幅計算                                                                                                                                                                            |
+| [`poc/gpui-terminal/tests/compatibility.rs`](https://github.com/suzuuuuu09/uiterm/blob/0d34b0a/poc/gpui-terminal/tests/compatibility.rs) | 実 `herdr-core` + `--uiterm-pty-init` + `fish` + `nvim` + `codex` 互換性統合テスト                                                                                                                                                                                                                       |
 
 ### 主要な設計ポイント
 
@@ -254,32 +254,32 @@ GPUI の `--bench-window` は Menlo 14、106 × 32、行キャッシュ有効で
 
 ## 8. 実機検証手順と起動コマンド
 
-ユーザー環境の実キーボード・macSKK・トラックパッド・画面描画を目視確認するため、以下のコマンドをリポジトリルートから実行してください。
+PoCの計測記録は移行前の結果。現行の `src-gpui` で実キーボード・macSKK・トラックパッド・画面描画を目視確認するには、[開発手順](../development.md) のリリースビルド後、リポジトリルートから以下を実行する。
 
 ### 起動コマンド
 
 ```sh
 # 1. 通常ライブターミナル起動（既定シェルの隔離起動、Menlo 14px / 106x32 / キャッシュ有効）
 nix develop .#gpui --no-write-lock-file --command \
-  ./poc/gpui-terminal/target/release/uiterm-gpui-poc --font-preset menlo --font-size 14
+  ./src-gpui/target/release/uiterm --font-preset menlo --font-size 14
 
 # 2. 普段 Ghostty 等で使っている UDEV Gothic 35NF での起動例（上部ツールバーなし: --minimal）
 nix develop .#gpui --no-write-lock-file --command \
-  ./poc/gpui-terminal/target/release/uiterm-gpui-poc --minimal --font-preset udev --font-size 13
+  ./src-gpui/target/release/uiterm --minimal --font-preset udev --font-size 13
 
 # 3. IME・フォントプローブ UI の起動（診断用）
 nix develop .#gpui --no-write-lock-file --command \
-  ./poc/gpui-terminal/target/release/uiterm-gpui-poc --probe-ui
+  ./src-gpui/target/release/uiterm --probe-ui
 ```
 
-Linux では `nix develop .#gpui --command cargo build --locked --release --manifest-path poc/gpui-terminal/Cargo.toml` でビルドする。Hyprland で起動経路、Fcitx5 の日本語と ASCII の確定、Nerd Font を確認する。GPUI 0.2.2 は ASCII 一文字の IME 確定を物理キーと同じイベント型で渡すため、未確定中の確定漏れについては上流の区別が必要。
+Linux では `nix develop .#gpui --command cargo build --locked --release --manifest-path src-gpui/Cargo.toml` でビルドする。Hyprland で起動経路、Fcitx5 の日本語と ASCII の確定、Nerd Font を確認する。GPUI 0.2.2 は ASCII 一文字の IME 確定を物理キーと同じイベント型で渡すため、未確定中の確定漏れについては上流の区別が必要。
 
 Kitty キーボード拡張で反復・解放イベントや全キーの報告を要求するアプリについては、現在のライブ端末は押下とテキスト確定のみを送るため、一部のキー報告が欠ける。
 
 fish、Neovim、Codex を PATH に用意し、[検証手順](../development.md) に従ってテスト用 HOME・XDG を隔離してから、CLI 互換テストを実行する。
 
 ```sh
-nix develop .#gpui --command cargo test --locked --manifest-path poc/gpui-terminal/Cargo.toml \
+nix develop .#gpui --command cargo test --locked --manifest-path src-gpui/Cargo.toml \
   --test compatibility installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty -- --ignored
 ```
 
@@ -300,7 +300,7 @@ nix develop .#gpui --command cargo test --locked --manifest-path poc/gpui-termin
 3. **対話 CLI・Neovim・スクロール・後始末**
    - [ ] `nvim` で日本語編集、`Ctrl+D`/`Ctrl+U` 高速スクロール、ウィンドウドラッグリサイズ、フォーカス離脱・復帰時の `FocusLost`/`FocusGained`、`macism` 応答体感（Phase 2 の 4.5 秒待ちが起きないこと）を確認。
    - [ ] `seq 1 10000` 出力後にトラックパッドで 2,000 行スクロールバックを行き来し、カクつきや文字崩れがないこと。
-   - [ ] `Cmd+Q` またはウィンドウ閉鎖後、`ps aux | rg 'uiterm-gpui-poc|herdr-core'` で起動した `uiterm-gpui-poc` と専用 `herdr-core` / `holder` / `/tmp/u-gp-*` が残存していないこと（既存ユーザーセッションに影響がないこと）。
+   - [ ] `Cmd+Q` またはウィンドウ閉鎖後、`ps aux | rg 'uiterm|herdr-core'` で起動した `uiterm` と専用の監視プロセス・`herdr-core`・`holder`・`/tmp/uiterm.*` が残存していないこと（既存ユーザーセッションに影響がないこと）。
 
 ---
 

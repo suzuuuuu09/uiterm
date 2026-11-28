@@ -1,5 +1,9 @@
-use crate::herdr::{HerdrClient, IpcError, process::CoreSupervisor};
+use crate::herdr::{
+    HerdrClient, IpcError,
+    process::{CoreSupervisor, STOP_TIMEOUT},
+};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 #[derive(Default)]
@@ -30,7 +34,9 @@ impl AppState {
         }
 
         if connection.supervisor.is_none() {
-            let mut started = CoreSupervisor::start().await?;
+            let executable = std::env::current_exe()
+                .map_err(|_| IpcError::new("spawn_failed", "cannot locate uiterm executable"))?;
+            let mut started = CoreSupervisor::start(&executable).await?;
             if self.exiting.load(Ordering::Acquire) {
                 drop(connection);
                 if let Err(err) = tokio::task::spawn_blocking(move || started.stop_blocking()).await
@@ -45,7 +51,16 @@ impl AppState {
             connection.supervisor = Some(started);
         }
         let supervisor = connection.supervisor.as_ref().unwrap();
-        let client = supervisor.connect().await?;
+        let (socket_path, session) = supervisor.endpoint();
+        let deadline = Instant::now() + STOP_TIMEOUT;
+        let client = loop {
+            match HerdrClient::connect(socket_path, session).await {
+                Err(err) if err.code == "connect_failed" && Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                result => break result?,
+            }
+        };
         if self.exiting.load(Ordering::Acquire) {
             let supervisor = connection.supervisor.take();
             drop(connection);

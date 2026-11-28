@@ -1,5 +1,5 @@
 //! Integration & compatibility tests against real isolated `herdr-core` v0.1.22,
-//! `uiterm-gpui-poc --uiterm-pty-init`, `fish`, `nvim`, and `codex --version`.
+//! `uiterm --uiterm-pty-init`, `fish`, `nvim`, and `codex --version`.
 
 use std::collections::HashMap;
 use std::process::Command;
@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 mod os;
 
 #[allow(dead_code)]
+#[allow(unused_imports)]
 #[path = "../src/herdr.rs"]
 mod herdr;
 
@@ -35,10 +36,28 @@ fn has_cmd(name: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+fn private_core_pid(path: &std::path::Path) -> i32 {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+
+    let mut socket = UnixStream::connect(path).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    writeln!(
+        socket,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"server.status","params":{{}}}}"#
+    )
+    .unwrap();
+    let mut reply = String::new();
+    BufReader::new(socket).read_line(&mut reply).unwrap();
+    let response: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    i32::try_from(response["result"]["pid"].as_u64().unwrap()).unwrap()
+}
+
 #[test]
-fn reattach_replays_the_same_pty_and_preserves_its_running_command() {
+fn reconnect_replays_the_same_pty_after_core_crash() {
     let opts = HerdrStartOptions {
-        tag: "reattach".to_string(),
         argv: Some(vec![
             "/bin/sh".into(),
             "-c".into(),
@@ -48,7 +67,9 @@ fn reattach_replays_the_same_pty_and_preserves_its_running_command() {
         wrap_iutf8: false,
         ..HerdrStartOptions::default()
     };
-    let (mut guard, handle, mut stream) = HerdrGuard::start_live(opts).expect("start herdr");
+    let (mut guard, handle, mut stream) =
+        HerdrGuard::start_with_executable(opts, std::path::Path::new(env!("CARGO_BIN_EXE_uiterm")))
+            .expect("start herdr");
     let rt = tokio::runtime::Runtime::new().unwrap();
     let collect_until = |stream: &mut herdr::HerdrOutputStream, marker: &[u8]| {
         rt.block_on(async {
@@ -87,16 +108,42 @@ fn reattach_replays_the_same_pty_and_preserves_its_running_command() {
         .expect("old attachment reached EOF");
     });
     collect_until(&mut stream, b"INITIAL_SCREEN");
+
+    let socket = guard.socket_path().to_path_buf();
+    let core_pid = private_core_pid(&socket);
+    assert!(core_pid > 0);
+    // The PID comes from the supervisor's private socket for this test instance.
+    assert_eq!(unsafe { libc::kill(core_pid, libc::SIGKILL) }, 0);
+    rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = recv_output(&mut stream).await {
+                if let SessionOutput::Closed(info) = event {
+                    assert_eq!(info.reason, "disconnected");
+                    return;
+                }
+            }
+            panic!("the old attachment ended without a disconnect event");
+        })
+        .await
+        .unwrap();
+    });
+    assert!(handle.try_send_user(b"stale attachment".to_vec()).is_err());
+    let (handle, mut stream) = guard
+        .reattach(HerdrStartOptions::default())
+        .expect("reattach after core recovery");
+    assert_ne!(private_core_pid(&socket), core_pid);
+    collect_until(&mut stream, b"INITIAL_SCREEN");
     handle
         .try_send_user(b"same command\n".to_vec())
         .expect("write to original PTY");
     collect_until(&mut stream, b"REATTACHED:same command");
     guard.stop_blocking();
+    assert!(!socket.exists());
 }
 
 #[test]
 fn pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty() {
-    let bin = env!("CARGO_BIN_EXE_uiterm-gpui-poc");
+    let bin = env!("CARGO_BIN_EXE_uiterm");
     let wrapped = os::wrap_argv_with_pty_iutf8_init(
         vec![
             "/bin/sh".into(),
@@ -107,7 +154,6 @@ fn pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty() {
     );
 
     let opts = HerdrStartOptions {
-        tag: "iutf8".into(),
         argv: Some(wrapped),
         cwd: None,
         env: HashMap::from([("LANG".into(), "en_US.UTF-8".into())]),
@@ -117,7 +163,9 @@ fn pty_iutf8_init_enables_utf8_backspace_on_real_herdr_pty() {
         wrap_iutf8: false,
     };
 
-    let (mut guard, handle, mut stream) = HerdrGuard::start_live(opts).expect("start herdr");
+    let (mut guard, handle, mut stream) =
+        HerdrGuard::start_with_executable(opts, std::path::Path::new(env!("CARGO_BIN_EXE_uiterm")))
+            .expect("start herdr");
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     let mut startup = Vec::new();
@@ -172,7 +220,7 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
             "install {cli} before running CLI compatibility checks"
         );
     }
-    let bin = env!("CARGO_BIN_EXE_uiterm-gpui-poc");
+    let bin = env!("CARGO_BIN_EXE_uiterm");
 
     // 1. Fish shell + resize check
     {
@@ -181,7 +229,6 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
             bin,
         );
         let opts = HerdrStartOptions {
-            tag: "fish".into(),
             argv: Some(wrapped),
             cwd: None,
             env: os::build_child_shell_env(Some("fish")),
@@ -190,7 +237,11 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
             history_lines: 200,
             wrap_iutf8: false,
         };
-        let (mut guard, handle, mut stream) = HerdrGuard::start_live(opts).expect("start fish");
+        let (mut guard, handle, mut stream) = HerdrGuard::start_with_executable(
+            opts,
+            std::path::Path::new(env!("CARGO_BIN_EXE_uiterm")),
+        )
+        .expect("start fish");
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _ = rt.block_on(async {
             tokio::time::timeout(Duration::from_millis(300), recv_output(&mut stream)).await
@@ -234,7 +285,6 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
         env.insert("XDG_DATA_HOME".into(), format!("{qa_home}/data"));
 
         let opts = HerdrStartOptions {
-            tag: "nvim".into(),
             argv: Some(vec![
                 "nvim".into(),
                 "--clean".into(),
@@ -248,7 +298,11 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
             history_lines: 200,
             wrap_iutf8: false,
         };
-        let (mut guard, handle, mut stream) = HerdrGuard::start_live(opts).expect("start nvim");
+        let (mut guard, handle, mut stream) = HerdrGuard::start_with_executable(
+            opts,
+            std::path::Path::new(env!("CARGO_BIN_EXE_uiterm")),
+        )
+        .expect("start nvim");
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut raw_bytes = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -366,7 +420,6 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
     // 3. Codex CLI smoke check in isolated herdr PTY
     {
         let opts = HerdrStartOptions {
-            tag: "codex".into(),
             argv: Some(vec!["codex".into(), "--version".into()]),
             cwd: None,
             env: os::build_child_shell_env(Some("/bin/sh")),
@@ -375,7 +428,11 @@ fn installed_clis_fish_nvim_codex_and_resize_altscreen_work_in_isolated_pty() {
             history_lines: 200,
             wrap_iutf8: false,
         };
-        let (mut guard, _handle, mut stream) = HerdrGuard::start_live(opts).expect("start codex");
+        let (mut guard, _handle, mut stream) = HerdrGuard::start_with_executable(
+            opts,
+            std::path::Path::new(env!("CARGO_BIN_EXE_uiterm")),
+        )
+        .expect("start codex");
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut out = String::new();
         let deadline = Instant::now() + Duration::from_secs(5);

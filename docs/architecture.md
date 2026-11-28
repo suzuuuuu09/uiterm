@@ -14,7 +14,9 @@ Rustを主要言語とする。herdr-coreがセッション状態の正で、uit
 
 ## 現行実装
 
-製品実装は以下のTauri版。GPUIは `poc/gpui-terminal/` に独立した評価用実装がある。
+製品の `uiterm` は `src-gpui` からビルドする。GPUIがウィンドウ・描画・入力を管理し、ネイティブ版libghostty-vtがVT状態を保持する。専用の監視プロセスは `native/herdr` にあり、Tauri版と共用する。GPUIのベンチマークと診断UIは `src-gpui/src/diagnostics.rs` にある。共通Action API・内部設定のRust移植は次の工程で行う。
+
+比較基準のTauri版は以下の構成で引き続きビルドできる。
 
 ```text
 React UI / Action Registry / Zustand Vanilla

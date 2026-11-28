@@ -81,6 +81,28 @@
         let
           herdrCore = mkHerdrCore pkgs system;
           isLinux = pkgs.stdenv.hostPlatform.isLinux;
+          rustPackages = with pkgs; [
+            rustc
+            cargo
+            clippy
+            rustfmt
+            pkg-config
+            herdrCore
+          ];
+          coreEnv = ''
+            export HERDR_CORE_BIN="${herdrCore}/bin/herdr-core"
+          '';
+          gpuiLinuxDeps = pkgs.lib.optionals isLinux (
+            with pkgs;
+            [
+              fontconfig
+              freetype
+              libxcb
+              libxkbcommon
+              vulkan-loader
+              wayland
+            ]
+          );
           linuxDeps = pkgs.lib.optionals isLinux (
             with pkgs;
             [
@@ -101,58 +123,35 @@
             ]
           );
         in
-        rec {
+        {
           default = pkgs.mkShell {
             packages =
-              with pkgs;
-              [
-                rustc
-                cargo
-                clippy
-                rustfmt
-                pkg-config
-                nodejs_24
-                pnpm
-                herdrCore
+              rustPackages
+              ++ [
+                pkgs.nodejs_24
+                pkgs.pnpm
               ]
               ++ linuxDeps;
 
             shellHook =
               pkgs.lib.optionalString isLinux ''
-                export PKG_CONFIG_PATH="${
-                  pkgs.lib.makeSearchPath "lib/pkgconfig" linuxDeps
-                }''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-                export LD_LIBRARY_PATH="${
-                  pkgs.lib.makeLibraryPath linuxDeps
-                }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPath "lib/pkgconfig" linuxDeps}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+                export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath linuxDeps}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
                 # Wayland / Hyprland: prefer native Wayland backend for GTK/WebKitGTK
                 export GDK_BACKEND="''${GDK_BACKEND:-wayland,x11}"
               ''
-              + ''
-                export HERDR_CORE_BIN="${herdrCore}/bin/herdr-core"
-              '';
+              + coreEnv;
           };
 
           gpui = pkgs.mkShell {
-            inputsFrom = [ default ];
-            packages = pkgs.lib.optionals isLinux [
-              pkgs.zig_0_17
-              pkgs.fontconfig
-              pkgs.freetype
-              pkgs.libxcb
-              pkgs.vulkan-loader
-            ];
-
-            shellHook = pkgs.lib.optionalString isLinux ''
-              export ZIG="${pkgs.zig_0_17}/bin/zig"
-              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
-                pkgs.fontconfig
-                pkgs.freetype
-                pkgs.libxcb
-                pkgs.vulkan-loader
-              ]}:/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-            '';
+            packages = rustPackages ++ gpuiLinuxDeps ++ pkgs.lib.optionals isLinux [ pkgs.zig_0_17 ];
+            shellHook =
+              coreEnv
+              + pkgs.lib.optionalString isLinux ''
+                export ZIG="${pkgs.zig_0_17}/bin/zig"
+                export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath gpuiLinuxDeps}:/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              '';
           };
         }
       );

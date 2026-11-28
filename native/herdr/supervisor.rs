@@ -1,7 +1,7 @@
+use super::CoreProcessError;
 use super::{HerdrDaemon, HerdrLaunchConfig, STOP_TIMEOUT, stop_error};
-use crate::herdr::{HerdrClient, IpcError};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -9,6 +9,8 @@ use tokio::process::{Child, Command};
 
 // The supervisor owns the daemon. The GUI keeps the only write end of its
 // stdin pipe, so even SIGKILL closes the lifetime handle without PID polling.
+pub const SUPERVISOR_FLAG: &str = "--uiterm-core-supervisor";
+
 pub(crate) struct CoreSupervisor {
     child: Child,
     socket_path: PathBuf,
@@ -16,16 +18,14 @@ pub(crate) struct CoreSupervisor {
 }
 
 impl CoreSupervisor {
-    pub async fn start() -> Result<Self, IpcError> {
-        let executable = std::env::current_exe()
-            .map_err(|_| IpcError::new("spawn_failed", "cannot locate uiterm executable"))?;
+    pub async fn start(executable: &Path) -> Result<Self, CoreProcessError> {
         let mut child = Command::new(executable)
-            .arg("--uiterm-core-supervisor")
+            .arg(SUPERVISOR_FLAG)
             .process_group(0)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|err| IpcError::new("spawn_failed", err.to_string()))?;
+            .map_err(|err| CoreProcessError::new("spawn_failed", err.to_string()))?;
 
         let stdout = child.stdout.take().unwrap();
         let mut reply = String::new();
@@ -36,11 +36,15 @@ impl CoreSupervisor {
                 .await
         })
         .await
-        .map_err(|_| IpcError::new("core_start_timeout", "core supervisor did not become ready"))?
-        .map_err(|_| IpcError::new("core_start_failed", "cannot read core supervisor reply"))?;
+        .map_err(|_| {
+            CoreProcessError::new("core_start_timeout", "core supervisor did not become ready")
+        })?
+        .map_err(|_| {
+            CoreProcessError::new("core_start_failed", "cannot read core supervisor reply")
+        })?;
         let (socket_path, session): (PathBuf, String) =
-            serde_json::from_str::<Result<_, IpcError>>(&reply).map_err(|_| {
-                IpcError::new("core_start_failed", "core supervisor exited during startup")
+            serde_json::from_str::<Result<_, CoreProcessError>>(&reply).map_err(|_| {
+                CoreProcessError::new("core_start_failed", "core supervisor exited during startup")
             })??;
 
         Ok(Self {
@@ -50,16 +54,8 @@ impl CoreSupervisor {
         })
     }
 
-    pub async fn connect(&self) -> Result<HerdrClient, IpcError> {
-        let deadline = Instant::now() + STOP_TIMEOUT;
-        loop {
-            match HerdrClient::connect(&self.socket_path, &self.session).await {
-                Err(err) if err.code == "connect_failed" && Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-                result => return result,
-            }
-        }
+    pub fn endpoint(&self) -> (&Path, &str) {
+        (&self.socket_path, &self.session)
     }
 
     pub fn stop_blocking(&mut self) {
@@ -85,14 +81,20 @@ impl CoreSupervisor {
     }
 }
 
-pub async fn run_supervisor() -> Result<(), IpcError> {
+impl Drop for CoreSupervisor {
+    fn drop(&mut self) {
+        self.stop_blocking();
+    }
+}
+
+pub async fn run_supervisor() -> Result<(), CoreProcessError> {
     let started = async {
         let config = HerdrLaunchConfig::isolated("app")?;
         HerdrDaemon::start(config).await
     }
     .await;
     let ready = match &started {
-        Ok(daemon) => Ok((daemon.socket_path(), &daemon.config.session)),
+        Ok(daemon) => Ok((daemon.socket_path(), &daemon.config().session)),
         Err(err) => Err(err),
     };
     let announcement = writeln!(

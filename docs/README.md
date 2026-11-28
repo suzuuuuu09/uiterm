@@ -11,7 +11,7 @@
 ## 詳細資料
 
 - 設計：[コンセプト](plan/concept.md)、[MVP](plan/mvp.md)、[アーキテクチャ詳細](plan/architecture.md)、[ロードマップ](plan/roadmap.md)
-- 実装：[Phase 1 Rust](implementation/phase1-backend.md)、[Phase 1 TypeScript](implementation/phase1-frontend.md)、[Phase 2 ターミナル](implementation/phase2-terminal.md)
+- 実装：[Phase 1 Rust](implementation/phase1-backend.md)、[Phase 1 TypeScript](implementation/phase1-frontend.md)、[Phase 2 GPUI製品移行](implementation/phase2-gpui.md)、[Phase 2 Tauri版](implementation/phase2-terminal.md)
 - PoC：[統合](poc/integration.md)、[通信仕様](poc/interface.md)、[最適化](poc/optimization.md)、[検証](poc/validation.md)、[GPUIターミナル](poc/gpui-terminal.md)
 
 設計資料は採用後の方針を示す。実装・PoCレポートは検証当時の記録として保持する。最新の設計判断はADR、現在の実装と検証状況はstatusを参照する。

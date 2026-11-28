@@ -301,6 +301,13 @@ impl Osc133Normalizer {
     }
 }
 
+pub const MAX_GRID_DIMENSION: u16 = 1000;
+pub const MAX_SCROLLBACK_LINES: usize = 50_000;
+
+pub fn valid_grid(cols: u16, rows: u16) -> bool {
+    (1..=MAX_GRID_DIMENSION).contains(&cols) && (1..=MAX_GRID_DIMENSION).contains(&rows)
+}
+
 pub struct VtTerminal {
     terminal: Terminal,
     render_state: RenderState,
@@ -326,12 +333,12 @@ pub struct VtTerminal {
 impl VtTerminal {
     pub fn new(cols: u16, rows: u16, scrollback_lines: usize) -> Result<Self, String> {
         let mut terminal = Terminal::new(TerminalOptions {
-            cols: cols.max(1),
-            rows: rows.max(1),
+            cols: cols.clamp(1, MAX_GRID_DIMENSION),
+            rows: rows.clamp(1, MAX_GRID_DIMENSION),
             max_scrollback: DEFAULT_SCROLLBACK_MAX_BYTES,
         })
         .map_err(|e| format!("ghostty_vt::Terminal::new: {e}"))?;
-        let _ = terminal.set_scrollback_max_lines(Some(scrollback_lines));
+        let _ = terminal.set_scrollback_max_lines(Some(scrollback_lines.min(MAX_SCROLLBACK_LINES)));
         let _ = terminal.set_default_bg_color(Some(rgb_from_u32(DEFAULT_BG_U32)));
         let _ = terminal.set_default_fg_color(Some(rgb_from_u32(DEFAULT_FG_U32)));
         let _ = terminal.set_default_cursor_color(Some(rgb_from_u32(DEFAULT_CURSOR_U32)));
@@ -374,8 +381,8 @@ impl VtTerminal {
             selection_origin: Instant::now(),
             selection_generation: 0,
             osc_normalizer: Osc133Normalizer::new(),
-            cols: cols.max(1),
-            rows: rows.max(1),
+            cols: cols.clamp(1, MAX_GRID_DIMENSION),
+            rows: rows.clamp(1, MAX_GRID_DIMENSION),
             mac_option_as_alt: true,
             sync_hold_since: None,
         })
@@ -487,8 +494,8 @@ impl VtTerminal {
         cell_w_px: u32,
         cell_h_px: u32,
     ) -> Result<Vec<Vec<u8>>, String> {
-        let cols = cols.max(1);
-        let rows = rows.max(1);
+        let cols = cols.clamp(1, MAX_GRID_DIMENSION);
+        let rows = rows.clamp(1, MAX_GRID_DIMENSION);
         self.terminal
             .resize(cols, rows, cell_w_px.max(1), cell_h_px.max(1))
             .map_err(|e| format!("Terminal::resize: {e}"))?;

@@ -10,7 +10,7 @@ Tauri版でIPC、herdr-core連携、共通操作API、外部Node.jsによる設�
 
 [ADR-0010](../adr/0010-evaluate-native-gpui-terminal.md) による技術選定は完了した。製品実装の現状は [開発状況](../status.md) を参照。
 
-1. GPUI PoCから製品の起動経路、端末描画・入力を構築する。herdr-coreとの接続、監視、出力制御、再同期、IUTF8対応を移し、既存テストで契約を確認する。
+1. GPUIの製品起動経路と端末機能を `src-gpui` に移し、herdr-coreの接続・監視・出力制御・再同期とIUTF8対応を継承した。[実装・検証記録](../implementation/phase2-gpui.md) を参照。
 2. 内部端末設定と共通Action APIをRust側へ移す。設定・拡張向けのTypeScriptと外部Node.jsの境界を維持し、製品向けの設定APIはPhase 4で扱う。
 3. 製品版で自動テストとmacOS実機の回帰検証を行う。IME、Nerd Font、文字幅、スクロール、選択・クリップボード、リサイズ、fish・Neovim・Codexの対話動作を確認し、比較基準のTauri版と性能を比較する。
 4. 製品版への切り替えと回帰検証を確認した後、Tauri・React・Zustand・wtermのGUI実装と不要になった依存関係を整理する。

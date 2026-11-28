@@ -9,7 +9,9 @@ fn main() {
         uiterm_lib::os::run_pty_iutf8_init(&rest);
     }
     if std::env::args_os().nth(1).as_deref()
-        == Some(std::ffi::OsStr::new("--uiterm-core-supervisor"))
+        == Some(std::ffi::OsStr::new(
+            uiterm_lib::herdr::process::SUPERVISOR_FLAG,
+        ))
     {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
